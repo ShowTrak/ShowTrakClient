@@ -1,0 +1,33 @@
+{
+  "name": "showtrak-service",
+  "version": "3.0.0",
+  "description": "Background service for ShowTrak",
+  "license": "ISC",
+  "author": "Tom Kirkman-Wood",
+  "type": "commonjs",
+  "main": "index.js",
+  "bin": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.3.0",
+    "checksum": "^1.0.0",
+    "colors": "^1.4.0",
+    "macaddress": "^0.5.3",
+    "node-os-utils": "^1.3.7",
+    "socket.io-client": "^4.8.1",
+    "usb-detection": "^4.14.2",
+    "uuid": "^11.1.0"
+  },
+  "pkg": {
+    "scripts": "build/**/*.js",
+    "assets": "views/**/*",
+    "targets": [
+      "node18"
+    ],
+    "outputPath": "dist"
+  }
+}

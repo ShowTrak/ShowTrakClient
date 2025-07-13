@@ -1,0 +1,130 @@
+const { CreateLogger } = require('../Logger');
+const Logger = CreateLogger('MainClient');
+
+const { Manager: BroadcastManager } = require('../Broadcast');
+const { io } = require("socket.io-client");
+var Socket = null;
+const path = require('path');
+const fs = require('fs');
+const { Manager: OS } = require('../OS');
+const { Config } = require('../Config');
+
+const { Manager: USBMonitorManager } = require('../USBMonitor');
+const { Manager: ScriptManager } = require('../ScriptManager');
+
+const Manager = {
+    Terminate: async () => {
+        if (Socket) {
+            Socket.disconnect();
+            Socket = null;
+            Logger.log('MainClientManager terminated.');
+        } else {
+            Logger.log('No active socket to terminate.');
+        }
+    },
+    Init: async (UUID, IP, Port) => {
+
+        if (Socket) {
+            Socket.disconnect()
+        }
+
+        // Create a Socket.IO client instance
+        Socket = io(`http://${IP}:${Port}`, {
+            autoConnect: true,
+            transports: ["websocket"],
+            query: {
+                UUID: UUID,
+                Adopted: true,
+            }
+        });
+
+        Socket.on("connect", () => {
+            Logger.success("Connected to server successfully");
+            Heartbeat();
+            SysInfo();
+        });
+
+        Socket.on("disconnect", () => {
+            Logger.warn("Disconnected from server");
+        });
+
+        Socket.on("DeleteScripts", async (RequestID) => {
+            await ScriptManager.DeleteScripts()
+            Socket.emit("ScriptExecutionResponse", RequestID, null);
+        })
+
+        Socket.on("UpdateScripts", async (RequestID) => {
+            Socket.emit("GetScripts", async (Scripts) => {
+                await ScriptManager.DownloadScripts(IP, Port, Scripts)
+                Socket.emit("ScriptExecutionResponse", RequestID, null);
+            })
+        });
+
+        Socket.on("Unadopt", () => {
+            Logger.log("Unadopting.");
+            const profilePath = path.join(__dirname, '../..', 'Profile.json');
+            Logger.log('Profile Path:', profilePath);
+            if (!fs.existsSync(profilePath)) {
+                Logger.log('Profile.json does not exist.');
+                throw new Error('Error with adoption: Profile.json not found.')
+            }
+            const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
+            const DefaultProfile = {
+                UUID: Profile.UUID,
+                Adopted: false,
+            };
+            fs.writeFileSync(profilePath, JSON.stringify(DefaultProfile, null, 2));
+            Logger.log('Profile updated, Adoption Complete.');
+            BroadcastManager.emit('ReinitializeService');
+        });
+
+        Socket.on("ExecuteScript", async (RequestID, ScriptID) => {
+            console.log(`Received ExecuteScript for RequestID: ${RequestID}, ScriptID: ${ScriptID}`);
+            let [Err, Success] = await ScriptManager.Execute(RequestID, ScriptID);
+            if (Err) {
+                Logger.error(`Error executing script: ${Err}`);
+                Socket.emit("ScriptExecutionResponse", RequestID, Err, null);
+            } else {
+                Logger.success(`Script executed successfully: ${RequestID} ${ScriptID}`);
+                Socket.emit("ScriptExecutionResponse", RequestID, null, Success);
+            }
+        });
+
+        async function Heartbeat() {
+            if (!Socket || !Socket.connected) return
+            Socket.volatile.emit("Heartbeat", {
+                Version: Config.Application.Version,
+                Vitals: await OS.GetVitals(),
+            });
+        }
+        setInterval(Heartbeat, 1000);
+
+        async function SysInfo() {
+            if (!Socket || !Socket.connected) return
+            const [MacError, MacAddresses] = await OS.GetMacAddresses();
+            if (MacError) return Logger.error(MacError);
+            Socket.emit("SystemInfo", {
+                Hostname: OS.Hostname,
+                MacAddresses: MacAddresses,
+            });
+        }
+
+        setInterval(SysInfo, 20000);
+
+        USBMonitorManager.OnUSBConnect(async (Device) => {
+            if (!Socket || !Socket.connected) return
+            Socket.emit("USBDeviceConnected", Device);
+        })
+
+        USBMonitorManager.OnUSBDisconnect(async (Device) => {
+            if (!Socket || !Socket.connected) return
+            Socket.emit("USBDeviceDisconnected", Device);
+        })
+
+
+    }
+}
+
+module.exports = {
+    Manager
+}
