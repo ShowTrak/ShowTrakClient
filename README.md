@@ -19,7 +19,6 @@
   </p>
 </div>
 
-
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
@@ -41,8 +40,6 @@ Features include:
 [![Electron][Electronjs.org]][Electron-url]
 [![Bootstrap][Bootstrap.com]][Bootstrap-url]
 [![JQuery][JQuery.com]][JQuery-url]
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 <!-- GETTING STARTED -->
 ## Getting Started
@@ -67,9 +64,6 @@ Insure NodeJS & NPM on your client pc.
    ```
 3. Set up automatic boot via your method of choice, we reccomend creating a shortcut in your startup directory.
 
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 <!-- CONTRIBUTING -->
 ## Contributing
 
@@ -84,16 +78,10 @@ Don't forget to give the project a star! Thanks again!
 4. Push to the Branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
 <!-- LICENSE -->
 ## License
 
 Distributed under the BSD 4.0. See `LICENSE.txt` for more information.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
 
 <!-- CONTACT -->
 ## Contact
@@ -102,10 +90,6 @@ Your Name - [tkw.bz](https://tkw.bz) - tom@tkw.bz
 
 Project Link: [https://github.com/ShowTrak/ShowTrakClient](https://github.com/ShowTrak/ShowTrakClient)
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
 <!-- ACKNOWLEDGMENTS -->
 ## Acknowledgments
 * Ben Sugrue - Co-Founder
@@ -113,18 +97,12 @@ Project Link: [https://github.com/ShowTrak/ShowTrakClient](https://github.com/Sh
 * Royal Opera House [Alpha Testing]
 * Layered Reality [Beta Testing]
 
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-
 
 [linkedin-url]: https://www.linkedin.com/in/thomas-kirkman-wood-aa0242190/
 [showtrak-logo]: images/icon.png
 [showtrak-screenshot]: images/screenshot-1.png
-
-
 [Electronjs.org]: https://img.shields.io/badge/Electron-563D7C?style=for-the-badge&logo=electron&logoColor=white
 [Electron-url]: https://www.electronjs.org/
 [Bootstrap.com]: https://img.shields.io/badge/Bootstrap-563D7C?style=for-the-badge&logo=bootstrap&logoColor=white
