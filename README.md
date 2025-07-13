@@ -37,12 +37,6 @@ Features include:
 
 [![ShowTrak Screen Shot][showtrak-screenshot]](https://example.com)
 
-Here's a blank template to get started. To avoid retyping too much info, do a search and replace with your text editor for the following: 
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-
-
 ### Built With
 [![Electron][Electronjs.org]][Electron-url]
 [![Bootstrap][Bootstrap.com]][Bootstrap-url]
