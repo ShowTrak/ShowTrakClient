@@ -13,33 +13,16 @@
     <a href="https://github.com/ShowTrak/ShowTrakServer"><strong>View ShowTrak Server (Main Project) »</strong></a>
     <br />
     <br />
-    <a href="https://github.com/ShowTrak/ShowTrakClient/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
+    <a href="https://github.com/ShowTrak/ShowTrakServer/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
     &middot;
-    <a href="https://github.com/ShowTrak/ShowTrakClient/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+    <a href="https://github.com/ShowTrak/ShowTrakServer/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
   </p>
 </div>
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
 
-ShowTrak is a project created to make monitoring and controlling computers on a local network easier for arcade style pc setups.
-
-Features include:
-* Automated Script Deployment (With checksum verification to reduce traffic)
-* Live RAM + CPU Reporting of all clients
-* Groups for easy client organisation
-* Lightweight client service with very low network overheads
-* Fully customisable scripts
-* Import & Export configs to files for backups
-* 1 Click adoption of new devices
-* Automated client discovery powered by bonjour
-
-[![ShowTrak Screen Shot][showtrak-screenshot]](https://tkw.bz/ShowTrak)
-
-### Built With
-[![Electron][Electronjs.org]][Electron-url]
-[![Bootstrap][Bootstrap.com]][Bootstrap-url]
-[![JQuery][JQuery.com]][JQuery-url]
+Please see the ShowTrak repo <a href="https://github.com/ShowTrak"><strong>here</strong></a>
 
 <!-- GETTING STARTED -->
 ## Getting Started
@@ -60,40 +43,10 @@ Insure NodeJS & NPM on your client pc.
    ```
 2. Install NPM packages
    ```sh
-   npm install
+   npm i
    ```
 3. Set up automatic boot via your method of choice, we reccomend creating a shortcut in your startup directory.
 
-<!-- CONTRIBUTING -->
-## Contributing
-
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
-Don't forget to give the project a star! Thanks again!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-<!-- CONTACT -->
-## Contact
-
-Your Name - [tkw.bz](https://tkw.bz) - tom@tkw.bz
-
-Project Link: [https://github.com/ShowTrak/ShowTrakClient](https://github.com/ShowTrak/ShowTrakClient)
-
-<!-- ACKNOWLEDGMENTS -->
-## Acknowledgments
-* Ben Sugrue - Co-Founder
-* Cameron Tarplett
-* Royal Opera House [Alpha Testing]
-* Layered Reality [Beta Testing]
-
-<!-- MARKDOWN LINKS & IMAGES -->
-<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
 [linkedin-url]: https://www.linkedin.com/in/thomas-kirkman-wood-aa0242190/
 [showtrak-logo]: images/icon.png
