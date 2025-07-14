@@ -12,6 +12,8 @@ const { Config } = require('../Config');
 const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 
+const { Wait } = require('../Utils');
+
 const Manager = {
     Terminate: async () => {
         if (Socket) {
@@ -38,10 +40,13 @@ const Manager = {
             }
         });
 
-        Socket.on("connect", () => {
+        Socket.on("connect", async () => {
             Logger.success("Connected to server successfully");
             Heartbeat();
+            await Wait(1000);
             SysInfo();
+            await Wait(1000);
+            UpdateDeviceList();
         });
 
         Socket.on("disconnect", () => {
@@ -111,14 +116,28 @@ const Manager = {
 
         setInterval(SysInfo, 20000);
 
+        // USB Monitoring
+
+        async function UpdateDeviceList() {
+            if (!Socket || !Socket.connected) return Logger.warn('Socket not connected, aborting UpdateDeviceList')
+            let [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
+            if (Err) Logger.error('Error getting USB devices:', Err);
+            if (Err || !DeviceList || DeviceList.length == 0) return Socket.emit("USBDeviceList", []);
+            Socket.emit("USBDeviceList", DeviceList);
+        }
+
+        setInterval(SysInfo, 60000);
+
         USBMonitorManager.OnUSBConnect(async (Device) => {
-            if (!Socket || !Socket.connected) return
+            if (!Socket || !Socket.connected) return Logger.warn('Socket not connected, aborting OnUSBConnect')
             Socket.emit("USBDeviceConnected", Device);
+            UpdateDeviceList();
         })
 
         USBMonitorManager.OnUSBDisconnect(async (Device) => {
-            if (!Socket || !Socket.connected) return
+            if (!Socket || !Socket.connected) return Logger.warn('Socket not connected, aborting OnUSBDisconnect')
             Socket.emit("USBDeviceDisconnected", Device);
+            UpdateDeviceList();
         })
 
 
