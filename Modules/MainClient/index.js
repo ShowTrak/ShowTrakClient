@@ -42,6 +42,7 @@ const Manager = {
             Logger.success("Connected to server successfully");
             Heartbeat();
             SysInfo();
+            UpdateDeviceList();
         });
 
         Socket.on("disconnect", () => {
@@ -111,14 +112,27 @@ const Manager = {
 
         setInterval(SysInfo, 20000);
 
+
+
+        // USB Monitoring
+
+        async function UpdateDeviceList() {
+            if (!Socket || !Socket.connected) return
+            let [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
+            if (Err || !DeviceList || DeviceList.length == 0) return Socket.emit("USBDeviceList", []);
+            Socket.emit("USBDeviceList", DeviceList);
+        }
+
         USBMonitorManager.OnUSBConnect(async (Device) => {
             if (!Socket || !Socket.connected) return
             Socket.emit("USBDeviceConnected", Device);
+            UpdateDeviceList();
         })
 
         USBMonitorManager.OnUSBDisconnect(async (Device) => {
             if (!Socket || !Socket.connected) return
             Socket.emit("USBDeviceDisconnected", Device);
+            UpdateDeviceList();
         })
 
 

@@ -13,20 +13,20 @@ const Internal = {};
 
 Internal.FormatDevice = (Device) => {
     return {
-        vendorId: Device.vendorId,
-        productId: Device.productId,
-        manufacturer: Device.manufacturerName,
-        product: Device.productName,
-        serialNumber: Device.serialNumber,
+        VendorID: Device.vendorId,
+        ProductID: Device.productId,
+        ManufacturerName: Device.manufacturerName,
+        ProductName: Device.productName,
+        SerialNumber: Device.serialNumber,
     };
 }
 
 Manager.GetUSBDevices = async () => {
     try {
         const Devices = await WebUSBInstance.getDevices();
-        Logger.log(Devices);
-        Logger.log(Devices.map(Internal.FormatDevice))
-        return [null, Devices]
+        const FormattedDevices = Devices.map(Internal.FormatDevice);
+        Logger.log(`Found ${FormattedDevices.length} USB devices`);
+        return [null, FormattedDevices];
     } catch (error) {
         Logger.error('Error getting USB devices:', error);
         return [error, null];
