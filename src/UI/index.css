@@ -1,0 +1,63 @@
+body {
+  background: radial-gradient(circle at 50% 80%, #151232 0%, #0c091c 100%) !important;
+  user-select: none;
+  -webkit-user-select: none;
+  -ms-user-select: none;
+  overflow: hidden;
+}
+
+.dragbar {
+    z-index: 1000000;
+    width: 100vw;
+    height: 2rem;
+    app-region: drag;
+    background-color: #1d1a2ffc !important;
+    padding: 0.3rem 0.8rem !important;
+    color: #ffffff !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    -moz-user-select: none !important;
+    -ms-user-select: none !important;
+}
+
+#APPLICATION_NAVBAR_LOGO {
+    width: 18px;
+    height: 18px;
+}
+
+#APPLICATION_NAVBAR_STATUS {
+    color: rgba(255,255,255,0.5);
+}
+
+#APPLICATION_NAVBAR_VERSION {
+    color: rgba(255,255,255,0.5);
+}
+
+#APPLICATION_CONTAINER {
+    position: absolute;
+    width: 100%;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+}
+
+#LOGO {
+  width: 86px;
+  height: 86px
+}
+
+
+.btn {
+    border: none !important;
+    border-radius: 0.5rem !important;
+    transition-duration: 100ms;;
+}
+
+.btn-light {
+    background-color: rgba(255,255,255,0.1) !important;
+    color: white !important;
+}
+
+.btn-light:hover {
+    background-color: rgba(255,255,255,0.2) !important;
+}
