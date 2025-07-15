@@ -25,12 +25,11 @@ const { Manager: UUIDManager } = require('./Modules/UUID');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const { Manager: AppDataManager } = require('./Modules/AppData');
+const { Manager: ProfileManager } = require('./Modules/ProfileManager');
 AppDataManager.Initialize();
 
 
 const { Config } = require('./Modules/Config');
-
-const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
 
 let tray;
 let mainWindow;
@@ -80,8 +79,9 @@ app.whenReady().then(() => {
     }
   });
 
+
   RPC.handle('Loaded', async () => {
-    const Profile = await GetProfile();
+    const Profile = await ProfileManager.GetProfile();
     mainWindow.webContents.send('SetProfile', Profile);
   })
 
@@ -119,25 +119,12 @@ BroadcastManager.on('ReinitializeService', async () => {
   await Main();
 });
 
-async function GetProfile() {
-  AppDataManager.Initialize();
-  if (!fs.existsSync(profilePath)) {
-    Logger.log('Profile.json does not exist.');
-    const DefaultProfile = {
-      UUID: UUIDManager.Generate(),
-      Adopted: false,
-    };
-    fs.writeFileSync(profilePath, JSON.stringify(DefaultProfile, null, 2));
-    Logger.log('Default Profile.json created.');
-  }
-  const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'))
-  return Profile;
-}
+BroadcastManager.on('ProfileUpdated', async (Profile) => {
+  if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
+});
 
 async function Main() {
-  const Profile = await GetProfile();
-
-  if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
+  const Profile = await ProfileManager.GetProfile();
   if (Profile.Adopted && Profile.Server && Profile.Server.IP && Profile.Server.Port) {
     Logger.log('Profile loaded [Adopted]');
     await BootWithStoredSettings();
@@ -151,7 +138,7 @@ async function Main() {
 }
 
 async function BootWithStoredSettings() {
-  const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
+  const Profile = await ProfileManager.GetProfile();
   Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
   await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }

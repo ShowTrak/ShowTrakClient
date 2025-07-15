@@ -10,6 +10,8 @@ const { Manager: AppDataManager } = require('../AppData');
 const path = require('path');
 const fs = require('fs');
 
+const { Manager: ProfileManager } = require('../ProfileManager');
+
 const Manager = {
     Terminate: async () => {
         if (Socket) {
@@ -57,36 +59,10 @@ const Manager = {
             Logger.log("Disconnected from server");
         });
 
-        Socket.on("Adopt", () => {
+        Socket.on("Adopt", async () => {
             Logger.log("Adopt command received");
-                    
-            const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
-            Logger.log('Profile Path:', profilePath);
-
-            if (!fs.existsSync(profilePath)) {
-                Logger.log('Profile.json does not exist.');
-                throw new Error('Error with adoption: Profile.json not found.')
-            }
-
-            const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-            const DefaultProfile = {
-                UUID: Profile.UUID,
-                Adopted: true,
-                Server: {
-                    IP: IP,
-                    Port: Port,
-                    AdoptionTime: Date.now(),
-                }
-            };
-            fs.writeFileSync(profilePath, JSON.stringify(DefaultProfile, null, 2));
-            Logger.log('Profile updated, Adoption Complete.');
+            await ProfileManager.Adopt(IP, Port);
             BroadcastManager.emit('ReinitializeService');
-
-
-
-
-
-
         });
 
     }

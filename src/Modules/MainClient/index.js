@@ -12,6 +12,7 @@ const { Config } = require('../Config');
 const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: AppDataManager } = require('../AppData');
+const { Manager: ProfileManager } = require('../ProfileManager');
 
 const { Wait } = require('../Utils');
 
@@ -66,21 +67,8 @@ const Manager = {
             })
         });
 
-        Socket.on("Unadopt", () => {
-            Logger.log("Unadopting.");
-            const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
-            Logger.log('Profile Path:', profilePath);
-            if (!fs.existsSync(profilePath)) {
-                Logger.log('Profile.json does not exist.');
-                throw new Error('Error with adoption: Profile.json not found.')
-            }
-            const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-            const DefaultProfile = {
-                UUID: Profile.UUID,
-                Adopted: false,
-            };
-            fs.writeFileSync(profilePath, JSON.stringify(DefaultProfile, null, 2));
-            Logger.log('Profile updated, Adoption Complete.');
+        Socket.on("Unadopt", async () => {
+            await ProfileManager.ResetAdopption();
             BroadcastManager.emit('ReinitializeService');
         });
 

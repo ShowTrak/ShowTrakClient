@@ -7,7 +7,10 @@ const appDataPath = path.join(BasePath, 'ShowTrakClient');
 
 const Manager = {};
 
+Manager.Initialized = false;
+
 Manager.Initialize = () => {
+  if (Manager.Initialized) return;
   if (!fs.existsSync(appDataPath)) {
     fs.mkdirSync(appDataPath, { recursive: true });
   }
@@ -23,6 +26,7 @@ Manager.Initialize = () => {
       fs.mkdirSync(folderPath, { recursive: true });
     }
   });
+  Manager.Initialized = true;
 }
 
 Manager.GetProfileDirectory = () => {
