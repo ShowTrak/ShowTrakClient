@@ -6,6 +6,7 @@ var Socket = null;
 const { Config } = require('../Config');
 const { Manager: OSManager } = require('../OS');
 const { Manager: BroadcastManager } = require('../Broadcast');
+const { Manager: AppDataManager } = require('../AppData');
 const path = require('path');
 const fs = require('fs');
 
@@ -59,7 +60,7 @@ const Manager = {
         Socket.on("Adopt", () => {
             Logger.log("Adopt command received");
                     
-            const profilePath = path.join(__dirname, '../..', 'Profile.json');
+            const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
             Logger.log('Profile Path:', profilePath);
 
             if (!fs.existsSync(profilePath)) {
