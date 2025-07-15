@@ -25,12 +25,11 @@ const { Manager: UUIDManager } = require('./Modules/UUID');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const { Manager: AppDataManager } = require('./Modules/AppData');
+const { Manager: ProfileManager } = require('./Modules/ProfileManager');
 AppDataManager.Initialize();
 
 
 const { Config } = require('./Modules/Config');
-
-const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
 
 let tray;
 let mainWindow;
@@ -39,12 +38,12 @@ app.whenReady().then(() => {
     show: false,
     backgroundColor: '#161618',
     width: 600,
-    height: 320,    
+    height: 420,
     maxWidth: 600,
-    maxHeight: 320,
+    maxHeight: 420,
     resizable: false,
     fullscreenable: false,
-    webPreferences: { 
+    webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       devTools: !app.isPackaged,
     },
@@ -56,7 +55,7 @@ app.whenReady().then(() => {
   mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'))
 
   let IconPath = path.join(__dirname, 'images', 'icon.ico');
-  const icon = nativeImage.createFromPath(IconPath) 
+  const icon = nativeImage.createFromPath(IconPath)
   tray = new Tray(icon)
 
   const contextMenu = Menu.buildFromTemplate([
@@ -71,14 +70,20 @@ app.whenReady().then(() => {
   tray.setToolTip('ShowTrak Client Service')
   tray.setContextMenu(contextMenu)
   tray.setIgnoreDoubleClickEvents(true)
-  tray.on('click', function(e){
-    if (!mainWindow) return; 
+  tray.on('click', function (e) {
+    if (!mainWindow) return;
     if (mainWindow.isVisible()) {
       mainWindow.hide()
     } else {
       mainWindow.show()
     }
   });
+
+
+  RPC.handle('Loaded', async () => {
+    const Profile = await ProfileManager.GetProfile();
+    mainWindow.webContents.send('SetProfile', Profile);
+  })
 
   RPC.handle('Minimise', async () => {
     console.log(1);
@@ -97,6 +102,8 @@ app.whenReady().then(() => {
     return Config.Application.Version;
   })
 
+  Main();
+
 })
 
 app.on('window-all-closed', () => {
@@ -107,48 +114,31 @@ app.on('window-all-closed', () => {
 
 // ReinitializeService
 BroadcastManager.on('ReinitializeService', async () => {
-    await AdoptionClientManager.Terminate();
-    await MainClientManager.Terminate();
-    await Main();
+  await AdoptionClientManager.Terminate();
+  await MainClientManager.Terminate();
+  await Main();
+});
+
+BroadcastManager.on('ProfileUpdated', async (Profile) => {
+  if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
 });
 
 async function Main() {
-    await AppDataManager.Initialize();
-    if (!fs.existsSync(profilePath)) {
-        Logger.log('Profile.json does not exist.');
-        // Create a default Profile.json
-        const DefaultProfile = {
-            UUID: UUIDManager.Generate(),
-            Adopted: false,
-        };
-        fs.writeFileSync(profilePath, JSON.stringify(DefaultProfile, null, 2));
-        Logger.log('Default Profile.json created.');
-    }
+  const Profile = await ProfileManager.GetProfile();
+  if (Profile.Adopted && Profile.Server && Profile.Server.IP && Profile.Server.Port) {
+    Logger.log('Profile loaded [Adopted]');
+    await BootWithStoredSettings();
+  } else {
+    Logger.log('Profile loaded [Unadopted]');
+    BonjourManager.OnFind(async (Server) => {
+      await AdoptionClientManager.Init(Profile.UUID, Server.addresses[0], Server.port);
+    })
+  }
 
-    const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-
-    if (Profile.Adopted && Profile.Server && Profile.Server.IP && Profile.Server.Port) {
-        Logger.log('Profile loaded [Adopted]');
-        await BootWithStoredSettings();
-    } else {
-        Logger.log('Profile loaded [Unadopted]');
-        BonjourManager.OnFind(async (Server) => {
-          await AdoptionClientManager.Init(Profile.UUID, Server.addresses[0], Server.port);
-        })
-    }
-  
 }
 
 async function BootWithStoredSettings() {
-    const Profile = JSON.parse(fs.readFileSync(profilePath, 'utf-8'));
-    Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
-    await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
+  const Profile = await ProfileManager.GetProfile();
+  Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
+  await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }
-
-
-Main();
-
-
-
-
-

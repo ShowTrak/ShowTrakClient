@@ -46,7 +46,6 @@ body {
   height: 86px
 }
 
-
 .btn {
     border: none !important;
     border-radius: 0.5rem !important;
@@ -60,4 +59,8 @@ body {
 
 .btn-light:hover {
     background-color: rgba(255,255,255,0.2) !important;
+}
+
+.bg-ghost {
+    background-color: rgba(255,255,255,0.1) !important;
 }
