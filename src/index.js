@@ -25,10 +25,12 @@ const { Manager: UUIDManager } = require('./Modules/UUID');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const { Manager: AppDataManager } = require('./Modules/AppData');
+AppDataManager.Initialize();
+
 
 const { Config } = require('./Modules/Config');
 
-const profilePath = path.join(__dirname, 'Profile.json');
+const profilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
 
 let tray;
 let mainWindow;

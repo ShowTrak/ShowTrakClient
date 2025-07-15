@@ -5,7 +5,7 @@ const appDataPath = path.join(process.env.APPDATA, 'ShowTrakClient');
 
 const Manager = {};
 
-Manager.Initialize = async () => {
+Manager.Initialize = () => {
   if (!fs.existsSync(appDataPath)) {
     fs.mkdirSync(appDataPath, { recursive: true });
   }
@@ -13,6 +13,7 @@ Manager.Initialize = async () => {
   let AppDataFolders = [
     'Logs',
     'Scripts',
+    'Profile',
   ]
   AppDataFolders.forEach(folder => {
     const folderPath = path.join(appDataPath, folder);
@@ -20,6 +21,10 @@ Manager.Initialize = async () => {
       fs.mkdirSync(folderPath, { recursive: true });
     }
   });
+}
+
+Manager.GetProfileDirectory = () => {
+  return path.join(appDataPath, 'Profile');
 }
 
 Manager.GetLogsDirectory = () => {
