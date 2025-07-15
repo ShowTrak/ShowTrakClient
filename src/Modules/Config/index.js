@@ -1,8 +1,8 @@
 const Config = {};
 
 Config.Application = {
-    Version: '3.0.1',
-    Name: 'ShowTrak',
+    Version: '3.0.2',
+    Name: 'ShowTrak Client',
 }
 
 Config.Shared = {
