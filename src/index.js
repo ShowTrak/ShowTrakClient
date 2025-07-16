@@ -1,9 +1,6 @@
 const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain: RPC } = require('electron');
 
-// Handle creating/removing shortcuts on Windows when installing/uninstalling.
-if (require('electron-squirrel-startup')) {
-  app.quit();
-}
+if (require('electron-squirrel-startup')) app.quit();
 
 const { CreateLogger } = require('./Modules/Logger');
 const Logger = CreateLogger('Main');
@@ -20,14 +17,11 @@ if (!gotTheLock) {
 const { Manager: AdoptionClientManager } = require('./Modules/AdoptionClient');
 const { Manager: MainClientManager } = require('./Modules/MainClient');
 const path = require('path');
-const fs = require('fs');
-const { Manager: UUIDManager } = require('./Modules/UUID');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const { Manager: AppDataManager } = require('./Modules/AppData');
 const { Manager: ProfileManager } = require('./Modules/ProfileManager');
 AppDataManager.Initialize();
-
 
 const { Config } = require('./Modules/Config');
 
