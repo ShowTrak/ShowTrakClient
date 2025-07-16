@@ -5,6 +5,7 @@ const Logger = CreateLogger('ProfileManager');
 
 const { Manager: AppDataManager } = require('../AppData');
 const { Manager: BroadcastManager } = require('../Broadcast');
+const { Manager: UUIDManager } = require('../UUID')
 
 const path = require('node:path');
 const fs = require('node:fs');
