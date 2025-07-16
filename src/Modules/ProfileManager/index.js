@@ -6,8 +6,8 @@ const Logger = CreateLogger('ProfileManager');
 const { Manager: AppDataManager } = require('../AppData');
 const { Manager: BroadcastManager } = require('../Broadcast');
 
-const path = require('path');
-const fs = require('fs');
+const path = require('node:path');
+const fs = require('node:fs');
 
 const ProfilePath = path.join(AppDataManager.GetProfileDirectory(), 'Profile.json');
 
@@ -22,12 +22,25 @@ Manager.GetProfile = async () => {
       Adopted: false,
     };
     fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
+    BroadcastManager.emit('ProfileUpdated', NewProfile);
     Logger.log('Default Profile.json created.');
   }
-  const Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'))
+  var Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'))
+  if (!Profile || !Profile.UUID || !Profile.UUID.length) {
+    await Manager.ForceResetProfile();
+    Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'))
+  }
   Logger.log('Profile Generated')
-  BroadcastManager.emit('ProfileUpdated', Profile);
   return Profile;
+}
+
+Manager.ForceResetProfile = async () => {
+  const NewProfile = {
+    UUID: UUIDManager.Generate(),
+    Adopted: false,
+  };
+  fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
+  Logger.log('Profile.json overwritten');
 }
 
 Manager.Adopt = async (IP, Port) => {
