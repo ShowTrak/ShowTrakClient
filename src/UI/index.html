@@ -14,22 +14,27 @@
   </head>
   <body>
     <div class="dragbar bg-light d-flex justify-content-between align-items-center p-2">
+      <span></span>
+      <span id="APPLICATION_NAVBAR_TITLE">ShowTrak Client</span>
       <img id="APPLICATION_NAVBAR_LOGO" src="../images/icon.png" alt="ShowTrak Logo">
-      <span id="APPLICATION_NAVBAR_TITLE">ShowTrak</span>
-      <span id="APPLICATION_NAVBAR_VERSION">Loading</span>
     </div>
     <div id="APPLICATION_CONTAINER" class="d-grid gap-3 p-4">
       <div class="d-flex justify-content-center">
         <img id="LOGO" src="../images/icon.png" alt="ShowTrak Logo">
       </div>
-      <h3 class="text-center text-white mb-0">ShowTrak Client</h3>
       <div id="PROFILE"></div>
-      <a id="BTN_MINIMIZE" class="btn btn-light">
-        Minimise To Tray
-      </a>
-      <a id="BTN_SHUTDOWN" class="btn btn-danger">
-        Stop ShowTrak Client Service
-      </a>
+      <div class="row">
+        <div class="col-6 d-grid">
+          <a id="BTN_MINIMIZE" class="btn btn-light">
+            Minimise
+          </a>
+        </div>
+        <div class="col-6 d-grid">
+          <a id="BTN_SHUTDOWN" class="btn btn-danger">
+            Stop Service
+          </a>
+        </div>
+      </div>
     </div>
   </body>
   <footer>

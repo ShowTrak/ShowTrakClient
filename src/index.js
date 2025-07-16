@@ -35,12 +35,12 @@ let tray;
 let mainWindow;
 app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
-    show: false,
+    show: true,
     backgroundColor: '#161618',
-    width: 600,
-    height: 420,
-    maxWidth: 600,
-    maxHeight: 420,
+    width: 450,
+    height: 320,
+    maxWidth: 450,
+    maxHeight: 320,
     resizable: false,
     fullscreenable: false,
     webPreferences: {

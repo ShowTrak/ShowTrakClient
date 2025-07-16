@@ -1,7 +1,9 @@
+const Package = require('../../../package.json');
+
 const Config = {};
 
 Config.Application = {
-    Version: '3.0.5',
+    Version: Package.version || '0.0.0',
     Name: 'ShowTrak Client',
 }
 
