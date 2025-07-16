@@ -1,19 +1,25 @@
 var Profile = {};
+var Version = '0.0.0';
+
+async function Main() {
+    await window.API.Loaded();
+    Version = await window.API.GetVersion();
+    $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
+}
+Main();
 
 window.API.SetProfile(async (NewProfile) => {
     Profile = NewProfile;
+    Version = await window.API.GetVersion();
     console.log('Profile set:', NewProfile);
-
-
-
     if (Profile.Adopted && Profile.Server) {
         $('#PROFILE').html(`
             <div class="text-center text-white mb-2">
                 <span class="badge bg-success">Adopted</span>
             </div>
             <div class="text-center text-white mb-2">
-                <span class="badge bg-ghost">IP ${Profile.Server.IP || 'Unknown IP'}</span>
-                <span class="badge bg-ghost">Port ${Profile.Server.Port || 'Unknown Port'}</span>
+                <span class="badge bg-ghost">${Profile.Server.IP || 'Unknown IP'}</span>
+                <span class="badge bg-ghost">${Profile.Server.Port || 'Unknown Port'}</span>
             </div>
             <div class="text-center text-white">
                 <span class="badge bg-ghost">${Profile.UUID}</span>
@@ -34,12 +40,6 @@ window.API.SetProfile(async (NewProfile) => {
     }
 })
 
-async function Main() {
-    await window.API.Loaded();
-    let Version = await window.API.GetVersion();
-    $('#APPLICATION_NAVBAR_VERSION').text(`v${Version}`);
-}
-Main();
 
 $('#BTN_MINIMIZE').on('click', async () => {
     window.API.Minimise();
