@@ -6,9 +6,6 @@ var Socket = null;
 const { Config } = require('../Config');
 const { Manager: OSManager } = require('../OS');
 const { Manager: BroadcastManager } = require('../Broadcast');
-const { Manager: AppDataManager } = require('../AppData');
-const path = require('path');
-const fs = require('fs');
 
 const { Manager: ProfileManager } = require('../ProfileManager');
 

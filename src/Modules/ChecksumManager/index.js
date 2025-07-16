@@ -1,7 +1,5 @@
 var checksum = require('checksum')
 
-
-
 const Manager = {};
 
 Manager.Checksum = async (filePath) => {
@@ -11,7 +9,6 @@ Manager.Checksum = async (filePath) => {
         })
     })
 }
-
 
 module.exports = {
     Manager

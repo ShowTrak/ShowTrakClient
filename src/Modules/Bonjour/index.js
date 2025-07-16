@@ -1,8 +1,8 @@
-const { CreateLogger } = require('../Logger');
-const Logger = CreateLogger('Bonjour');
+// const { CreateLogger } = require('../Logger');
+// const Logger = CreateLogger('Bonjour');
 
 const { Bonjour } = require('bonjour-service');
-const { Config } = require('../Config');
+// const { Config } = require('../Config');
 
 var instance = null;
 const Manager = {
