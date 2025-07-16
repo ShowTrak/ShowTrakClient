@@ -1,7 +1,7 @@
 {
   "name": "showtrak-client",
   "productName": "ShowTrak Client",
-  "version": "3.0.5",
+  "version": "3.0.6",
   "description": "Simple, Free LAN PC Monitoring for arcade style environments.",
   "main": "src/index.js",
   "scripts": {
@@ -11,10 +11,18 @@
     "publish": "electron-forge publish"
   },
   "keywords": [],
-  "author": "ShowTrak",
+  "author": {
+    "name": "ShowTrak",
+    "email": "tom@tkw.bz",
+    "url": "https://tkw.bz/"
+  },
   "license": "AGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShowTrak/ShowTrakClient.git"
+  },
   "bugs": {
-    "url": "https://github.com/ShowTrak/ShowTrakServer/issues"
+    "url": "https://github.com/ShowTrak/ShowTrakClient/issues"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.8.1",
