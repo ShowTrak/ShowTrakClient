@@ -142,3 +142,8 @@ async function BootWithStoredSettings() {
   Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
   await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }
+
+const { updateElectronApp } = require('update-electron-app')
+updateElectronApp({
+  notifyUser: false,
+})
