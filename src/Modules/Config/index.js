@@ -1,7 +1,7 @@
 const Config = {};
 
 Config.Application = {
-    Version: '3.0.4',
+    Version: '3.0.5',
     Name: 'ShowTrak Client',
 }
 
