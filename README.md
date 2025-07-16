@@ -19,12 +19,14 @@
   </p>
 </div>
 
-<!-- ABOUT THE PROJECT -->
 ## About The Project
 
 Please see the ShowTrak repo <a href="https://github.com/ShowTrak"><strong>here</strong></a>
 
-<!-- GETTING STARTED -->
+## Support
+
+Join our [Discord Server](https://discord.gg/DACmwsbSGW) for support
+
 ## Getting Started
 
 The following instructions are for installing ShowTrak Client, To install the Server application please visit [ShowTrak Server](https://github.com/ShowTrak/ShowTrakServer)
@@ -32,7 +34,6 @@ The following instructions are for installing ShowTrak Client, To install the Se
 ### Installation
 1. Download the installer from the releases page
 2. Run the installer.
-
 
 [linkedin-url]: https://www.linkedin.com/in/thomas-kirkman-wood-aa0242190/
 [showtrak-logo]: images/icon.png
