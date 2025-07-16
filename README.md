@@ -19,34 +19,21 @@
   </p>
 </div>
 
-<!-- ABOUT THE PROJECT -->
 ## About The Project
 
 Please see the ShowTrak repo <a href="https://github.com/ShowTrak"><strong>here</strong></a>
 
-<!-- GETTING STARTED -->
+## Support
+
+Join our [Discord Server](https://discord.gg/DACmwsbSGW) for support
+
 ## Getting Started
 
 The following instructions are for installing ShowTrak Client, To install the Server application please visit [ShowTrak Server](https://github.com/ShowTrak/ShowTrakServer)
-### Prerequisites
-
-Insure NodeJS & NPM on your client pc.
-* npm
-  ```sh
-  npm install npm@latest -g
-  ```
 
 ### Installation
-1. Clone the repo
-   ```sh
-   git clone https://github.com/ShowTrak/ShowTrakClient.git
-   ```
-2. Install NPM packages
-   ```sh
-   npm i
-   ```
-3. Set up automatic boot via your method of choice, we reccomend creating a shortcut in your startup directory.
-
+1. Download the installer from the releases page
+2. Run the installer.
 
 [linkedin-url]: https://www.linkedin.com/in/thomas-kirkman-wood-aa0242190/
 [showtrak-logo]: images/icon.png

@@ -1,5 +1,5 @@
-const { CreateLogger } = require('../Logger');
-const Logger = CreateLogger('OS');
+// const { CreateLogger } = require('../Logger');
+// const Logger = CreateLogger('OS');
 
 // Get the hostname of the PC
 const os = require('os');

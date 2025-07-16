@@ -4,14 +4,11 @@ const Logger = CreateLogger('MainClient');
 const { Manager: BroadcastManager } = require('../Broadcast');
 const { io } = require("socket.io-client");
 var Socket = null;
-const path = require('path');
-const fs = require('fs');
 const { Manager: OS } = require('../OS');
 const { Config } = require('../Config');
 
 const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
-const { Manager: AppDataManager } = require('../AppData');
 const { Manager: ProfileManager } = require('../ProfileManager');
 
 const { Wait } = require('../Utils');

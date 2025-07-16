@@ -1,5 +1,3 @@
-
-
 const { CreateLogger } = require('../Logger');
 const Logger = CreateLogger('ProfileManager');
 
