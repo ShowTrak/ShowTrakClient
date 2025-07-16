@@ -118,9 +118,6 @@ Manager.DownloadScripts = async (IP, Port, Scripts) => {
 
         Logger.success(`Downloaded script ${Script.ID}`);
 
-
-
-
     }
 }
 
