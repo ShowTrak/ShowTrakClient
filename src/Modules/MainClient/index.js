@@ -41,6 +41,9 @@ const Manager = {
 
         Socket.on("connect", async () => {
             Logger.success("Connected to server successfully");
+            Socket.emit("GetScripts", async (Scripts) => {
+                await ScriptManager.SetScripts(Scripts)
+            })
             Heartbeat();
             await Wait(1000);
             SysInfo();
