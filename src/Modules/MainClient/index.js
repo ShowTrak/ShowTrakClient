@@ -55,6 +55,15 @@ const Manager = {
             Logger.warn("Disconnected from server");
         });
 
+
+        Socket.on("UpdateSoftware", async (RequestID) => {
+            Logger.log("Received UpdateSoftware request");
+            BroadcastManager.emit('UpdateSoftware', async (Err) => {
+                Logger.log(`UpdateSoftware callback executed for RequestID: ${RequestID}`);
+                Socket.emit("ScriptExecutionResponse", RequestID, Err);
+            });
+        })
+
         Socket.on("DeleteScripts", async (RequestID) => {
             await ScriptManager.DeleteScripts()
             Socket.emit("ScriptExecutionResponse", RequestID, null);

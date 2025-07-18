@@ -117,6 +117,16 @@ BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
 });
 
+BroadcastManager.on('UpdateSoftware', async (Callback) => {
+  if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
+  const { updateElectronApp } = require('update-electron-app')
+  updateElectronApp({
+    notifyUser: false,
+    logger: Logger,
+  })
+  return Callback(null);
+})
+
 async function Main() {
   const Profile = await ProfileManager.GetProfile();
   if (Profile.Adopted && Profile.Server && Profile.Server.IP && Profile.Server.Port) {
@@ -137,7 +147,3 @@ async function BootWithStoredSettings() {
   await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }
 
-const { updateElectronApp } = require('update-electron-app')
-updateElectronApp({
-  notifyUser: false,
-})
