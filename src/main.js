@@ -58,6 +58,12 @@ app.whenReady().then(() => {
       click: async () => {
         app.quit();
       }
+    },
+    {
+      label: 'Check For Updates',
+      click: async () => {
+        CheckForUpdates();
+      }
     }
   ])
 
@@ -117,13 +123,17 @@ BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
 });
 
-BroadcastManager.on('UpdateSoftware', async (Callback) => {
-  if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
+async function CheckForUpdates() {
   const { updateElectronApp } = require('update-electron-app')
   updateElectronApp({
     notifyUser: false,
     logger: Logger,
   })
+}
+
+BroadcastManager.on('UpdateSoftware', async (Callback) => {
+  if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
+  await CheckForUpdates();
   return Callback(null);
 })
 
