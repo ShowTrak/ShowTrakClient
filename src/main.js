@@ -64,7 +64,7 @@ app.whenReady().then(() => {
   tray.setToolTip('ShowTrak Client Service')
   tray.setContextMenu(contextMenu)
   tray.setIgnoreDoubleClickEvents(true)
-  tray.on('click', function (e) {
+  tray.on('click', function (_e) {
     if (!mainWindow) return;
     if (mainWindow.isVisible()) {
       mainWindow.hide()

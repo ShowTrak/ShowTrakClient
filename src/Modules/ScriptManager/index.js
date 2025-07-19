@@ -45,7 +45,7 @@ Manager.Execute = async (_RequestID, ScriptID) => {
             Logger.error(`Script path does not exist: ${ScriptPath}`);
             return ['Script path does not exist', false];
         }
-        let Result = await Internal.RunBatchFile(path.join(ScriptPath, Script.Path))
+        await Internal.RunBatchFile(path.join(ScriptPath, Script.Path))
         Logger.success(`Script ${Script.Name} executed successfully`);
         return [null, true];
     } catch (error) {

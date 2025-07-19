@@ -20,7 +20,7 @@ Manager.GetCPUUsage = async () => {
 setInterval(Manager.GetCPUUsage, 1000)
 
 Manager.GetMacAddresses = async () => {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
         macaddress.all().then((macs) => {
             return resolve([null, macs]);
         }).catch((err) => {
