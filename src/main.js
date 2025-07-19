@@ -41,14 +41,14 @@ app.whenReady().then(() => {
       preload: path.join(__dirname, 'preload.js'),
       devTools: !app.isPackaged,
     },
-    icon: path.join(__dirname, 'images/icon.ico'),
+    icon: path.join(__dirname, 'Images/icon.ico'),
     frame: true,
     titleBarStyle: 'hidden',
   })
 
   mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'))
 
-  let IconPath = path.join(__dirname, 'images', 'icon.ico');
+  let IconPath = path.join(__dirname, 'Images', 'icon.ico');
   const icon = nativeImage.createFromPath(IconPath)
   tray = new Tray(icon)
 
