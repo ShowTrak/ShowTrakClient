@@ -31,10 +31,13 @@ Internal.RunBatchFile = async (Path) => {
     });
 }
 
+Manager.SetScripts = async (Scripts) => {
+    ScriptCache = Scripts || [];
+}
+
 Manager.Execute = async (_RequestID, ScriptID) => {
     let Script = ScriptCache.find(s => s.ID === ScriptID);
     if (!Script) return ['Script not found', false];
-    if (!Script.isEnabled) return ['Script is disabled', false];
     Logger.log(`Executing script: ${Script.Name} (${Script.ID})`);
     try {
         const ScriptPath = path.join(AppDataManager.GetScriptsDirectory(), Script.ID)
@@ -42,9 +45,7 @@ Manager.Execute = async (_RequestID, ScriptID) => {
             Logger.error(`Script path does not exist: ${ScriptPath}`);
             return ['Script path does not exist', false];
         }
-
-        let Result = await Internal.RunBatchFile(path.join(ScriptPath, Script.Path))
-
+        await Internal.RunBatchFile(path.join(ScriptPath, Script.Path))
         Logger.success(`Script ${Script.Name} executed successfully`);
         return [null, true];
     } catch (error) {

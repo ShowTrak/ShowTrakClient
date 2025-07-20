@@ -1,3 +1,12 @@
+/**
+ * @fileoverview
+ * Handles the main UI logic for the ShowTrak Client application.
+ * 
+ * - Updates the navbar title.
+ * - Listens for profile updates and updates the profile display accordingly.
+ * - Handles minimize and shutdown button events.
+ * 
+ */
 var Profile = {};
 var Version = '0.0.0';
 

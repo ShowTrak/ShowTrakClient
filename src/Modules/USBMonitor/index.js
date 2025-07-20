@@ -39,7 +39,7 @@ Manager.OnUSBConnect = (callback) => {
     });
 }
 
-Manager.OnUSBConnect(async (Device) => {
+Manager.OnUSBConnect(async (_Device) => {
     Logger.log('USB device connected');
 })
 
@@ -49,7 +49,7 @@ Manager.OnUSBDisconnect = (callback) => {
     });
 }
 
-Manager.OnUSBDisconnect(async (Device) => {
+Manager.OnUSBDisconnect(async (_Device) => {
     Logger.log('USB device disconnected');
 })
 

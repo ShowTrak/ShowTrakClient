@@ -41,14 +41,14 @@ app.whenReady().then(() => {
       preload: path.join(__dirname, 'preload.js'),
       devTools: !app.isPackaged,
     },
-    icon: path.join(__dirname, 'images/icon.ico'),
+    icon: path.join(__dirname, 'Images/icon.ico'),
     frame: true,
     titleBarStyle: 'hidden',
   })
 
   mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'))
 
-  let IconPath = path.join(__dirname, 'images', 'icon.ico');
+  let IconPath = path.join(__dirname, 'Images', 'icon.ico');
   const icon = nativeImage.createFromPath(IconPath)
   tray = new Tray(icon)
 
@@ -58,13 +58,19 @@ app.whenReady().then(() => {
       click: async () => {
         app.quit();
       }
+    },
+    {
+      label: 'Check For Updates',
+      click: async () => {
+        CheckForUpdates();
+      }
     }
   ])
 
   tray.setToolTip('ShowTrak Client Service')
   tray.setContextMenu(contextMenu)
   tray.setIgnoreDoubleClickEvents(true)
-  tray.on('click', function (e) {
+  tray.on('click', function (_e) {
     if (!mainWindow) return;
     if (mainWindow.isVisible()) {
       mainWindow.hide()
@@ -117,6 +123,20 @@ BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
 });
 
+async function CheckForUpdates() {
+  const { updateElectronApp } = require('update-electron-app')
+  updateElectronApp({
+    notifyUser: false,
+    logger: Logger,
+  })
+}
+
+BroadcastManager.on('UpdateSoftware', async (Callback) => {
+  if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
+  await CheckForUpdates();
+  return Callback(null);
+})
+
 async function Main() {
   const Profile = await ProfileManager.GetProfile();
   if (Profile.Adopted && Profile.Server && Profile.Server.IP && Profile.Server.Port) {
@@ -137,7 +157,3 @@ async function BootWithStoredSettings() {
   await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }
 
-const { updateElectronApp } = require('update-electron-app')
-updateElectronApp({
-  notifyUser: false,
-})
