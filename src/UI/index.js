@@ -1,28 +1,28 @@
 /**
  * @fileoverview
  * Handles the main UI logic for the ShowTrak Client application.
- * 
+ *
  * - Updates the navbar title.
  * - Listens for profile updates and updates the profile display accordingly.
  * - Handles minimize and shutdown button events.
- * 
+ *
  */
 var Profile = {};
 var Version = '0.0.0';
 
 async function Main() {
-    await window.API.Loaded();
-    Version = await window.API.GetVersion();
-    $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
+  await window.API.Loaded();
+  Version = await window.API.GetVersion();
+  $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
 }
 Main();
 
 window.API.SetProfile(async (NewProfile) => {
-    Profile = NewProfile;
-    Version = await window.API.GetVersion();
-    console.log('Profile set:', NewProfile);
-    if (Profile.Adopted && Profile.Server) {
-        $('#PROFILE').html(`
+  Profile = NewProfile;
+  Version = await window.API.GetVersion();
+  console.log('Profile set:', NewProfile);
+  if (Profile.Adopted && Profile.Server) {
+    $('#PROFILE').html(`
             <div class="text-center text-white mb-2">
                 <span class="badge bg-success">Adopted</span>
             </div>
@@ -34,8 +34,8 @@ window.API.SetProfile(async (NewProfile) => {
                 <span class="badge bg-ghost">${Profile.UUID}</span>
             </div>
         `);
-    } else {
-        $('#PROFILE').html(`
+  } else {
+    $('#PROFILE').html(`
             <div class="text-center text-white mb-2">
                 <span class="badge bg-secondary">Pending Adoption</span>
             </div>
@@ -46,14 +46,13 @@ window.API.SetProfile(async (NewProfile) => {
                 <span class="badge bg-ghost">${Profile.UUID}</span>
             </div>
         `);
-    }
-})
-
+  }
+});
 
 $('#BTN_MINIMIZE').on('click', async () => {
-    window.API.Minimise();
-})
+  window.API.Minimise();
+});
 
 $('#BTN_SHUTDOWN').on('click', async () => {
-    window.API.Shutdown();
-})
+  window.API.Shutdown();
+});

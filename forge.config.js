@@ -14,7 +14,7 @@ module.exports = {
         // An URL to an ICO file to use as the application icon (displayed in Control Panel > Programs and Features).
         iconUrl: 'https://tkw.bz/img/ShowTrak.ico',
         // The ICO file to use as the icon for the generated Setup.exe
-        setupIcon: './src/Images/icon.ico'
+        setupIcon: './src/Images/icon.ico',
       },
     },
     {

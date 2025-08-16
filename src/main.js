@@ -44,67 +44,65 @@ app.whenReady().then(() => {
     icon: path.join(__dirname, 'Images/icon.ico'),
     frame: true,
     titleBarStyle: 'hidden',
-  })
+  });
 
-  mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'))
+  mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'));
 
   let IconPath = path.join(__dirname, 'Images', 'icon.ico');
-  const icon = nativeImage.createFromPath(IconPath)
-  tray = new Tray(icon)
+  const icon = nativeImage.createFromPath(IconPath);
+  tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'Stop Service',
       click: async () => {
         app.quit();
-      }
+      },
     },
     {
       label: 'Check For Updates',
       click: async () => {
         CheckForUpdates();
-      }
-    }
-  ])
+      },
+    },
+  ]);
 
-  tray.setToolTip('ShowTrak Client Service')
-  tray.setContextMenu(contextMenu)
-  tray.setIgnoreDoubleClickEvents(true)
+  tray.setToolTip('ShowTrak Client Service');
+  tray.setContextMenu(contextMenu);
+  tray.setIgnoreDoubleClickEvents(true);
   tray.on('click', function (_e) {
     if (!mainWindow) return;
     if (mainWindow.isVisible()) {
-      mainWindow.hide()
+      mainWindow.hide();
     } else {
-      mainWindow.show()
+      mainWindow.show();
     }
   });
-
 
   RPC.handle('Loaded', async () => {
     const Profile = await ProfileManager.GetProfile();
     mainWindow.webContents.send('SetProfile', Profile);
-  })
+  });
 
   RPC.handle('Minimise', async () => {
     console.log(1);
     if (mainWindow && mainWindow.isVisible()) {
-      mainWindow.hide()
+      mainWindow.hide();
     }
     return;
-  })
+  });
 
   RPC.handle('Shutdown', async () => {
     app.quit();
     return;
-  })
+  });
 
   RPC.handle('GetVersion', async () => {
     return Config.Application.Version;
-  })
+  });
 
   Main();
-
-})
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -124,18 +122,18 @@ BroadcastManager.on('ProfileUpdated', async (Profile) => {
 });
 
 async function CheckForUpdates() {
-  const { updateElectronApp } = require('update-electron-app')
+  const { updateElectronApp } = require('update-electron-app');
   updateElectronApp({
     notifyUser: false,
     logger: Logger,
-  })
+  });
 }
 
 BroadcastManager.on('UpdateSoftware', async (Callback) => {
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
   await CheckForUpdates();
   return Callback(null);
-})
+});
 
 async function Main() {
   const Profile = await ProfileManager.GetProfile();
@@ -146,9 +144,8 @@ async function Main() {
     Logger.log('Profile loaded [Unadopted]');
     BonjourManager.OnFind(async (Server) => {
       await AdoptionClientManager.Init(Profile.UUID, Server.addresses[0], Server.port);
-    })
+    });
   }
-
 }
 
 async function BootWithStoredSettings() {
@@ -156,4 +153,3 @@ async function BootWithStoredSettings() {
   Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
   await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
 }
-

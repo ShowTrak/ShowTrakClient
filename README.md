@@ -1,4 +1,3 @@
-
 <br />
 <div align="center">
 
@@ -37,6 +36,7 @@ Join our [Discord Server](https://discord.gg/DACmwsbSGW) for support
 The following instructions are for installing ShowTrak Client, To install the Server application please visit [ShowTrak Server](https://github.com/ShowTrak/ShowTrakServer)
 
 ### Installation
+
 1. Download the installer from the releases page
 2. Run the installer.
 

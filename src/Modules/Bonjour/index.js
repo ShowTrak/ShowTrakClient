@@ -6,18 +6,18 @@ const { Bonjour } = require('bonjour-service');
 
 var instance = null;
 const Manager = {
-    OnFind: (callback) => {
-        instance = new Bonjour()
-        instance.find({ type: 'ShowTrak' }, callback)
-    },
-    Terminate: async () => {
-        if (!instance) return;
-        instance.destroy();
-        instance = null;
-        console.log('Bonjour service shut down.');
-    }
-}
+  OnFind: (callback) => {
+    instance = new Bonjour();
+    instance.find({ type: 'ShowTrak' }, callback);
+  },
+  Terminate: async () => {
+    if (!instance) return;
+    instance.destroy();
+    instance = null;
+    console.log('Bonjour service shut down.');
+  },
+};
 
-module.exports = { 
-    Manager,
-}
+module.exports = {
+  Manager,
+};

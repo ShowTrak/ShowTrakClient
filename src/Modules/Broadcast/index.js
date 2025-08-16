@@ -6,5 +6,5 @@ const { EventEmitter } = require('events');
 const Manager = new EventEmitter();
 
 module.exports = {
-    Manager
-}
+  Manager,
+};
