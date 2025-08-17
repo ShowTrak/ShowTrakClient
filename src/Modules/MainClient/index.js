@@ -10,11 +10,13 @@ const { Config } = require('../Config');
 const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: ProfileManager } = require('../ProfileManager');
+const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 
 const { Wait } = require('../Utils');
 
 const Manager = {
   Terminate: async () => {
+  try { await NetworkMonitor.Stop(); } catch {}
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -48,10 +50,14 @@ const Manager = {
       SysInfo();
       await Wait(1000);
       UpdateDeviceList();
+  await Wait(1000);
+  ReportNetworkInterfaces();
+  try { await NetworkMonitor.Start(Socket); } catch {}
     });
 
     Socket.on('disconnect', () => {
       Logger.warn('Disconnected from server');
+  try { NetworkMonitor.Stop(); } catch {}
     });
 
     Socket.on('UpdateSoftware', async (RequestID) => {
@@ -124,6 +130,15 @@ const Manager = {
     }
 
     setInterval(SysInfo, 60000);
+
+    // Network Interfaces Reporting (initial snapshot)
+    async function ReportNetworkInterfaces() {
+      if (!Socket || !Socket.connected)
+        return Logger.warn('Socket not connected, aborting ReportNetworkInterfaces');
+      const [Err, Interfaces] = await OS.GetNetworkInterfaces();
+      if (Err) return Logger.error('Error getting network interfaces:', Err);
+      Socket.emit('NetworkInterfaces', Interfaces || []);
+    }
 
     USBMonitorManager.OnUSBConnect(async (Device) => {
       if (!Socket || !Socket.connected)
