@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain: RPC } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain: RPC, autoUpdater: SquirrelUpdater } = require('electron');
 
 if (require('electron-squirrel-startup')) app.quit();
 
@@ -19,22 +19,56 @@ const { Manager: MainClientManager } = require('./Modules/MainClient');
 const path = require('path');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
+const dns = require('node:dns').promises;
 const { Manager: AppDataManager } = require('./Modules/AppData');
 const { Manager: ProfileManager } = require('./Modules/ProfileManager');
 AppDataManager.Initialize();
 
 const { Config } = require('./Modules/Config');
+const fs = require('fs');
+const os = require('os');
 
 let tray;
 let mainWindow;
+function sendAppUpdateStatus(payload) {
+  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('AppUpdate:Status', payload); } catch {}
+}
+let euAutoUpdater = null;
+let squirrelUpdaterInitialized = false;
+let autoInstallNext = false; // when true, auto-install on update-downloaded
+function isSquirrelWindows() {
+  try {
+    if (process.platform !== 'win32') return false;
+    const execDir = path.dirname(process.execPath);
+    const updateExe1 = path.resolve(execDir, '..', 'Update.exe');
+    const updateExe2 = path.resolve(execDir, '..', '..', 'Update.exe');
+    return fs.existsSync(updateExe1) || fs.existsSync(updateExe2);
+  } catch { return false; }
+}
+function initSquirrelUpdater() {
+  if (squirrelUpdaterInitialized) return;
+  squirrelUpdaterInitialized = true;
+  try {
+    SquirrelUpdater.on('checking-for-update', () => sendAppUpdateStatus({ state: 'checking' }));
+    SquirrelUpdater.on('update-available', () => sendAppUpdateStatus({ state: 'available', info: { tag: 'latest' } }));
+    SquirrelUpdater.on('update-not-available', () => sendAppUpdateStatus({ state: 'none' }));
+    SquirrelUpdater.on('update-downloaded', (_e, _notes, _name) => {
+      sendAppUpdateStatus({ state: 'downloaded', info: { version: _name || 'pending' } });
+      if (autoInstallNext) {
+        try { sendAppUpdateStatus({ state: 'installing' }); SquirrelUpdater.quitAndInstall(); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+      }
+    });
+    SquirrelUpdater.on('error', (err) => sendAppUpdateStatus({ state: 'error', error: String(err) }));
+  } catch {}
+}
 app.whenReady().then(() => {
   mainWindow = new BrowserWindow({
     show: false,
     backgroundColor: '#161618',
-    width: 450,
-    height: 320,
-    maxWidth: 450,
-    maxHeight: 320,
+  width: 600,
+  height: 460,
+  maxWidth: 600,
+  maxHeight: 460,
     resizable: false,
     fullscreenable: false,
     webPreferences: {
@@ -62,7 +96,7 @@ app.whenReady().then(() => {
     {
       label: 'Check For Updates',
       click: async () => {
-        CheckForUpdates();
+  await performUpdateCheck();
       },
     },
   ]);
@@ -101,6 +135,41 @@ app.whenReady().then(() => {
     return Config.Application.Version;
   });
 
+  // Updater IPC
+  RPC.handle('AppUpdate:Check', async () => {
+    if (!app.isPackaged) {
+      try {
+        sendAppUpdateStatus({ state: 'checking' });
+        setTimeout(() => sendAppUpdateStatus({ state: 'available', info: { version: 'TEST' } }), 400);
+        let pct = 0; const t = setInterval(() => { pct += 20; if (pct >= 100) { clearInterval(t); sendAppUpdateStatus({ state: 'downloaded', info: { version: 'TEST' } }); } else { sendAppUpdateStatus({ state: 'downloading', percent: pct }); } }, 200);
+      } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+      return;
+    }
+    await performUpdateCheck();
+  });
+  RPC.handle('AppUpdate:Install', async () => {
+    if (!app.isPackaged) {
+      sendAppUpdateStatus({ state: 'installing' });
+      setTimeout(() => sendAppUpdateStatus({ state: 'installed' }), 400);
+      return;
+    }
+    try {
+      if (isSquirrelWindows()) {
+        sendAppUpdateStatus({ state: 'installing' });
+        SquirrelUpdater.quitAndInstall(); // auto-restart
+        return;
+      }
+      if (!euAutoUpdater) {
+        const { autoUpdater } = require('electron-updater');
+        euAutoUpdater = autoUpdater;
+      }
+      // Force run after install
+      await euAutoUpdater.quitAndInstall(false, true);
+    } catch (e) {
+      sendAppUpdateStatus({ state: 'error', error: String(e) });
+    }
+  });
+
   Main();
 });
 
@@ -112,6 +181,7 @@ app.on('window-all-closed', () => {
 
 // ReinitializeService
 BroadcastManager.on('ReinitializeService', async () => {
+  try { await BonjourManager.Stop(); } catch {}
   await AdoptionClientManager.Terminate();
   await MainClientManager.Terminate();
   await Main();
@@ -121,17 +191,52 @@ BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
 });
 
-async function CheckForUpdates() {
-  const { updateElectronApp } = require('update-electron-app');
-  updateElectronApp({
-    notifyUser: false,
-    logger: Logger,
-  });
+async function performUpdateCheck() {
+  try {
+    if (isSquirrelWindows()) {
+      initSquirrelUpdater();
+      const feed = 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
+      try { SquirrelUpdater.setFeedURL({ url: feed }); } catch { SquirrelUpdater.setFeedURL(feed); }
+      SquirrelUpdater.checkForUpdates();
+      return;
+    }
+    if (!euAutoUpdater) {
+      const { autoUpdater } = require('electron-updater');
+      euAutoUpdater = autoUpdater;
+      euAutoUpdater.autoDownload = true;
+      euAutoUpdater.autoInstallOnAppQuit = false;
+      euAutoUpdater.on('checking-for-update', () => sendAppUpdateStatus({ state: 'checking' }));
+      euAutoUpdater.on('update-available', (info) => sendAppUpdateStatus({ state: 'available', info }));
+      euAutoUpdater.on('update-not-available', (info) => sendAppUpdateStatus({ state: 'none', info }));
+      euAutoUpdater.on('error', (err) => sendAppUpdateStatus({ state: 'error', error: String(err) }));
+      euAutoUpdater.on('download-progress', (p) => sendAppUpdateStatus({ state: 'downloading', percent: p && p.percent ? p.percent : 0 }));
+      euAutoUpdater.on('update-downloaded', async (info) => {
+        sendAppUpdateStatus({ state: 'downloaded', info });
+        if (autoInstallNext) {
+          try { sendAppUpdateStatus({ state: 'installing' }); await euAutoUpdater.quitAndInstall(false, true); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+        }
+      });
+    }
+    // Provide GitHub config dynamically if missing
+    const resourcesPath = typeof process !== 'undefined' ? process.resourcesPath : '';
+    const execDir = typeof process !== 'undefined' && process.execPath ? path.dirname(process.execPath) : '';
+    const ymlPaths = [resourcesPath ? path.join(resourcesPath, 'app-update.yml') : '', execDir ? path.join(execDir, 'app-update.yml') : ''].filter(Boolean);
+    const hasYml = ymlPaths.some((p) => { try { return fs.existsSync(p); } catch { return false; } });
+    if (!hasYml) {
+      const tmpYml = path.join(os.tmpdir(), `showtrak-client-app-update-${process.pid}.yml`);
+      const yml = ['provider: github', 'owner: ShowTrak', 'repo: ShowTrakClient'].join('\n');
+      try { fs.writeFileSync(tmpYml, yml, 'utf8'); euAutoUpdater.updateConfigPath = tmpYml; } catch {}
+    }
+    await euAutoUpdater.checkForUpdates();
+  } catch (e) {
+    sendAppUpdateStatus({ state: 'error', error: String(e) });
+  }
 }
 
 BroadcastManager.on('UpdateSoftware', async (Callback) => {
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
-  await CheckForUpdates();
+  autoInstallNext = true; // remote trigger should auto-install when ready
+  await performUpdateCheck();
   return Callback(null);
 });
 
@@ -143,7 +248,31 @@ async function Main() {
   } else {
     Logger.log('Profile loaded [Unadopted]');
     BonjourManager.OnFind(async (Server) => {
-      await AdoptionClientManager.Init(Profile.UUID, Server.addresses[0], Server.port);
+      Logger.log('Bonjour service found:', Server);
+      try {
+        const addrs = Array.isArray(Server.addresses) ? Server.addresses : [];
+        // Prefer IPv4 from addresses
+        let targetIP = addrs.find((a) => typeof a === 'string' && a.includes('.')) || null;
+        if (!targetIP && Server.referer && typeof Server.referer.address === 'string' && Server.referer.address.includes('.')) {
+          targetIP = Server.referer.address; // fallback to referer IPv4
+        }
+        if (!targetIP && typeof Server.host === 'string' && Server.host.length) {
+          try {
+            const looked = await dns.lookup(Server.host, { family: 4 });
+            if (looked && looked.address) targetIP = looked.address;
+          } catch {}
+        }
+        if (!targetIP) {
+          Logger.warn('Bonjour service discovered but no IPv4 address resolved; skipping this record.');
+          return;
+        }
+        Logger.log(`Discovered ShowTrak Server at ${targetIP}:${Server.port}`);
+        // Stop further browsing to avoid duplicate attempts
+        try { await BonjourManager.Stop(); } catch {}
+        await AdoptionClientManager.Init(Profile.UUID, targetIP, Server.port);
+      } catch (e) {
+        Logger.error('Failed to initialize adoption from Bonjour discovery:', e);
+      }
     });
   }
 }

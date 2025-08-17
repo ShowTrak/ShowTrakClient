@@ -15,6 +15,9 @@ contextBridge.exposeInMainWorld('API', {
   GetVersion: async () => ipcRenderer.invoke('GetVersion'),
   Shutdown: async () => ipcRenderer.invoke('Shutdown'),
   Minimise: async () => ipcRenderer.invoke('Minimise'),
+  CheckForAppUpdates: async () => ipcRenderer.invoke('AppUpdate:Check'),
+  InstallAppUpdate: async () => ipcRenderer.invoke('AppUpdate:Install'),
+  OnAppUpdateStatus: (cb) => ipcRenderer.on('AppUpdate:Status', (_e, payload) => cb(payload)),
   SetProfile: (Callback) =>
     ipcRenderer.on('SetProfile', (_event, Profile) => {
       Callback(Profile);
