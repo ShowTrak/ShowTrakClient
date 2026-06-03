@@ -6,9 +6,9 @@ const { v4: uuidv4 } = require('uuid');
 const Manager = {};
 
 Manager.Generate = () => {
-    return uuidv4();
-}
+  return uuidv4();
+};
 
 module.exports = {
-    Manager,
-}
+  Manager,
+};

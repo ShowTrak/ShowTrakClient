@@ -1,54 +1,58 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
     <meta charset="UTF-8" />
     <title>ShowTrak Client</title>
-    <link
-      rel="stylesheet"
-      href="./vendors/bootstrap/css/bootstrap.min.css"
-    />
-    <link
-      rel="stylesheet"
-      href="./index.css"
-    />
+    <link rel="stylesheet" href="./vendors/bootstrap/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="./index.css" />
   </head>
   <body>
     <div class="dragbar bg-light d-flex justify-content-between align-items-center p-2">
       <span></span>
       <span id="APPLICATION_NAVBAR_TITLE">ShowTrak Client</span>
-      <img id="APPLICATION_NAVBAR_LOGO" src="../Images/icon.png" alt="ShowTrak Logo">
+      <img id="APPLICATION_NAVBAR_LOGO" src="../Images/icon.png" alt="ShowTrak Logo" />
     </div>
     <div id="APPLICATION_CONTAINER" class="d-grid gap-3 p-4">
       <div class="d-flex justify-content-center">
-        <img id="LOGO" src="../Images/icon.png" alt="ShowTrak Logo">
+        <img id="LOGO" src="../Images/icon.png" alt="ShowTrak Logo" />
       </div>
       <div id="PROFILE"></div>
       <div class="row">
         <div class="col-6 d-grid">
-          <a id="BTN_MINIMIZE" class="btn btn-light">
-            Minimise
-          </a>
+          <a id="BTN_MINIMIZE" class="btn btn-light"> Minimise </a>
         </div>
         <div class="col-6 d-grid">
-          <a id="BTN_SHUTDOWN" class="btn btn-danger">
-            Stop Service
-          </a>
+          <a id="BTN_SHUTDOWN" class="btn btn-danger"> Stop Service </a>
         </div>
+      </div>
+
+  <div id="UPDATE_SECTION" class="card bg-ghost border-0 rounded d-none mt-2 text-white">
+        <div class="card-body p-2 small">
+          <div class="d-flex justify-content-between align-items-center">
+            <div class="text-start">
+              <strong>Client Update</strong>
+              <div id="UPDATE_STATUS" class="text-muted">No pending update</div>
+            </div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-success d-none" id="UPDATE_INSTALL_BTN">Install & Restart</button>
+              <button type="button" class="btn btn-sm btn-light d-none" id="UPDATE_LATER_BTN">Later</button>
+            </div>
+          </div>
+          <div id="UPDATE_NOTES_WRAPPER" class="mt-2 d-none">
+            <div class="fw-semibold small mb-1">Changelog</div>
+    <div id="UPDATE_CHANGELOG" class="border-0 rounded bg-ghost p-2 small text-white" style="max-height: 160px; overflow: auto; white-space: pre-wrap;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="d-grid mt-2">
+        <a id="BTN_CHECK_UPDATES" class="btn btn-secondary"> Check for Updates </a>
       </div>
     </div>
   </body>
   <footer>
-    <script
-      src="./vendors/jquery/index.js"
-      defer
-    ></script>
-      <script
-      src="./vendors/bootstrap/js/bootstrap.bundle.min.js"
-      defer
-    ></script>
-    <script
-      src="./index.js"
-      defer
-    ></script>
+    <script src="./vendors/jquery/index.js" defer></script>
+    <script src="./vendors/bootstrap/js/bootstrap.bundle.min.js" defer></script>
+    <script src="./index.js" defer></script>
   </footer>
 </html>

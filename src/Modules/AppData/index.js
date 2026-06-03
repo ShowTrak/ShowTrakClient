@@ -2,7 +2,11 @@
 const path = require('path');
 const fs = require('fs');
 
-let BasePath = process.env.APPDATA || (process.platform == 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share")
+let BasePath =
+  process.env.APPDATA ||
+  (process.platform == 'darwin'
+    ? process.env.HOME + '/Library/Preferences'
+    : process.env.HOME + '/.local/share');
 const appDataPath = path.join(BasePath, 'ShowTrakClient');
 
 const Manager = {};
@@ -15,31 +19,27 @@ Manager.Initialize = () => {
     fs.mkdirSync(appDataPath, { recursive: true });
   }
 
-  let AppDataFolders = [
-    'Logs',
-    'Scripts',
-    'Profile',
-  ]
-  AppDataFolders.forEach(folder => {
+  let AppDataFolders = ['Logs', 'Scripts', 'Profile'];
+  AppDataFolders.forEach((folder) => {
     const folderPath = path.join(appDataPath, folder);
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
   });
   Manager.Initialized = true;
-}
+};
 
 Manager.GetProfileDirectory = () => {
   return path.join(appDataPath, 'Profile');
-}
+};
 
 Manager.GetLogsDirectory = () => {
   return path.join(appDataPath, 'Logs');
-}
+};
 
 Manager.GetScriptsDirectory = () => {
   return path.join(appDataPath, 'Scripts');
-}
+};
 
 Manager.OpenFolder = (FolderPath) => {
   if (fs.existsSync(FolderPath)) {
@@ -48,8 +48,8 @@ Manager.OpenFolder = (FolderPath) => {
   } else {
     return false;
   }
-}
+};
 
 module.exports = {
-    Manager,
-}
+  Manager,
+};

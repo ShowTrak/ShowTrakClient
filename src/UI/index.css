@@ -7,60 +7,75 @@ body {
 }
 
 .dragbar {
-    z-index: 1000000;
-    width: 100vw;
-    height: 2rem;
-    app-region: drag;
-    background-color: #1d1a2ffc !important;
-    padding: 0.3rem 0.8rem !important;
-    color: #ffffff !important;
-    user-select: none !important;
-    -webkit-user-select: none !important;
-    -moz-user-select: none !important;
-    -ms-user-select: none !important;
+  z-index: 1000000;
+  width: 100vw;
+  height: 2rem;
+  app-region: drag;
+  background-color: #1d1a2ffc !important;
+  padding: 0.3rem 0.8rem !important;
+  color: #ffffff !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
 }
 
 #APPLICATION_NAVBAR_LOGO {
-    width: 18px;
-    height: 18px;
+  width: 18px;
+  height: 18px;
 }
 
 #APPLICATION_NAVBAR_STATUS {
-    color: rgba(255,255,255,0.5);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 #APPLICATION_NAVBAR_VERSION {
-    color: rgba(255,255,255,0.5);
+  color: rgba(255, 255, 255, 0.5);
 }
 
 #APPLICATION_CONTAINER {
-    position: absolute;
-    width: 100%;
-    display: grid;
-    grid-template-rows: auto 1fr;
-    overflow: hidden;
+  position: absolute;
+  width: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
 }
 
 #LOGO {
   width: 86px;
-  height: 86px
+  height: 86px;
 }
 
 .btn {
-    border: none !important;
-    border-radius: 0.5rem !important;
-    transition-duration: 100ms;;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  transition-duration: 100ms;
 }
 
 .btn-light {
-    background-color: rgba(255,255,255,0.1) !important;
-    color: white !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: white !important;
 }
 
 .btn-light:hover {
-    background-color: rgba(255,255,255,0.2) !important;
+  background-color: rgba(255, 255, 255, 0.2) !important;
 }
 
 .bg-ghost {
-    background-color: rgba(255,255,255,0.1) !important;
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+#UPDATE_SECTION .text-muted {
+  color: rgba(255, 255, 255, 0.7) !important;
+}
+
+#UPDATE_CHANGELOG a {
+  color: #8ab4ff;
+  text-decoration: underline;
+}
+
+#UPDATE_CHANGELOG code {
+  background: rgba(255, 255, 255, 0.08);
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.25rem;
 }
