@@ -55,7 +55,7 @@ Manager.Adopt = async (IP, Port) => {
     },
   };
   fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
-  Logger.log('Profile updated with adopption details.');
+  Logger.log('Profile updated with adoption details.');
   BroadcastManager.emit('ProfileUpdated', NewProfile);
   return;
 };
