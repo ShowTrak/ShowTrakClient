@@ -1,4 +1,13 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain: RPC, autoUpdater: SquirrelUpdater } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Menu,
+  Tray,
+  nativeImage,
+  shell,
+  ipcMain: RPC,
+  autoUpdater: SquirrelUpdater,
+} = require('electron');
 
 if (require('electron-squirrel-startup')) app.quit();
 
@@ -28,8 +37,50 @@ const { Config } = require('./Modules/Config');
 const fs = require('fs');
 const os = require('os');
 
+const BASE_WEB_PREFERENCES = Object.freeze({
+  contextIsolation: true,
+  sandbox: true,
+  nodeIntegration: false,
+  webSecurity: true,
+});
+
 let tray;
 let mainWindow;
+
+function assertNoArgs(handlerName, args) {
+  if (args.length > 0) {
+    throw new Error(`${handlerName} does not accept arguments`);
+  }
+}
+
+function validationErrorPayload(error) {
+  const message = error && error.message ? error.message : String(error || 'Invalid request');
+  return [message, null];
+}
+
+function applyWindowSecurityGuards(windowInstance) {
+  if (!windowInstance || windowInstance.isDestroyed()) return;
+
+  windowInstance.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      if (/^https?:\/\//i.test(url)) {
+        shell.openExternal(url);
+      }
+    } catch (_error) {
+      return { action: 'deny' };
+    }
+    return { action: 'deny' };
+  });
+
+  windowInstance.webContents.on('will-navigate', (event, url) => {
+    const currentURL = windowInstance.webContents.getURL();
+    if (!currentURL || !url) return;
+    if (url !== currentURL) {
+      event.preventDefault();
+    }
+  });
+}
+
 function sendAppUpdateStatus(payload) {
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('AppUpdate:Status', payload); } catch {}
 }
@@ -72,6 +123,7 @@ app.whenReady().then(() => {
     resizable: false,
     fullscreenable: false,
     webPreferences: {
+      ...BASE_WEB_PREFERENCES,
       preload: path.join(__dirname, 'preload.js'),
       devTools: !app.isPackaged,
     },
@@ -81,6 +133,7 @@ app.whenReady().then(() => {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'));
+  applyWindowSecurityGuards(mainWindow);
 
   let IconPath = path.join(__dirname, 'Images', 'icon.ico');
   const icon = nativeImage.createFromPath(IconPath);
@@ -113,51 +166,82 @@ app.whenReady().then(() => {
     }
   });
 
-  RPC.handle('Loaded', async () => {
+  RPC.handle('Loaded', async (_event, ...args) => {
+    try {
+      assertNoArgs('Loaded', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     const Profile = await ProfileManager.GetProfile();
     mainWindow.webContents.send('SetProfile', Profile);
+    return [null, true];
   });
 
-  RPC.handle('Minimise', async () => {
-    console.log(1);
+  RPC.handle('Minimise', async (_event, ...args) => {
+    try {
+      assertNoArgs('Minimise', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     if (mainWindow && mainWindow.isVisible()) {
       mainWindow.hide();
     }
-    return;
+    return [null, true];
   });
 
-  RPC.handle('Shutdown', async () => {
+  RPC.handle('Shutdown', async (_event, ...args) => {
+    try {
+      assertNoArgs('Shutdown', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     app.quit();
-    return;
+    return [null, true];
   });
 
-  RPC.handle('GetVersion', async () => {
+  RPC.handle('GetVersion', async (_event, ...args) => {
+    try {
+      assertNoArgs('GetVersion', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     return Config.Application.Version;
   });
 
   // Updater IPC
-  RPC.handle('AppUpdate:Check', async () => {
+  RPC.handle('AppUpdate:Check', async (_event, ...args) => {
+    try {
+      assertNoArgs('AppUpdate:Check', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     if (!app.isPackaged) {
       try {
         sendAppUpdateStatus({ state: 'checking' });
         setTimeout(() => sendAppUpdateStatus({ state: 'available', info: { version: 'TEST' } }), 400);
         let pct = 0; const t = setInterval(() => { pct += 20; if (pct >= 100) { clearInterval(t); sendAppUpdateStatus({ state: 'downloaded', info: { version: 'TEST' } }); } else { sendAppUpdateStatus({ state: 'downloading', percent: pct }); } }, 200);
       } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
-      return;
+      return [null, true];
     }
     await performUpdateCheck();
+    return [null, true];
   });
-  RPC.handle('AppUpdate:Install', async () => {
+  RPC.handle('AppUpdate:Install', async (_event, ...args) => {
+    try {
+      assertNoArgs('AppUpdate:Install', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
     if (!app.isPackaged) {
       sendAppUpdateStatus({ state: 'installing' });
       setTimeout(() => sendAppUpdateStatus({ state: 'installed' }), 400);
-      return;
+      return [null, true];
     }
     try {
       if (isSquirrelWindows()) {
         sendAppUpdateStatus({ state: 'installing' });
         SquirrelUpdater.quitAndInstall(); // auto-restart
-        return;
+        return [null, true];
       }
       if (!euAutoUpdater) {
         const { autoUpdater } = require('electron-updater');
@@ -165,8 +249,10 @@ app.whenReady().then(() => {
       }
       // Force run after install
       await euAutoUpdater.quitAndInstall(false, true);
+      return [null, true];
     } catch (e) {
       sendAppUpdateStatus({ state: 'error', error: String(e) });
+      return validationErrorPayload(e);
     }
   });
 

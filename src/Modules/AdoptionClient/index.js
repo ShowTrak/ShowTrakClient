@@ -9,8 +9,18 @@ const { Manager: BroadcastManager } = require('../Broadcast');
 
 const { Manager: ProfileManager } = require('../ProfileManager');
 
+let adoptionHeartbeatInterval = null;
+
+function clearHeartbeatInterval() {
+  if (adoptionHeartbeatInterval) {
+    clearInterval(adoptionHeartbeatInterval);
+    adoptionHeartbeatInterval = null;
+  }
+}
+
 const Manager = {
   Terminate: async () => {
+    clearHeartbeatInterval();
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -21,6 +31,7 @@ const Manager = {
   },
   Init: async (UUID, IP, Port) => {
     const BootTime = Date.now();
+    clearHeartbeatInterval();
 
     if (Socket) Socket.disconnect();
 
@@ -49,7 +60,7 @@ const Manager = {
       return;
     }
 
-    setInterval(SendAdoptionHeartbeat, 10000);
+    adoptionHeartbeatInterval = setInterval(SendAdoptionHeartbeat, 10000);
 
     Socket.on('disconnect', () => {
       Logger.log('Disconnected from server');

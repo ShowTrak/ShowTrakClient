@@ -10,16 +10,48 @@
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
+const INVOKE_CHANNELS = new Set([
+  'Loaded',
+  'GetVersion',
+  'Shutdown',
+  'Minimise',
+  'AppUpdate:Check',
+  'AppUpdate:Install',
+]);
+
+const SUBSCRIBE_CHANNELS = new Set(['SetProfile', 'AppUpdate:Status']);
+
+function invoke(channel, ...args) {
+  if (!INVOKE_CHANNELS.has(channel)) {
+    throw new Error(`Blocked invoke channel: ${channel}`);
+  }
+  return ipcRenderer.invoke(channel, ...args);
+}
+
+function subscribe(channel, callback, mapper = (...payload) => payload) {
+  if (!SUBSCRIBE_CHANNELS.has(channel)) {
+    throw new Error(`Blocked subscribe channel: ${channel}`);
+  }
+  if (typeof callback !== 'function') {
+    throw new TypeError(`Callback for ${channel} must be a function`);
+  }
+
+  const handler = (_event, ...payload) => {
+    callback(...mapper(...payload));
+  };
+
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+}
+
 contextBridge.exposeInMainWorld('API', {
-  Loaded: async () => ipcRenderer.invoke('Loaded'),
-  GetVersion: async () => ipcRenderer.invoke('GetVersion'),
-  Shutdown: async () => ipcRenderer.invoke('Shutdown'),
-  Minimise: async () => ipcRenderer.invoke('Minimise'),
-  CheckForAppUpdates: async () => ipcRenderer.invoke('AppUpdate:Check'),
-  InstallAppUpdate: async () => ipcRenderer.invoke('AppUpdate:Install'),
-  OnAppUpdateStatus: (cb) => ipcRenderer.on('AppUpdate:Status', (_e, payload) => cb(payload)),
+  Loaded: async () => invoke('Loaded'),
+  GetVersion: async () => invoke('GetVersion'),
+  Shutdown: async () => invoke('Shutdown'),
+  Minimise: async () => invoke('Minimise'),
+  CheckForAppUpdates: async () => invoke('AppUpdate:Check'),
+  InstallAppUpdate: async () => invoke('AppUpdate:Install'),
+  OnAppUpdateStatus: (cb) => subscribe('AppUpdate:Status', cb),
   SetProfile: (Callback) =>
-    ipcRenderer.on('SetProfile', (_event, Profile) => {
-      Callback(Profile);
-    }),
+    subscribe('SetProfile', Callback),
 });

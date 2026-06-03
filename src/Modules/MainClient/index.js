@@ -14,9 +14,63 @@ const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 
 const { Wait } = require('../Utils');
 
+let heartbeatInterval = null;
+let sysInfoInterval = null;
+let deviceListInterval = null;
+let usbListenersRegistered = false;
+
+function clearIntervals() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  if (sysInfoInterval) {
+    clearInterval(sysInfoInterval);
+    sysInfoInterval = null;
+  }
+  if (deviceListInterval) {
+    clearInterval(deviceListInterval);
+    deviceListInterval = null;
+  }
+}
+
+async function UpdateDeviceList() {
+  if (!Socket || !Socket.connected)
+    return Logger.warn('Socket not connected, aborting UpdateDeviceList');
+  let [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
+  if (Err) Logger.error('Error getting USB devices:', Err);
+  if (Err || !DeviceList || DeviceList.length == 0) return Socket.emit('USBDeviceList', []);
+  Socket.emit('USBDeviceList', DeviceList);
+}
+
+function registerUSBListeners() {
+  if (usbListenersRegistered) return;
+
+  USBMonitorManager.OnUSBConnect(async (Device) => {
+    if (!Socket || !Socket.connected)
+      return Logger.warn('Socket not connected, aborting OnUSBConnect');
+    Socket.emit('USBDeviceConnected', Device);
+    await UpdateDeviceList();
+  });
+
+  USBMonitorManager.OnUSBDisconnect(async (Device) => {
+    if (!Socket || !Socket.connected)
+      return Logger.warn('Socket not connected, aborting OnUSBDisconnect');
+    Socket.emit('USBDeviceDisconnected', Device);
+    await UpdateDeviceList();
+  });
+
+  usbListenersRegistered = true;
+}
+
 const Manager = {
   Terminate: async () => {
-  try { await NetworkMonitor.Stop(); } catch {}
+    clearIntervals();
+    try {
+      await NetworkMonitor.Stop();
+    } catch (_error) {
+      Logger.warn('Failed to stop network monitor during termination');
+    }
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -26,9 +80,13 @@ const Manager = {
     }
   },
   Init: async (UUID, IP, Port) => {
+    clearIntervals();
+
     if (Socket) {
       Socket.disconnect();
     }
+
+    registerUSBListeners();
 
     // Create a Socket.IO client instance
     Socket = io(`http://${IP}:${Port}`, {
@@ -50,14 +108,22 @@ const Manager = {
       SysInfo();
       await Wait(1000);
       UpdateDeviceList();
-  await Wait(1000);
-  ReportNetworkInterfaces();
-  try { await NetworkMonitor.Start(Socket); } catch {}
+      await Wait(1000);
+      ReportNetworkInterfaces();
+      try {
+        await NetworkMonitor.Start(Socket);
+      } catch (_error) {
+        Logger.warn('Failed to start network monitor on connect');
+      }
     });
 
     Socket.on('disconnect', () => {
       Logger.warn('Disconnected from server');
-  try { NetworkMonitor.Stop(); } catch {}
+      try {
+        NetworkMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop network monitor on disconnect');
+      }
     });
 
     Socket.on('UpdateSoftware', async (RequestID) => {
@@ -104,7 +170,7 @@ const Manager = {
         Vitals: await OS.GetVitals(),
       });
     }
-    setInterval(Heartbeat, 1000);
+    heartbeatInterval = setInterval(Heartbeat, 1000);
 
     async function SysInfo() {
       if (!Socket || !Socket.connected) return;
@@ -116,20 +182,8 @@ const Manager = {
       });
     }
 
-    setInterval(SysInfo, 20000);
-
-    // USB Monitoring
-
-    async function UpdateDeviceList() {
-      if (!Socket || !Socket.connected)
-        return Logger.warn('Socket not connected, aborting UpdateDeviceList');
-      let [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
-      if (Err) Logger.error('Error getting USB devices:', Err);
-      if (Err || !DeviceList || DeviceList.length == 0) return Socket.emit('USBDeviceList', []);
-      Socket.emit('USBDeviceList', DeviceList);
-    }
-
-    setInterval(SysInfo, 60000);
+    sysInfoInterval = setInterval(SysInfo, 20000);
+    deviceListInterval = setInterval(UpdateDeviceList, 60000);
 
     // Network Interfaces Reporting (initial snapshot)
     async function ReportNetworkInterfaces() {
@@ -139,20 +193,6 @@ const Manager = {
       if (Err) return Logger.error('Error getting network interfaces:', Err);
       Socket.emit('NetworkInterfaces', Interfaces || []);
     }
-
-    USBMonitorManager.OnUSBConnect(async (Device) => {
-      if (!Socket || !Socket.connected)
-        return Logger.warn('Socket not connected, aborting OnUSBConnect');
-      Socket.emit('USBDeviceConnected', Device);
-      UpdateDeviceList();
-    });
-
-    USBMonitorManager.OnUSBDisconnect(async (Device) => {
-      if (!Socket || !Socket.connected)
-        return Logger.warn('Socket not connected, aborting OnUSBDisconnect');
-      Socket.emit('USBDeviceDisconnected', Device);
-      UpdateDeviceList();
-    });
   },
 };
 
