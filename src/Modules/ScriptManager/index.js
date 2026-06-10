@@ -6,12 +6,101 @@ const { Manager: ChecksumManager } = require('../ChecksumManager');
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 let ScriptCache = [];
+let LastAppliedDeploymentFingerprint = null;
+let DeploymentStateLoaded = false;
 
 const Manager = {};
 
 const Internal = {};
+
+Internal.GetDeploymentStatePath = () => {
+  return path.join(AppDataManager.GetProfileDirectory(), 'ScriptDeploymentState.json');
+};
+
+Internal.NormalizeFileEntryForFingerprint = (File) => {
+  if (!File || typeof File !== 'object') return null;
+  return {
+    Path: String(File.Path || ''),
+    Type: String(File.Type || ''),
+    Checksum: File.Checksum ? String(File.Checksum) : null,
+  };
+};
+
+Internal.BuildDeploymentFingerprint = (Scripts) => {
+  const Normalized = (Array.isArray(Scripts) ? Scripts : [])
+    .map((Script) => {
+      if (!Script || typeof Script !== 'object') return null;
+      const Files = (Array.isArray(Script.Files) ? Script.Files : [])
+        .map((File) => Internal.NormalizeFileEntryForFingerprint(File))
+        .filter(Boolean)
+        .sort((A, B) => {
+          if (A.Path === B.Path) return A.Type.localeCompare(B.Type);
+          return A.Path.localeCompare(B.Path);
+        });
+
+      return {
+        ID: String(Script.ID || ''),
+        Name: String(Script.Name || ''),
+        Description: String(Script.Description || ''),
+        Colour: typeof Script.Colour === 'number' ? Script.Colour : 6,
+        Weight: typeof Script.Weight === 'number' ? Script.Weight : 0,
+        Confirmation: !!Script.Confirmation,
+        Enabled: !!(Script.isEnabled || Script.Enabled),
+        Platforms: Script.Platforms || {},
+        Arguments: Script.Arguments || {},
+        isValid: Script.isValid !== false,
+        ParseError: Script.ParseError ? String(Script.ParseError) : '',
+        Files,
+      };
+    })
+    .filter(Boolean)
+    .sort((A, B) => A.ID.localeCompare(B.ID));
+
+  return crypto.createHash('sha256').update(JSON.stringify(Normalized)).digest('hex');
+};
+
+Internal.LoadDeploymentState = () => {
+  if (DeploymentStateLoaded) return;
+  DeploymentStateLoaded = true;
+  const StatePath = Internal.GetDeploymentStatePath();
+  try {
+    if (!fs.existsSync(StatePath)) {
+      LastAppliedDeploymentFingerprint = null;
+      return;
+    }
+    const Raw = fs.readFileSync(StatePath, 'utf-8');
+    const Parsed = JSON.parse(Raw || '{}');
+    LastAppliedDeploymentFingerprint =
+      Parsed && typeof Parsed.LastAppliedDeploymentFingerprint === 'string'
+        ? Parsed.LastAppliedDeploymentFingerprint
+        : null;
+  } catch (Err) {
+    Logger.warn(`Failed to load script deployment state: ${Err.message}`);
+    LastAppliedDeploymentFingerprint = null;
+  }
+};
+
+Internal.PersistDeploymentState = () => {
+  const StatePath = Internal.GetDeploymentStatePath();
+  try {
+    fs.writeFileSync(
+      StatePath,
+      JSON.stringify(
+        {
+          LastAppliedDeploymentFingerprint,
+          UpdatedAt: Date.now(),
+        },
+        null,
+        2
+      )
+    );
+  } catch (Err) {
+    Logger.warn(`Failed to persist script deployment state: ${Err.message}`);
+  }
+};
 
 // Ordered list of platform keys to try for the current OS, most specific first.
 Internal.GetPlatformPreference = () => {
@@ -219,6 +308,16 @@ Manager.SetScripts = async (Scripts) => {
   ScriptCache = Scripts || [];
 };
 
+Manager.GetExpectedDeploymentFingerprint = async (Scripts = null) => {
+  const TargetScripts = Array.isArray(Scripts) ? Scripts : ScriptCache;
+  return Internal.BuildDeploymentFingerprint(TargetScripts || []);
+};
+
+Manager.GetLastAppliedDeploymentFingerprint = async () => {
+  Internal.LoadDeploymentState();
+  return LastAppliedDeploymentFingerprint;
+};
+
 Manager.Execute = async (_RequestID, ScriptID) => {
   let Script = ScriptCache.find((s) => s.ID === ScriptID);
   if (!Script) return ['Script not found', false];
@@ -258,6 +357,9 @@ Manager.DeleteScripts = async () => {
     Logger.success(`Deleted all scripts from ${ScriptsDirectory}`);
   }
   fs.mkdirSync(ScriptsDirectory, { recursive: true });
+  Internal.LoadDeploymentState();
+  LastAppliedDeploymentFingerprint = null;
+  Internal.PersistDeploymentState();
   return;
 };
 
@@ -267,8 +369,19 @@ Manager.DownloadScripts = async (IP, Port, Scripts) => {
   Logger.log(`Updating scripts from server ${IP}:${Port}`);
 
   const ScriptsDirectory = AppDataManager.GetScriptsDirectory();
+  const Failures = [];
 
-  for (const Script of Scripts) {
+  for (const Script of Scripts || []) {
+    if (!Script || !Script.ID) {
+      Failures.push('Invalid command JSON (Script.json): missing script ID');
+      continue;
+    }
+    if (Script.isValid === false) {
+      const ParseError = Script.ParseError ? ` (${Script.ParseError})` : '';
+      Failures.push(`Invalid command JSON (Script.json) for ${Script.ID}${ParseError}`);
+      continue;
+    }
+
     const ScriptPath = path.join(ScriptsDirectory, Script.ID);
     Logger.log(`Downloading SCRIPT: ${Script.ID}`);
 
@@ -276,14 +389,21 @@ Manager.DownloadScripts = async (IP, Port, Scripts) => {
       fs.mkdirSync(ScriptPath, { recursive: true });
     }
 
-    for (const File of Script.Files) {
+    const ScriptFiles = Array.isArray(Script.Files) ? Script.Files : [];
+    for (const File of ScriptFiles) {
       let { Path, Type } = File;
 
       const FilePath = path.join(ScriptPath, Path);
 
       if (Type === 'directory') {
-        fs.mkdirSync(FilePath, { recursive: true });
-        Logger.success(`Created Folder ${FilePath}`);
+        try {
+          fs.mkdirSync(FilePath, { recursive: true });
+          Logger.success(`Created Folder ${FilePath}`);
+        } catch (Err) {
+          const Message = `Failed to create folder ${Path} for ${Script.ID}: ${Err.message}`;
+          Logger.error(Message);
+          Failures.push(Message);
+        }
       } else {
         const { Checksum } = File;
         let ShouldDownload = true;
@@ -300,20 +420,36 @@ Manager.DownloadScripts = async (IP, Port, Scripts) => {
         }
         if (ShouldDownload) {
           const fileUrl = `http://${IP}:${Port}/${Script.ID}/${Path.replaceAll('\\', '/')}`;
-          const response = await fetch(fileUrl);
-          if (!response.ok) {
-            Logger.error(`Failed to download ${Path} from ${fileUrl}: ${response.statusText}`);
-            continue;
+          try {
+            const response = await fetch(fileUrl);
+            if (!response.ok) {
+              const Message = `Failed to download ${Path} from ${fileUrl}: ${response.status} ${response.statusText}`;
+              Logger.error(Message);
+              Failures.push(Message);
+              continue;
+            }
+            Logger.success(`Downloaded ${FilePath}`);
+            const buffer = await response.arrayBuffer();
+            fs.writeFileSync(FilePath, Buffer.from(buffer));
+          } catch (Err) {
+            const Message = `Failed to deploy ${Script.ID}/${Path}: ${Err.message}`;
+            Logger.error(Message);
+            Failures.push(Message);
           }
-          Logger.success(`Downloaded ${FilePath}`);
-          const buffer = await response.arrayBuffer();
-          fs.writeFileSync(FilePath, Buffer.from(buffer));
         }
       }
     }
 
     Logger.success(`Downloaded script ${Script.ID}`);
   }
+
+  if (Failures.length > 0) {
+    throw new Error(Failures.join('; '));
+  }
+
+  Internal.LoadDeploymentState();
+  LastAppliedDeploymentFingerprint = Internal.BuildDeploymentFingerprint(Scripts || []);
+  Internal.PersistDeploymentState();
 };
 
 module.exports = {

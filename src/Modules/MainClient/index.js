@@ -140,10 +140,22 @@ const Manager = {
     });
 
     Socket.on('UpdateScripts', async (RequestID) => {
-      Socket.emit('GetScripts', async (Scripts) => {
-        await ScriptManager.DownloadScripts(IP, Port, Scripts);
-        Socket.emit('ScriptExecutionResponse', RequestID, null);
-      });
+      try {
+        Socket.emit('GetScripts', async (Scripts) => {
+          try {
+            await ScriptManager.DownloadScripts(IP, Port, Scripts);
+            Socket.emit('ScriptExecutionResponse', RequestID, null);
+          } catch (Err) {
+            const Message = Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
+            Logger.error('UpdateScripts failed during download', Message);
+            Socket.emit('ScriptExecutionResponse', RequestID, Message);
+          }
+        });
+      } catch (Err) {
+        const Message = Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
+        Logger.error('UpdateScripts failed before download', Message);
+        Socket.emit('ScriptExecutionResponse', RequestID, Message);
+      }
     });
 
     Socket.on('Unadopt', async () => {
@@ -165,9 +177,11 @@ const Manager = {
 
     async function Heartbeat() {
       if (!Socket || !Socket.connected) return;
+      const ScriptsFingerprint = await ScriptManager.GetLastAppliedDeploymentFingerprint();
       Socket.volatile.emit('Heartbeat', {
         Version: Config.Application.Version,
         Vitals: await OS.GetVitals(),
+        ScriptsFingerprint,
       });
     }
     heartbeatInterval = setInterval(Heartbeat, 1000);

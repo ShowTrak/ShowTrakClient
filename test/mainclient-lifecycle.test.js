@@ -107,7 +107,14 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
         },
       },
     },
-    '../ScriptManager': { Manager: { SetScripts: async () => {}, DownloadScripts: async () => {}, DeleteScripts: async () => {} } },
+    '../ScriptManager': {
+      Manager: {
+        SetScripts: async () => {},
+        DownloadScripts: async () => {},
+        DeleteScripts: async () => {},
+        GetLastAppliedDeploymentFingerprint: async () => null,
+      },
+    },
     '../ProfileManager': { Manager: { ResetAdopption: async () => {} } },
     '../NetworkMonitor': {
       Manager: {
