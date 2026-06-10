@@ -1,20 +1,66 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+const path = require('node:path');
+
+const appleSignIdentity = process.env.APPLE_SIGN_IDENTITY;
+const appleSigningKeychain = process.env.APPLE_KEYCHAIN_PATH;
+const shouldSignMac = Boolean(appleSignIdentity);
+const shouldNotarizeMac =
+  shouldSignMac &&
+  Boolean(
+    process.env.APPLE_API_KEY_PATH &&
+      process.env.APPLE_API_KEY_ID &&
+      process.env.APPLE_API_ISSUER_ID
+  );
 
 module.exports = {
   packagerConfig: {
     asar: true,
-    icon: './src/Images/icon.ico',
+    // Keep the runtime binary name stable across platforms so Linux makers
+    // can reliably locate it when building deb/rpm packages.
+    executableName: 'showtrak-client',
+    // Use extensionless base path so Electron Packager can resolve
+    // platform-specific icon formats (.icns on macOS, .ico on Windows).
+    icon: './src/images/icon',
+    // Run as a macOS menu-bar agent (no Dock icon) so the client lives in the
+    // tray, matching the Windows background-service behavior.
+    extendInfo: {
+      LSUIElement: 1,
+    },
+    ...(shouldSignMac
+      ? {
+          osxSign: {
+            identity: appleSignIdentity,
+            ...(appleSigningKeychain ? { keychain: appleSigningKeychain } : {}),
+            hardenedRuntime: true,
+            entitlements: path.resolve(__dirname, 'build/entitlements.mac.plist'),
+            entitlementsInherit: path.resolve(__dirname, 'build/entitlements.mac.plist'),
+            gatekeeperAssess: false,
+            strictVerify: true,
+          },
+        }
+      : {}),
+    ...(shouldNotarizeMac
+      ? {
+          osxNotarize: {
+            tool: 'notarytool',
+            appleApiKey: process.env.APPLE_API_KEY_PATH,
+            appleApiKeyId: process.env.APPLE_API_KEY_ID,
+            appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
+          },
+        }
+      : {}),
   },
   rebuildConfig: {},
   makers: [
     {
       name: '@electron-forge/maker-squirrel',
+      platforms: ['win32'],
       config: {
         // An URL to an ICO file to use as the application icon (displayed in Control Panel > Programs and Features).
         iconUrl: 'https://tkw.bz/img/ShowTrak.ico',
         // The ICO file to use as the icon for the generated Setup.exe
-        setupIcon: './src/Images/icon.ico',
+        setupIcon: './src/images/icon.ico',
       },
     },
     {
@@ -22,12 +68,26 @@ module.exports = {
       platforms: ['darwin'],
     },
     {
+      name: '@electron-forge/maker-zip',
+      platforms: ['linux'],
+    },
+    {
       name: '@electron-forge/maker-deb',
-      config: {},
+      platforms: ['linux'],
+      config: {
+        options: {
+          bin: 'showtrak-client',
+        },
+      },
     },
     {
       name: '@electron-forge/maker-rpm',
-      config: {},
+      platforms: ['linux'],
+      config: {
+        options: {
+          bin: 'showtrak-client',
+        },
+      },
     },
   ],
   plugins: [

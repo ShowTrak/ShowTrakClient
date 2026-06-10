@@ -43,7 +43,8 @@ Manager.GetScriptsDirectory = () => {
 
 Manager.OpenFolder = (FolderPath) => {
   if (fs.existsSync(FolderPath)) {
-    require('child_process').exec(`start "" "${FolderPath}"`);
+    const { shell } = require('electron');
+    shell.openPath(FolderPath);
     return true;
   } else {
     return false;

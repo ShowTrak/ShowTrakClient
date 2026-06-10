@@ -44,8 +44,110 @@ const BASE_WEB_PREFERENCES = Object.freeze({
   webSecurity: true,
 });
 
+// Resolve the window icon for the current platform. Electron uses .ico on
+// Windows and prefers .png elsewhere; the .icns is only used by the packager.
+function getWindowIconPath() {
+  const iconName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+  return path.join(__dirname, 'images', iconName);
+}
+
+// Resolve the tray image. Validate candidates and return the first usable one
+// so we never create an invisible tray item on macOS.
+function getTrayImage() {
+  const candidates =
+    process.platform === 'win32'
+      ? [path.join(__dirname, 'images', 'icon.ico')]
+      : [
+          path.join(__dirname, 'images', 'trayTemplate.png'),
+          path.join(__dirname, 'images', 'icon.png'),
+        ];
+
+  for (const iconPath of candidates) {
+    try {
+      const image = nativeImage.createFromPath(iconPath);
+      if (!image || image.isEmpty()) continue;
+
+      if (process.platform === 'darwin') {
+        const macImage = image.resize({ width: 18, height: 18 });
+        // Only mark explicit template assets as template images.
+        if (path.basename(iconPath).toLowerCase().includes('template')) {
+          macImage.setTemplateImage(true);
+        }
+        Logger.log('Tray image selected', iconPath);
+        return macImage;
+      }
+
+      Logger.log('Tray image selected', iconPath);
+      return image;
+    } catch {}
+  }
+
+  Logger.warn('No valid tray image candidates found', candidates.join(', '));
+  return nativeImage.createEmpty();
+}
+
 let tray;
 let mainWindow;
+let appQuitRequested = false;
+
+function hasMainWindow() {
+  return mainWindow && !mainWindow.isDestroyed();
+}
+
+function createMainWindow() {
+  mainWindow = new BrowserWindow({
+    show: false,
+    backgroundColor: '#161618',
+    width: 600,
+    height: 460,
+    maxWidth: 600,
+    maxHeight: 460,
+    resizable: false,
+    fullscreenable: false,
+    webPreferences: {
+      ...BASE_WEB_PREFERENCES,
+      preload: path.join(__dirname, 'preload.js'),
+      devTools: !app.isPackaged,
+    },
+    icon: getWindowIconPath(),
+    frame: true,
+    titleBarStyle: 'hidden',
+  });
+
+  mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'));
+  applyWindowSecurityGuards(mainWindow);
+
+  // Keep the app running in the background when the user clicks the window
+  // close button; explicit quit actions still terminate the app.
+  mainWindow.on('close', (event) => {
+    if (appQuitRequested) return;
+    event.preventDefault();
+    try {
+      mainWindow.hide();
+    } catch {}
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  return mainWindow;
+}
+
+function openConfigureWindow() {
+  if (!hasMainWindow()) {
+    createMainWindow();
+  }
+  if (!hasMainWindow()) return;
+
+  try {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  } catch {}
+}
 
 function assertNoArgs(handlerName, args) {
   if (args.length > 0) {
@@ -113,58 +215,77 @@ function initSquirrelUpdater() {
   } catch {}
 }
 app.whenReady().then(() => {
-  mainWindow = new BrowserWindow({
-    show: false,
-    backgroundColor: '#161618',
-  width: 600,
-  height: 460,
-  maxWidth: 600,
-  maxHeight: 460,
-    resizable: false,
-    fullscreenable: false,
-    webPreferences: {
-      ...BASE_WEB_PREFERENCES,
-      preload: path.join(__dirname, 'preload.js'),
-      devTools: !app.isPackaged,
-    },
-    icon: path.join(__dirname, 'Images/icon.ico'),
-    frame: true,
-    titleBarStyle: 'hidden',
-  });
+  createMainWindow();
 
-  mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'));
-  applyWindowSecurityGuards(mainWindow);
-
-  let IconPath = path.join(__dirname, 'Images', 'icon.ico');
-  const icon = nativeImage.createFromPath(IconPath);
-  tray = new Tray(icon);
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Stop Service',
-      click: async () => {
-        app.quit();
-      },
-    },
-    {
-      label: 'Check For Updates',
-      click: async () => {
-  await performUpdateCheck();
-      },
-    },
-  ]);
-
-  tray.setToolTip('ShowTrak Client Service');
-  tray.setContextMenu(contextMenu);
-  tray.setIgnoreDoubleClickEvents(true);
-  tray.on('click', function (_e) {
-    if (!mainWindow) return;
-    if (mainWindow.isVisible()) {
-      mainWindow.hide();
-    } else {
-      mainWindow.show();
+  // Create the tray icon. Tray support is reliable on Windows and macOS, but
+  // varies across Linux desktops; if it fails there we fall back to showing the
+  // window minimized so the app remains reachable.
+  try {
+    const trayImage = getTrayImage();
+    if (!trayImage || trayImage.isEmpty()) {
+      throw new Error('No valid tray image found');
     }
-  });
+    tray = new Tray(trayImage);
+    Logger.log('Tray created successfully');
+  } catch (error) {
+    tray = null;
+    Logger.warn('System tray unavailable, falling back to minimized window', String(error));
+  }
+
+  if (tray) {
+    const contextMenu = Menu.buildFromTemplate([
+      {
+        label: 'Configure',
+        click: async () => {
+          openConfigureWindow();
+        },
+      },
+      {
+        type: 'separator',
+      },
+      {
+        label: 'Stop Service',
+        click: async () => {
+          app.quit();
+        },
+      },
+      {
+        label: 'Check For Updates',
+        click: async () => {
+          await performUpdateCheck();
+        },
+      },
+    ]);
+
+    tray.setToolTip('ShowTrak Client Service');
+    if (process.platform === 'darwin') {
+      // Keep a visible fallback label in the menu bar in case the icon remains
+      // hidden by OS rendering rules.
+      tray.setTitle('ShowTrak Client');
+      // Hide Dock only after tray is confirmed available.
+      if (app.dock) {
+        try {
+          app.dock.hide();
+        } catch {}
+      }
+    }
+    tray.setContextMenu(contextMenu);
+    tray.setIgnoreDoubleClickEvents(true);
+  } else {
+    // No tray: keep the app accessible by making the window visible.
+    mainWindow.once('ready-to-show', () => {
+      try {
+        if (process.platform === 'darwin' && app.dock) {
+          app.dock.show();
+          mainWindow.show();
+          mainWindow.focus();
+          return;
+        }
+        mainWindow.minimize();
+        mainWindow.show();
+      } catch {}
+    });
+  }
 
   RPC.handle('Loaded', async (_event, ...args) => {
     try {
@@ -263,6 +384,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('before-quit', () => {
+  appQuitRequested = true;
 });
 
 // ReinitializeService
