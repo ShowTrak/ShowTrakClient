@@ -46,6 +46,82 @@ Internal.ResolvePlatformScript = (Script) => {
   return null;
 };
 
+Internal.ResolvePlatformArguments = (Script) => {
+  const ArgumentMap = Script && Script.Arguments ? Script.Arguments : {};
+  for (const key of Internal.GetPlatformPreference()) {
+    const value = typeof ArgumentMap[key] === 'string' ? ArgumentMap[key].trim() : '';
+    if (value) return value;
+  }
+  return '';
+};
+
+// Parse a shell-like argument string into argv tokens.
+// Supports spaces, single/double quotes, and backslash escaping.
+Internal.ParseArgumentString = (value) => {
+  const input = String(value || '').trim();
+  if (!input) return [];
+
+  const args = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaping = false;
+
+  const pushCurrent = () => {
+    if (current.length > 0) {
+      args.push(current);
+      current = '';
+    }
+  };
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaping = true;
+      continue;
+    }
+
+    if (inSingle) {
+      if (ch === "'") inSingle = false;
+      else current += ch;
+      continue;
+    }
+
+    if (inDouble) {
+      if (ch === '"') inDouble = false;
+      else current += ch;
+      continue;
+    }
+
+    if (ch === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      continue;
+    }
+
+    if (/\s/.test(ch)) {
+      pushCurrent();
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (escaping) current += '\\';
+  pushCurrent();
+  return args;
+};
+
 // Resolve how to launch a script based on its file extension and the current
 // platform. Returns { command, args } suitable for child_process.spawn, or null
 // when the script type is not runnable on this platform.
@@ -89,7 +165,7 @@ Internal.ResolveLauncher = (ScriptPath) => {
   }
 };
 
-Internal.RunScriptFile = async (ScriptPath) => {
+Internal.RunScriptFile = async (ScriptPath, ExtraArgs = []) => {
   return new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
 
@@ -107,7 +183,7 @@ Internal.RunScriptFile = async (ScriptPath) => {
       }
     }
 
-    const Child = spawn(Launcher.command, Launcher.args, {
+    const Child = spawn(Launcher.command, Launcher.args.concat(ExtraArgs), {
       cwd: path.dirname(ScriptPath),
       windowsHide: true,
     });
@@ -149,6 +225,8 @@ Manager.Execute = async (_RequestID, ScriptID) => {
   Logger.log(`Executing script: ${Script.Name} (${Script.ID})`);
   try {
     const RelativePath = Internal.ResolvePlatformScript(Script);
+    const PlatformArgString = Internal.ResolvePlatformArguments(Script);
+    const PlatformArgs = Internal.ParseArgumentString(PlatformArgString);
     if (!RelativePath) {
       Logger.error(`No script defined for this platform (${process.platform}) on ${Script.Name}`);
       return ['No script is configured for this operating system', false];
@@ -163,7 +241,7 @@ Manager.Execute = async (_RequestID, ScriptID) => {
       Logger.error(`Script file does not exist: ${TargetFile}`);
       return ['Script file for this operating system was not found', false];
     }
-    await Internal.RunScriptFile(TargetFile);
+    await Internal.RunScriptFile(TargetFile, PlatformArgs);
     Logger.success(`Script ${Script.Name} executed successfully`);
     return [null, true];
   } catch (error) {
