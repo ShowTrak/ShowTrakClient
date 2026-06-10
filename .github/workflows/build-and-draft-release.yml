@@ -101,7 +101,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm
+          sudo apt-get install -y rpm libudev-dev
 
       - name: Install dependencies
         run: npm ci
