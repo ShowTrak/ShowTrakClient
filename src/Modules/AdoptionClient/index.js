@@ -55,6 +55,7 @@ const Manager = {
       Socket.emit('AdoptionHeartbeat', {
         BootTime: BootTime,
         Hostname: OSManager.Hostname,
+        OperatingSystem: OSManager.OperatingSystem,
         Version: Config.Application.Version,
       });
       return;

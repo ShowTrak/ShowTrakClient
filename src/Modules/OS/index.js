@@ -8,6 +8,12 @@ const macaddress = require('macaddress');
 const Manager = {};
 
 Manager.Hostname = os.hostname();
+Manager.OperatingSystem =
+  process.platform === 'win32'
+    ? 'Windows'
+    : process.platform === 'darwin'
+      ? 'macOS'
+      : 'Linux';
 
 let CPUUsage = 0.0;
 let __prevCpuTimes = null;

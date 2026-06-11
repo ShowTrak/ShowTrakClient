@@ -192,6 +192,7 @@ const Manager = {
       if (MacError) return Logger.error(MacError);
       Socket.emit('SystemInfo', {
         Hostname: OS.Hostname,
+        OperatingSystem: OS.OperatingSystem,
         MacAddresses: MacAddresses,
       });
     }
