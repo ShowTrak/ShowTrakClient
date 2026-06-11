@@ -11,6 +11,7 @@ const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: ProfileManager } = require('../ProfileManager');
 const { Manager: NetworkMonitor } = require('../NetworkMonitor');
+const { Manager: ProcessMonitor } = require('../ProcessMonitor');
 
 const { Wait } = require('../Utils');
 
@@ -67,6 +68,11 @@ const Manager = {
   Terminate: async () => {
     clearIntervals();
     try {
+      await ProcessMonitor.Stop();
+    } catch (_error) {
+      Logger.warn('Failed to stop process monitor during termination');
+    }
+    try {
       await NetworkMonitor.Stop();
     } catch (_error) {
       Logger.warn('Failed to stop network monitor during termination');
@@ -111,6 +117,11 @@ const Manager = {
       await Wait(1000);
       ReportNetworkInterfaces();
       try {
+        await ProcessMonitor.Start(Socket);
+      } catch (_error) {
+        Logger.warn('Failed to start process monitor on connect');
+      }
+      try {
         await NetworkMonitor.Start(Socket);
       } catch (_error) {
         Logger.warn('Failed to start network monitor on connect');
@@ -119,6 +130,11 @@ const Manager = {
 
     Socket.on('disconnect', () => {
       Logger.warn('Disconnected from server');
+      try {
+        ProcessMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop process monitor on disconnect');
+      }
       try {
         NetworkMonitor.Stop();
       } catch (_error) {

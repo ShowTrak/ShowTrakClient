@@ -25,6 +25,7 @@ if (!gotTheLock) {
 
 const { Manager: AdoptionClientManager } = require('./Modules/AdoptionClient');
 const { Manager: MainClientManager } = require('./Modules/MainClient');
+const { Manager: ProcessMonitor } = require('./Modules/ProcessMonitor');
 const path = require('path');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
@@ -295,6 +296,7 @@ app.whenReady().then(() => {
     }
     const Profile = await ProfileManager.GetProfile();
     mainWindow.webContents.send('SetProfile', Profile);
+    mainWindow.webContents.send('ProcessMonitorStatus', ProcessMonitor.GetStatus());
     return [null, true];
   });
 
@@ -400,6 +402,12 @@ BroadcastManager.on('ReinitializeService', async () => {
 
 BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
+});
+
+BroadcastManager.on('ProcessMonitorStatus', async (Status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('ProcessMonitorStatus', Status || { State: 'unknown' });
+  }
 });
 
 async function performUpdateCheck() {

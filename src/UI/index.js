@@ -9,6 +9,27 @@
  */
 var Profile = {};
 var Version = '0.0.0';
+var ProcessMonitorStatus = { State: 'unknown', Message: null };
+
+function RenderProcessMonitorWarning() {
+  const $warning = $('#PROCESS_MONITOR_WARNING');
+  if (!$warning || !$warning.length) return;
+  const state = String(ProcessMonitorStatus && ProcessMonitorStatus.State ? ProcessMonitorStatus.State : 'unknown').toLowerCase();
+  const message =
+    ProcessMonitorStatus && typeof ProcessMonitorStatus.Message === 'string'
+      ? ProcessMonitorStatus.Message.trim()
+      : '';
+  if (state === 'permission_denied' || state === 'error') {
+    $warning
+      .removeClass('d-none')
+      .text(
+        message ||
+          'Application monitoring is unavailable. Check system permissions for ShowTrak Client.'
+      );
+    return;
+  }
+  $warning.addClass('d-none').text('');
+}
 
 async function Main() {
   await window.API.Loaded();
@@ -114,6 +135,10 @@ async function Main() {
         $later.removeClass('d-none');
       }
     } catch {}
+  });
+  window.API.OnProcessMonitorStatus((status) => {
+    ProcessMonitorStatus = status || { State: 'unknown', Message: null };
+    RenderProcessMonitorWarning();
   });
 }
 Main();

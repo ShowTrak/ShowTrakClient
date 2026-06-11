@@ -44,6 +44,8 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
 
   let onUsbConnectRegistrations = 0;
   let onUsbDisconnectRegistrations = 0;
+  let processStarts = 0;
+  let processStops = 0;
   let networkStarts = 0;
   let networkStops = 0;
 
@@ -116,6 +118,16 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
       },
     },
     '../ProfileManager': { Manager: { ResetAdopption: async () => {} } },
+    '../ProcessMonitor': {
+      Manager: {
+        Start: async () => {
+          processStarts += 1;
+        },
+        Stop: async () => {
+          processStops += 1;
+        },
+      },
+    },
     '../NetworkMonitor': {
       Manager: {
         Start: async () => {
@@ -140,9 +152,11 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
     assert.equal(onUsbConnectRegistrations, 1);
     assert.equal(onUsbDisconnectRegistrations, 1);
     assert.ok(clearIntervalCalls > clearsAfterFirstConnect);
+    assert.ok(processStarts >= 2);
     assert.ok(networkStarts >= 2);
 
     await Manager.Terminate();
+    assert.ok(processStops >= 1);
     assert.ok(networkStops >= 1);
     assert.equal(activeIntervals.size, 0);
   } finally {
