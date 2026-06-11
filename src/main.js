@@ -26,6 +26,7 @@ if (!gotTheLock) {
 const { Manager: AdoptionClientManager } = require('./Modules/AdoptionClient');
 const { Manager: MainClientManager } = require('./Modules/MainClient');
 const { Manager: ProcessMonitor } = require('./Modules/ProcessMonitor');
+const { Manager: StartupManager } = require('./Modules/Startup');
 const path = require('path');
 const { Manager: BroadcastManager } = require('./Modules/Broadcast');
 const { Manager: BonjourManager } = require('./Modules/Bonjour');
@@ -317,7 +318,8 @@ function initSquirrelUpdater() {
     });
   } catch {}
 }
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await StartupManager.EnsureEnabled();
   createMainWindow();
 
   // Create the tray icon. Tray support is reliable on Windows and macOS, but
