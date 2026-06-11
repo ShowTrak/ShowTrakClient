@@ -200,6 +200,51 @@ let squirrelUpdaterInitialized = false;
 let autoInstallNext = false; // when true, auto-install on update-downloaded
 let ActiveRemoteUpdateSession = null;
 
+function prepareForQuitAndInstall(context = 'unknown') {
+  const previousQuitRequested = appQuitRequested;
+  appQuitRequested = true;
+  try {
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+  } catch (error) {
+    Logger.warn('[Updater] Failed to destroy tray before install', {
+      context,
+      error: String(error),
+    });
+  }
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.removeAllListeners('close');
+    }
+  } catch (error) {
+    Logger.warn('[Updater] Failed to relax window close guard before install', {
+      context,
+      error: String(error),
+    });
+  }
+
+  return () => {
+    appQuitRequested = previousQuitRequested;
+  };
+}
+
+function requestQuitAndInstall(runInstall, context = 'unknown') {
+  const restoreQuitState = prepareForQuitAndInstall(context);
+  try {
+    Logger.log('[Updater] quitAndInstall requested', {
+      context,
+      hasTray: !!tray,
+      hasMainWindow: !!(mainWindow && !mainWindow.isDestroyed()),
+    });
+    runInstall();
+  } catch (error) {
+    restoreQuitState();
+    throw error;
+  }
+}
+
 function mapUpdaterStateToProgress(payload = {}) {
   const state = String(payload.state || '').toLowerCase();
   if (state === 'checking') return [5, 'Checking for updates'];
@@ -215,6 +260,14 @@ function mapUpdaterStateToProgress(payload = {}) {
   if (state === 'error') return [0, payload && payload.error ? String(payload.error) : 'Update error'];
   return [0, 'Waiting'];
 }
+
+function normalizeVersionToken(value) {
+  return String(value || '')
+    .trim()
+    .replace(/^v/i, '')
+    .toLowerCase();
+}
+
 function isSquirrelWindows() {
   try {
     if (process.platform !== 'win32') return false;
@@ -248,7 +301,14 @@ function initSquirrelUpdater() {
       });
       sendAppUpdateStatus({ state: 'downloaded', info: { version: _name || 'pending' } });
       if (autoInstallNext) {
-        try { sendAppUpdateStatus({ state: 'installing' }); SquirrelUpdater.quitAndInstall(); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+        try {
+          sendAppUpdateStatus({ state: 'installing' });
+          requestQuitAndInstall(() => {
+            SquirrelUpdater.quitAndInstall();
+          }, 'squirrel-auto');
+        } catch (e) {
+          sendAppUpdateStatus({ state: 'error', error: String(e) });
+        }
       }
     });
     SquirrelUpdater.on('error', (err) => {
@@ -414,7 +474,9 @@ app.whenReady().then(() => {
     try {
       if (isSquirrelWindows()) {
         sendAppUpdateStatus({ state: 'installing' });
-        SquirrelUpdater.quitAndInstall(); // auto-restart
+        requestQuitAndInstall(() => {
+          SquirrelUpdater.quitAndInstall(); // auto-restart
+        }, 'squirrel-manual');
         return [null, true];
       }
       if (!euAutoUpdater) {
@@ -422,7 +484,10 @@ app.whenReady().then(() => {
         euAutoUpdater = autoUpdater;
       }
       // Force run after install
-      await euAutoUpdater.quitAndInstall(false, true);
+      sendAppUpdateStatus({ state: 'installing' });
+      requestQuitAndInstall(() => {
+        euAutoUpdater.quitAndInstall(false, true);
+      }, 'electron-updater-manual');
       return [null, true];
     } catch (e) {
       sendAppUpdateStatus({ state: 'error', error: String(e) });
@@ -465,9 +530,13 @@ async function performUpdateCheck(options = {}) {
   try {
     const FeedURL = options && options.FeedURL ? String(options.FeedURL).trim() : '';
     const UseLANFeed = !!FeedURL;
+    const TargetVersion = options && options.TargetVersion ? String(options.TargetVersion).trim() : '';
+    const AllowDowngrade = !!(UseLANFeed && TargetVersion);
     Logger.log('[Updater] performUpdateCheck begin', {
       mode: UseLANFeed ? 'remote-lan' : 'self-default',
       feedUrl: FeedURL || null,
+      targetVersion: TargetVersion || null,
+      allowDowngrade: AllowDowngrade,
       platform: process.platform,
       packaged: app.isPackaged,
       isSquirrelWindows: isSquirrelWindows(),
@@ -523,9 +592,24 @@ async function performUpdateCheck(options = {}) {
         });
         sendAppUpdateStatus({ state: 'downloaded', info });
         if (autoInstallNext) {
-          try { sendAppUpdateStatus({ state: 'installing' }); await euAutoUpdater.quitAndInstall(false, true); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+          try {
+            sendAppUpdateStatus({ state: 'installing' });
+            requestQuitAndInstall(() => {
+              euAutoUpdater.quitAndInstall(false, true);
+            }, 'electron-updater-auto');
+          } catch (e) {
+            sendAppUpdateStatus({ state: 'error', error: String(e) });
+          }
         }
       });
+    }
+    try {
+      euAutoUpdater.allowDowngrade = AllowDowngrade;
+      Logger.log('[Updater][ElectronUpdater] allowDowngrade set', {
+        value: euAutoUpdater.allowDowngrade,
+      });
+    } catch (err) {
+      Logger.error('[Updater][ElectronUpdater] failed to set allowDowngrade', err);
     }
     // Provide update config dynamically if missing.
     const resourcesPath = typeof process !== 'undefined' ? process.resourcesPath : '';
@@ -589,10 +673,15 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
 
   const FeedURL = Payload && Payload.FeedURL ? String(Payload.FeedURL).trim() : '';
+  const TargetVersion = Payload && Payload.ReleaseVersion ? String(Payload.ReleaseVersion).trim() : '';
   if (!FeedURL) return Callback('Missing LAN update feed URL');
 
   autoInstallNext = true;
-  Logger.log('[Updater][RemoteLAN] autoInstallNext enabled with LAN feed', { feedUrl: FeedURL });
+  Logger.log('[Updater][RemoteLAN] autoInstallNext enabled with LAN feed', {
+    feedUrl: FeedURL,
+    targetVersion: TargetVersion || null,
+    currentVersion: Config.Application.Version,
+  });
 
   const [InitialPercent, InitialText] = mapUpdaterStateToProgress({ state: 'checking' });
   try {
@@ -633,7 +722,7 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
         },
       };
     
-      performUpdateCheck({ FeedURL }).catch((Err) => {
+      performUpdateCheck({ FeedURL, TargetVersion }).catch((Err) => {
         Logger.error('[Updater][RemoteLAN] performUpdateCheck rejected', Err);
         reject(Err);
         ActiveRemoteUpdateSession = null;
@@ -641,7 +730,16 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
     });
 
     if (terminalState === 'none') {
-      Logger.log('[Updater][RemoteLAN] no update available, treating as success');
+      const requestedVersion = normalizeVersionToken(TargetVersion);
+      const currentVersion = normalizeVersionToken(Config.Application.Version);
+      if (requestedVersion && requestedVersion !== currentVersion) {
+        Logger.error('[Updater][RemoteLAN] requested version was not offered by updater', {
+          requestedVersion,
+          currentVersion,
+        });
+        return Callback(`Requested version ${TargetVersion} was reported as unavailable by the updater`);
+      }
+      Logger.log('[Updater][RemoteLAN] no update available because client is already on requested version');
       return Callback(null);
     }
     Logger.log('[Updater][RemoteLAN] remote LAN update download completed');
