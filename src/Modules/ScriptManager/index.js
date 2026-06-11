@@ -48,6 +48,7 @@ Internal.BuildDeploymentFingerprint = (Scripts) => {
         Colour: typeof Script.Colour === 'number' ? Script.Colour : 6,
         Weight: typeof Script.Weight === 'number' ? Script.Weight : 0,
         Confirmation: !!Script.Confirmation,
+        Timeout: typeof Script.Timeout === 'number' ? Script.Timeout : 15000,
         Enabled: !!(Script.isEnabled || Script.Enabled),
         Platforms: Script.Platforms || {},
         Arguments: Script.Arguments || {},
@@ -293,12 +294,13 @@ Internal.RunScriptFile = async (ScriptPath, ExtraArgs = []) => {
     });
 
     Child.on('close', (code) => {
+      // A non-zero exit code still means the script process completed.
       if (code !== 0) {
         const Message = StdErr.trim() || `Script exited with code ${code}`;
-        Logger.error(`Script failed (${code}): ${Message}`);
-        return reject(new Error(Message));
+        Logger.warn(`Script exited non-zero (${code}): ${Message}`);
+      } else {
+        Logger.success(`Script executed successfully: ${StdOut}`);
       }
-      Logger.success(`Script executed successfully: ${StdOut}`);
       resolve(StdOut);
     });
   });

@@ -1,0 +1,300 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+
+const { loadWithMocks, withMocks } = require('./test-helpers');
+
+function tempDir(prefix) {
+  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+test('AppData initialize creates required directories and open folder checks existence', async () => {
+  const appDataRoot = tempDir('showtrak-client-appdata-');
+  const oldAppData = process.env.APPDATA;
+  process.env.APPDATA = appDataRoot;
+
+  const opened = [];
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'AppData', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    electron: {
+      shell: {
+        openPath: (folderPath) => {
+          opened.push(folderPath);
+        },
+      },
+    },
+  });
+
+  try {
+    Manager.Initialize();
+    Manager.Initialize();
+
+    const profileDir = Manager.GetProfileDirectory();
+    const logsDir = Manager.GetLogsDirectory();
+    const scriptsDir = Manager.GetScriptsDirectory();
+
+    assert.equal(fs.existsSync(profileDir), true);
+    assert.equal(fs.existsSync(logsDir), true);
+    assert.equal(fs.existsSync(scriptsDir), true);
+
+    assert.equal(
+      withMocks(
+        {
+          electron: {
+            shell: {
+              openPath: (folderPath) => {
+                opened.push(folderPath);
+              },
+            },
+          },
+        },
+        () => Manager.OpenFolder(profileDir)
+      ),
+      true
+    );
+    assert.equal(Manager.OpenFolder(path.join(appDataRoot, 'missing')), false);
+    assert.equal(opened.length, 1);
+  } finally {
+    process.env.APPDATA = oldAppData;
+  }
+});
+
+test('Broadcast manager emits and handles events', async () => {
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Broadcast', 'index.js');
+  const { Manager } = require(modulePath);
+
+  let payload = null;
+  Manager.once('unit:test:event', (value) => {
+    payload = value;
+  });
+
+  Manager.emit('unit:test:event', { ok: true });
+  assert.deepEqual(payload, { ok: true });
+});
+
+test('ChecksumManager.Checksum resolves file checksum value', async () => {
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ChecksumManager', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    checksum: {
+      file: (_filePath, callback) => callback(null, 'abc123'),
+    },
+  });
+
+  const result = await Manager.Checksum('/tmp/anything');
+  assert.equal(result, 'abc123');
+});
+
+test('Config exposes app and shared versions', async () => {
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Config', 'index.js');
+  const { Config } = require(modulePath);
+  assert.equal(typeof Config.Application.Version, 'string');
+  assert.equal(Config.Shared.Version, Config.Application.Version);
+  assert.equal(Config.Application.Name, 'ShowTrak Client');
+});
+
+test('UUID manager delegates to uuid.v4', async () => {
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'UUID', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    uuid: {
+      v4: () => 'uuid-value',
+    },
+  });
+
+  assert.equal(Manager.Generate(), 'uuid-value');
+});
+
+test('Utils.Wait resolves asynchronously', async () => {
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Utils', 'index.js');
+  const Utils = require(modulePath);
+
+  const start = Date.now();
+  await Utils.Wait(5);
+  assert.equal(Date.now() >= start, true);
+});
+
+test('ProfileManager creates and updates profile states', async () => {
+  const profileRoot = tempDir('showtrak-client-profile-');
+  const emitted = [];
+
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    '../Logger': {
+      CreateLogger: () => ({ log: () => {} }),
+    },
+    '../AppData': {
+      Manager: {
+        Initialize: () => {},
+        GetProfileDirectory: () => profileRoot,
+      },
+    },
+    '../Broadcast': {
+      Manager: {
+        emit: (event, payload) => emitted.push([event, payload]),
+      },
+    },
+    '../UUID': {
+      Manager: {
+        Generate: () => 'generated-uuid',
+      },
+    },
+  });
+
+  const profileA = await Manager.GetProfile();
+  assert.equal(profileA.UUID, 'generated-uuid');
+  assert.equal(profileA.Adopted, false);
+
+  await Manager.Adopt('127.0.0.1', 9000);
+  const adopted = await Manager.GetProfile();
+  assert.equal(adopted.Adopted, true);
+  assert.equal(adopted.Server.IP, '127.0.0.1');
+
+  await Manager.ResetAdopption();
+  const reset = await Manager.GetProfile();
+  assert.equal(reset.Adopted, false);
+
+  await Manager.ResetProfileToFactoryDefaults();
+  const resetFactory = await Manager.GetProfile();
+  assert.equal(resetFactory.UUID, 'generated-uuid');
+  assert.equal(resetFactory.Adopted, false);
+
+  await Manager.ForceResetProfile();
+  const resetForced = await Manager.GetProfile();
+  assert.equal(resetForced.UUID, 'generated-uuid');
+
+  assert.equal(emitted.some(([event]) => event === 'ProfileUpdated'), true);
+});
+
+test('USBMonitor formats connected devices and emits callbacks', async () => {
+  let lastInstance = null;
+
+  class FakeWebUSB {
+    constructor() {
+      this.listeners = new Map();
+      lastInstance = this;
+    }
+
+    async getDevices() {
+      return [
+        {
+          vendorId: 10,
+          productId: 11,
+          manufacturerName: 'Vendor',
+          productName: 'Device',
+          serialNumber: 'SER1',
+        },
+      ];
+    }
+
+    addEventListener(event, handler) {
+      this.listeners.set(event, handler);
+    }
+
+    emit(event, device) {
+      const handler = this.listeners.get(event);
+      if (handler) handler({ device });
+    }
+  }
+
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'USBMonitor', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    '../Logger': {
+      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+    },
+    usb: {
+      WebUSB: FakeWebUSB,
+    },
+  });
+
+  const [err, devices] = await Manager.GetUSBDevices();
+  assert.equal(err, null);
+  assert.equal(devices.length, 1);
+  assert.equal(devices[0].VendorID, 10);
+
+  let connected = null;
+  let disconnected = null;
+  Manager.OnUSBConnect((device) => {
+    connected = device;
+  });
+  Manager.OnUSBDisconnect((device) => {
+    disconnected = device;
+  });
+
+  const rawDevice = {
+    vendorId: 22,
+    productId: 33,
+    manufacturerName: 'Acme',
+    productName: 'Thing',
+    serialNumber: 'S2',
+  };
+
+  lastInstance.emit('connect', rawDevice);
+  lastInstance.emit('disconnect', rawDevice);
+
+  assert.equal(connected.ProductID, 33);
+  assert.equal(disconnected.SerialNumber, 'S2');
+});
+
+test('Logger writes file lines and supports all log levels', async () => {
+  const logRoot = tempDir('showtrak-client-logger-');
+  const appended = [];
+  const printed = [];
+  const createdFiles = new Set();
+
+  const originalConsoleLog = console.log;
+  console.log = (...args) => printed.push(args);
+
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Logger', 'index.js');
+  const { CreateLogger } = loadWithMocks(modulePath, {
+    '../Config': { Production: false },
+    colors: {
+      cyan: (value) => String(value),
+      magenta: (value) => String(value),
+      rainbow: (value) => String(value),
+      red: (value) => String(value),
+      grey: (value) => String(value),
+      green: (value) => String(value),
+    },
+    fs: {
+      existsSync: (target) => createdFiles.has(target) || fs.existsSync(target),
+      mkdirSync: (target, options) => {
+        fs.mkdirSync(target, options);
+        createdFiles.add(target);
+      },
+      writeFileSync: (target, content) => {
+        fs.writeFileSync(target, content, 'utf8');
+        createdFiles.add(target);
+      },
+      appendFileSync: (target, content) => {
+        appended.push([target, content]);
+        fs.appendFileSync(target, content, 'utf8');
+      },
+    },
+    path,
+    'electron-squirrel-startup': false,
+    '../AppData': {
+      Manager: {
+        GetLogsDirectory: () => logRoot,
+      },
+    },
+  });
+
+  try {
+    const logger = CreateLogger('Unit');
+    logger.log('log');
+    logger.info('info');
+    logger.silent('silent');
+    logger.warn('warn');
+    logger.error('error');
+    logger.debug('debug');
+    logger.success('success');
+    logger.database('db');
+    logger.databaseError('dberr');
+
+    assert.equal(printed.length > 0, true);
+    assert.equal(appended.length >= 8, true);
+  } finally {
+    console.log = originalConsoleLog;
+  }
+});
