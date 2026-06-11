@@ -185,6 +185,9 @@ function applyWindowSecurityGuards(windowInstance) {
 }
 
 function sendAppUpdateStatus(payload) {
+  try {
+    Logger.log('[Updater] Status event', payload || {});
+  } catch {}
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('AppUpdate:Status', payload); } catch {}
   try {
     if (ActiveRemoteUpdateSession && typeof ActiveRemoteUpdateSession.onStatus === 'function') {
@@ -224,17 +227,34 @@ function isSquirrelWindows() {
 function initSquirrelUpdater() {
   if (squirrelUpdaterInitialized) return;
   squirrelUpdaterInitialized = true;
+  Logger.log('[Updater][Squirrel] Initializing Squirrel updater event bindings');
   try {
-    SquirrelUpdater.on('checking-for-update', () => sendAppUpdateStatus({ state: 'checking' }));
-    SquirrelUpdater.on('update-available', () => sendAppUpdateStatus({ state: 'available', info: { tag: 'latest' } }));
-    SquirrelUpdater.on('update-not-available', () => sendAppUpdateStatus({ state: 'none' }));
+    SquirrelUpdater.on('checking-for-update', () => {
+      Logger.log('[Updater][Squirrel] checking-for-update');
+      sendAppUpdateStatus({ state: 'checking' });
+    });
+    SquirrelUpdater.on('update-available', () => {
+      Logger.log('[Updater][Squirrel] update-available');
+      sendAppUpdateStatus({ state: 'available', info: { tag: 'latest' } });
+    });
+    SquirrelUpdater.on('update-not-available', () => {
+      Logger.log('[Updater][Squirrel] update-not-available');
+      sendAppUpdateStatus({ state: 'none' });
+    });
     SquirrelUpdater.on('update-downloaded', (_e, _notes, _name) => {
+      Logger.log('[Updater][Squirrel] update-downloaded', {
+        name: _name || null,
+        autoInstallNext,
+      });
       sendAppUpdateStatus({ state: 'downloaded', info: { version: _name || 'pending' } });
       if (autoInstallNext) {
         try { sendAppUpdateStatus({ state: 'installing' }); SquirrelUpdater.quitAndInstall(); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
       }
     });
-    SquirrelUpdater.on('error', (err) => sendAppUpdateStatus({ state: 'error', error: String(err) }));
+    SquirrelUpdater.on('error', (err) => {
+      Logger.error('[Updater][Squirrel] error', err);
+      sendAppUpdateStatus({ state: 'error', error: String(err) });
+    });
   } catch {}
 }
 app.whenReady().then(() => {
@@ -261,6 +281,15 @@ app.whenReady().then(() => {
         label: 'Configure',
         click: async () => {
           openConfigureWindow();
+        },
+      },
+      {
+        label: 'Open Logs Folder',
+        click: async () => {
+          const Opened = AppDataManager.OpenFolder(AppDataManager.GetLogsDirectory());
+          if (!Opened) {
+            Logger.warn('Failed to open logs folder from tray menu');
+          }
         },
       },
       {
@@ -436,13 +465,23 @@ async function performUpdateCheck(options = {}) {
   try {
     const FeedURL = options && options.FeedURL ? String(options.FeedURL).trim() : '';
     const UseLANFeed = !!FeedURL;
+    Logger.log('[Updater] performUpdateCheck begin', {
+      mode: UseLANFeed ? 'remote-lan' : 'self-default',
+      feedUrl: FeedURL || null,
+      platform: process.platform,
+      packaged: app.isPackaged,
+      isSquirrelWindows: isSquirrelWindows(),
+      autoInstallNext,
+    });
 
     if (isSquirrelWindows()) {
       initSquirrelUpdater();
       const feed = UseLANFeed
         ? FeedURL
         : 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
+      Logger.log('[Updater][Squirrel] setting feed URL', { feed });
       try { SquirrelUpdater.setFeedURL({ url: feed }); } catch { SquirrelUpdater.setFeedURL(feed); }
+      Logger.log('[Updater][Squirrel] checkForUpdates invoked');
       SquirrelUpdater.checkForUpdates();
       return;
     }
@@ -451,12 +490,37 @@ async function performUpdateCheck(options = {}) {
       euAutoUpdater = autoUpdater;
       euAutoUpdater.autoDownload = true;
       euAutoUpdater.autoInstallOnAppQuit = false;
-      euAutoUpdater.on('checking-for-update', () => sendAppUpdateStatus({ state: 'checking' }));
-      euAutoUpdater.on('update-available', (info) => sendAppUpdateStatus({ state: 'available', info }));
-      euAutoUpdater.on('update-not-available', (info) => sendAppUpdateStatus({ state: 'none', info }));
-      euAutoUpdater.on('error', (err) => sendAppUpdateStatus({ state: 'error', error: String(err) }));
-      euAutoUpdater.on('download-progress', (p) => sendAppUpdateStatus({ state: 'downloading', percent: p && p.percent ? p.percent : 0 }));
+      Logger.log('[Updater][ElectronUpdater] initialized autoUpdater instance');
+      euAutoUpdater.on('checking-for-update', () => {
+        Logger.log('[Updater][ElectronUpdater] checking-for-update');
+        sendAppUpdateStatus({ state: 'checking' });
+      });
+      euAutoUpdater.on('update-available', (info) => {
+        Logger.log('[Updater][ElectronUpdater] update-available', info || {});
+        sendAppUpdateStatus({ state: 'available', info });
+      });
+      euAutoUpdater.on('update-not-available', (info) => {
+        Logger.log('[Updater][ElectronUpdater] update-not-available', info || {});
+        sendAppUpdateStatus({ state: 'none', info });
+      });
+      euAutoUpdater.on('error', (err) => {
+        Logger.error('[Updater][ElectronUpdater] error', err);
+        sendAppUpdateStatus({ state: 'error', error: String(err) });
+      });
+      euAutoUpdater.on('download-progress', (p) => {
+        Logger.log('[Updater][ElectronUpdater] download-progress', {
+          percent: p && p.percent ? p.percent : 0,
+          bytesPerSecond: p && p.bytesPerSecond ? p.bytesPerSecond : null,
+          transferred: p && p.transferred ? p.transferred : null,
+          total: p && p.total ? p.total : null,
+        });
+        sendAppUpdateStatus({ state: 'downloading', percent: p && p.percent ? p.percent : 0 });
+      });
       euAutoUpdater.on('update-downloaded', async (info) => {
+        Logger.log('[Updater][ElectronUpdater] update-downloaded', {
+          info: info || {},
+          autoInstallNext,
+        });
         sendAppUpdateStatus({ state: 'downloaded', info });
         if (autoInstallNext) {
           try { sendAppUpdateStatus({ state: 'installing' }); await euAutoUpdater.quitAndInstall(false, true); } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
@@ -468,40 +532,67 @@ async function performUpdateCheck(options = {}) {
     const execDir = typeof process !== 'undefined' && process.execPath ? path.dirname(process.execPath) : '';
     const ymlPaths = [resourcesPath ? path.join(resourcesPath, 'app-update.yml') : '', execDir ? path.join(execDir, 'app-update.yml') : ''].filter(Boolean);
     const hasYml = ymlPaths.some((p) => { try { return fs.existsSync(p); } catch { return false; } });
+    Logger.log('[Updater][ElectronUpdater] update config inspection', {
+      hasYml,
+      ymlPaths,
+      useLanFeed: UseLANFeed,
+    });
     if (!hasYml || UseLANFeed) {
       const tmpYml = path.join(os.tmpdir(), `showtrak-client-app-update-${process.pid}.yml`);
       const yml = UseLANFeed
         ? ['provider: generic', `url: ${FeedURL}`].join('\n')
         : ['provider: github', 'owner: ShowTrak', 'repo: ShowTrakClient'].join('\n');
-      try { fs.writeFileSync(tmpYml, yml, 'utf8'); euAutoUpdater.updateConfigPath = tmpYml; } catch {}
+      try {
+        fs.writeFileSync(tmpYml, yml, 'utf8');
+        euAutoUpdater.updateConfigPath = tmpYml;
+        Logger.log('[Updater][ElectronUpdater] using temporary update config', {
+          path: tmpYml,
+          content: yml,
+        });
+      } catch (err) {
+        Logger.error('[Updater][ElectronUpdater] failed to write temporary update config', err);
+      }
     }
 
     if (UseLANFeed && typeof euAutoUpdater.setFeedURL === 'function') {
       try {
         euAutoUpdater.setFeedURL({ provider: 'generic', url: FeedURL });
-      } catch {}
+        Logger.log('[Updater][ElectronUpdater] setFeedURL applied for LAN feed', { feedUrl: FeedURL });
+      } catch (err) {
+        Logger.error('[Updater][ElectronUpdater] setFeedURL failed for LAN feed', err);
+      }
     }
 
+    Logger.log('[Updater][ElectronUpdater] invoking checkForUpdates');
     await euAutoUpdater.checkForUpdates();
+    Logger.log('[Updater][ElectronUpdater] checkForUpdates call resolved');
   } catch (e) {
+    Logger.error('[Updater] performUpdateCheck failed', e);
     sendAppUpdateStatus({ state: 'error', error: String(e) });
   }
 }
 
 BroadcastManager.on('UpdateSoftware', async (Callback) => {
+  Logger.log('[Updater][Remote] UpdateSoftware request received from server');
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
   autoInstallNext = true; // remote trigger should auto-install when ready
+  Logger.log('[Updater][Remote] autoInstallNext enabled for remote self-update');
   await performUpdateCheck();
+  Logger.log('[Updater][Remote] UpdateSoftware request dispatched to updater');
   return Callback(null);
 });
 
 BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, Callback) => {
+  Logger.log('[Updater][RemoteLAN] UpdateSoftwareFromLAN request received', {
+    payload: Payload || {},
+  });
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
 
   const FeedURL = Payload && Payload.FeedURL ? String(Payload.FeedURL).trim() : '';
   if (!FeedURL) return Callback('Missing LAN update feed URL');
 
   autoInstallNext = true;
+  Logger.log('[Updater][RemoteLAN] autoInstallNext enabled with LAN feed', { feedUrl: FeedURL });
 
   const [InitialPercent, InitialText] = mapUpdaterStateToProgress({ state: 'checking' });
   try {
@@ -514,21 +605,28 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
     const terminalState = await new Promise((resolve, reject) => {
       ActiveRemoteUpdateSession = {
         onStatus: async (statusPayload) => {
+          Logger.log('[Updater][RemoteLAN] status payload', statusPayload || {});
           const [percent, statusText] = mapUpdaterStateToProgress(statusPayload);
           try {
             if (typeof ProgressCallback === 'function') {
               await ProgressCallback(percent, statusText);
+              Logger.log('[Updater][RemoteLAN] progress callback sent', {
+                percent,
+                statusText,
+              });
             }
           } catch {}
 
           const state = String((statusPayload && statusPayload.state) || '').toLowerCase();
           if (state === 'downloaded' || state === 'none') {
+            Logger.log('[Updater][RemoteLAN] terminal state reached', { state });
             resolve(state);
             ActiveRemoteUpdateSession = null;
           } else if (state === 'error') {
             const msg = statusPayload && statusPayload.error
               ? String(statusPayload.error)
               : 'Update failed';
+            Logger.error('[Updater][RemoteLAN] terminal error state', { message: msg });
             reject(new Error(msg));
             ActiveRemoteUpdateSession = null;
           }
@@ -536,18 +634,23 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
       };
     
       performUpdateCheck({ FeedURL }).catch((Err) => {
+        Logger.error('[Updater][RemoteLAN] performUpdateCheck rejected', Err);
         reject(Err);
         ActiveRemoteUpdateSession = null;
       });
     });
 
     if (terminalState === 'none') {
+      Logger.log('[Updater][RemoteLAN] no update available, treating as success');
       return Callback(null);
     }
+    Logger.log('[Updater][RemoteLAN] remote LAN update download completed');
     return Callback(null);
   } catch (Err) {
+    Logger.error('[Updater][RemoteLAN] remote LAN update failed', Err);
     return Callback(Err && Err.message ? Err.message : String(Err));
   } finally {
+    Logger.log('[Updater][RemoteLAN] session cleanup');
     ActiveRemoteUpdateSession = null;
   }
 });
