@@ -186,10 +186,32 @@ function applyWindowSecurityGuards(windowInstance) {
 
 function sendAppUpdateStatus(payload) {
   try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('AppUpdate:Status', payload); } catch {}
+  try {
+    if (ActiveRemoteUpdateSession && typeof ActiveRemoteUpdateSession.onStatus === 'function') {
+      ActiveRemoteUpdateSession.onStatus(payload || {});
+    }
+  } catch {}
 }
 let euAutoUpdater = null;
 let squirrelUpdaterInitialized = false;
 let autoInstallNext = false; // when true, auto-install on update-downloaded
+let ActiveRemoteUpdateSession = null;
+
+function mapUpdaterStateToProgress(payload = {}) {
+  const state = String(payload.state || '').toLowerCase();
+  if (state === 'checking') return [5, 'Checking for updates'];
+  if (state === 'available') return [15, 'Update available'];
+  if (state === 'downloading') {
+    const percent = payload && payload.percent ? Number(payload.percent) : 0;
+    const safe = Number.isFinite(percent) ? Math.max(0, Math.min(100, Math.round(percent))) : 0;
+    return [safe, `Downloading ${safe}%`];
+  }
+  if (state === 'downloaded') return [100, 'Downloaded'];
+  if (state === 'installing') return [100, 'Installing update'];
+  if (state === 'none') return [100, 'Already up to date'];
+  if (state === 'error') return [0, payload && payload.error ? String(payload.error) : 'Update error'];
+  return [0, 'Waiting'];
+}
 function isSquirrelWindows() {
   try {
     if (process.platform !== 'win32') return false;
@@ -410,11 +432,16 @@ BroadcastManager.on('ProcessMonitorStatus', async (Status) => {
   }
 });
 
-async function performUpdateCheck() {
+async function performUpdateCheck(options = {}) {
   try {
+    const FeedURL = options && options.FeedURL ? String(options.FeedURL).trim() : '';
+    const UseLANFeed = !!FeedURL;
+
     if (isSquirrelWindows()) {
       initSquirrelUpdater();
-      const feed = 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
+      const feed = UseLANFeed
+        ? FeedURL
+        : 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
       try { SquirrelUpdater.setFeedURL({ url: feed }); } catch { SquirrelUpdater.setFeedURL(feed); }
       SquirrelUpdater.checkForUpdates();
       return;
@@ -436,16 +463,25 @@ async function performUpdateCheck() {
         }
       });
     }
-    // Provide GitHub config dynamically if missing
+    // Provide update config dynamically if missing.
     const resourcesPath = typeof process !== 'undefined' ? process.resourcesPath : '';
     const execDir = typeof process !== 'undefined' && process.execPath ? path.dirname(process.execPath) : '';
     const ymlPaths = [resourcesPath ? path.join(resourcesPath, 'app-update.yml') : '', execDir ? path.join(execDir, 'app-update.yml') : ''].filter(Boolean);
     const hasYml = ymlPaths.some((p) => { try { return fs.existsSync(p); } catch { return false; } });
-    if (!hasYml) {
+    if (!hasYml || UseLANFeed) {
       const tmpYml = path.join(os.tmpdir(), `showtrak-client-app-update-${process.pid}.yml`);
-      const yml = ['provider: github', 'owner: ShowTrak', 'repo: ShowTrakClient'].join('\n');
+      const yml = UseLANFeed
+        ? ['provider: generic', `url: ${FeedURL}`].join('\n')
+        : ['provider: github', 'owner: ShowTrak', 'repo: ShowTrakClient'].join('\n');
       try { fs.writeFileSync(tmpYml, yml, 'utf8'); euAutoUpdater.updateConfigPath = tmpYml; } catch {}
     }
+
+    if (UseLANFeed && typeof euAutoUpdater.setFeedURL === 'function') {
+      try {
+        euAutoUpdater.setFeedURL({ provider: 'generic', url: FeedURL });
+      } catch {}
+    }
+
     await euAutoUpdater.checkForUpdates();
   } catch (e) {
     sendAppUpdateStatus({ state: 'error', error: String(e) });
@@ -457,6 +493,63 @@ BroadcastManager.on('UpdateSoftware', async (Callback) => {
   autoInstallNext = true; // remote trigger should auto-install when ready
   await performUpdateCheck();
   return Callback(null);
+});
+
+BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, Callback) => {
+  if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
+
+  const FeedURL = Payload && Payload.FeedURL ? String(Payload.FeedURL).trim() : '';
+  if (!FeedURL) return Callback('Missing LAN update feed URL');
+
+  autoInstallNext = true;
+
+  const [InitialPercent, InitialText] = mapUpdaterStateToProgress({ state: 'checking' });
+  try {
+    if (typeof ProgressCallback === 'function') {
+      await ProgressCallback(InitialPercent, InitialText);
+    }
+  } catch {}
+
+  try {
+    const terminalState = await new Promise((resolve, reject) => {
+      ActiveRemoteUpdateSession = {
+        onStatus: async (statusPayload) => {
+          const [percent, statusText] = mapUpdaterStateToProgress(statusPayload);
+          try {
+            if (typeof ProgressCallback === 'function') {
+              await ProgressCallback(percent, statusText);
+            }
+          } catch {}
+
+          const state = String((statusPayload && statusPayload.state) || '').toLowerCase();
+          if (state === 'downloaded' || state === 'none') {
+            resolve(state);
+            ActiveRemoteUpdateSession = null;
+          } else if (state === 'error') {
+            const msg = statusPayload && statusPayload.error
+              ? String(statusPayload.error)
+              : 'Update failed';
+            reject(new Error(msg));
+            ActiveRemoteUpdateSession = null;
+          }
+        },
+      };
+    
+      performUpdateCheck({ FeedURL }).catch((Err) => {
+        reject(Err);
+        ActiveRemoteUpdateSession = null;
+      });
+    });
+
+    if (terminalState === 'none') {
+      return Callback(null);
+    }
+    return Callback(null);
+  } catch (Err) {
+    return Callback(Err && Err.message ? Err.message : String(Err));
+  } finally {
+    ActiveRemoteUpdateSession = null;
+  }
 });
 
 async function Main() {

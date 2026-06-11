@@ -150,6 +150,26 @@ const Manager = {
       });
     });
 
+    Socket.on('UpdateSoftwareFromLAN', async (RequestID, Payload = {}) => {
+      Logger.log('Received UpdateSoftwareFromLAN request');
+      BroadcastManager.emit(
+        'UpdateSoftwareFromLAN',
+        {
+          FeedURL: `http://${IP}:${Port}${Payload && Payload.FeedPath ? Payload.FeedPath : '/updates/client/latest/'}`,
+          ReleaseVersion: Payload && Payload.ReleaseVersion ? Payload.ReleaseVersion : null,
+        },
+        async (Progress = 0, StatusText = '') => {
+          if (!Socket || !Socket.connected) return;
+          Socket.emit('ScriptExecutionProgress', RequestID, Progress, StatusText);
+        },
+        async (Err) => {
+          Logger.log(`UpdateSoftwareFromLAN callback executed for RequestID: ${RequestID}`);
+          if (!Socket || !Socket.connected) return;
+          Socket.emit('ScriptExecutionResponse', RequestID, Err || null);
+        }
+      );
+    });
+
     Socket.on('DeleteScripts', async (RequestID) => {
       await ScriptManager.DeleteScripts();
       Socket.emit('ScriptExecutionResponse', RequestID, null);
