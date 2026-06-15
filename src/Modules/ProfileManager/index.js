@@ -42,8 +42,12 @@ Manager.ForceResetProfile = async () => {
   Logger.log('Profile.json overwritten');
 };
 
-Manager.Adopt = async (IP, Port) => {
+Manager.Adopt = async (IP, Port, Options = {}) => {
   const Profile = await Manager.GetProfile();
+  const ServerIdentity =
+    Options && typeof Options.ServerIdentity === 'string' && Options.ServerIdentity.trim()
+      ? Options.ServerIdentity.trim()
+      : null;
 
   const NewProfile = {
     UUID: Profile.UUID,
@@ -52,12 +56,44 @@ Manager.Adopt = async (IP, Port) => {
       IP: IP,
       Port: Port,
       AdoptionTime: Date.now(),
+      ...(ServerIdentity ? { ServerIdentity } : {}),
     },
   };
   fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
   Logger.log('Profile updated with adoption details.');
   BroadcastManager.emit('ProfileUpdated', NewProfile);
   return;
+};
+
+Manager.UpdateServerEndpoint = async (IP, Port) => {
+  const Profile = await Manager.GetProfile();
+  if (!Profile || !Profile.Adopted || !Profile.Server) {
+    return;
+  }
+
+  const CurrentIP = Profile.Server.IP;
+  const CurrentPort = Profile.Server.Port;
+  if (CurrentIP === IP && CurrentPort === Port) {
+    return;
+  }
+
+  const NewProfile = {
+    UUID: Profile.UUID,
+    Adopted: true,
+    Server: {
+      IP,
+      Port,
+      AdoptionTime: Profile.Server.AdoptionTime || Date.now(),
+      LastRecoveredAt: Date.now(),
+      ...(Profile.Server && Profile.Server.ServerIdentity
+        ? { ServerIdentity: Profile.Server.ServerIdentity }
+        : {}),
+    },
+  };
+
+  fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
+  Logger.log(`Profile server endpoint updated to ${IP}:${Port}`);
+  BroadcastManager.emit('ProfileUpdated', NewProfile);
 };
 
 Manager.ResetAdopption = async () => {

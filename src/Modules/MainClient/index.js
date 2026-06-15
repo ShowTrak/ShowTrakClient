@@ -9,7 +9,6 @@ const { Config } = require('../Config');
 
 const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
-const { Manager: ProfileManager } = require('../ProfileManager');
 const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 const { Manager: ProcessMonitor } = require('../ProcessMonitor');
 
@@ -19,6 +18,8 @@ let heartbeatInterval = null;
 let sysInfoInterval = null;
 let deviceListInterval = null;
 let usbListenersRegistered = false;
+let consecutiveConnectErrors = 0;
+let connectFailureReported = false;
 
 function clearIntervals() {
   if (heartbeatInterval) {
@@ -32,6 +33,38 @@ function clearIntervals() {
   if (deviceListInterval) {
     clearInterval(deviceListInterval);
     deviceListInterval = null;
+  }
+}
+
+function markConnected(IP, Port) {
+  consecutiveConnectErrors = 0;
+  connectFailureReported = false;
+  BroadcastManager.emit('MainClientConnectionStatus', {
+    State: 'connected',
+    IP,
+    Port,
+  });
+}
+
+function markConnectionError(IP, Port, Error) {
+  consecutiveConnectErrors += 1;
+  const message = Error && Error.message ? String(Error.message) : 'Unknown connection error';
+  BroadcastManager.emit('MainClientConnectionStatus', {
+    State: 'connect_error',
+    IP,
+    Port,
+    Error: message,
+    ConsecutiveErrors: consecutiveConnectErrors,
+  });
+
+  if (!connectFailureReported && consecutiveConnectErrors >= 3) {
+    connectFailureReported = true;
+    BroadcastManager.emit('ServerConnectFailed', {
+      IP,
+      Port,
+      Error: message,
+      ConsecutiveErrors: consecutiveConnectErrors,
+    });
   }
 }
 
@@ -87,6 +120,8 @@ const Manager = {
   },
   Init: async (UUID, IP, Port) => {
     clearIntervals();
+    consecutiveConnectErrors = 0;
+    connectFailureReported = false;
 
     if (Socket) {
       Socket.disconnect();
@@ -106,6 +141,7 @@ const Manager = {
 
     Socket.on('connect', async () => {
       Logger.success('Connected to server successfully');
+      markConnected(IP, Port);
       Socket.emit('GetScripts', async (Scripts) => {
         await ScriptManager.SetScripts(Scripts);
       });
@@ -130,6 +166,11 @@ const Manager = {
 
     Socket.on('disconnect', () => {
       Logger.warn('Disconnected from server');
+      BroadcastManager.emit('MainClientConnectionStatus', {
+        State: 'disconnected',
+        IP,
+        Port,
+      });
       try {
         ProcessMonitor.Stop();
       } catch (_error) {
@@ -140,6 +181,11 @@ const Manager = {
       } catch (_error) {
         Logger.warn('Failed to stop network monitor on disconnect');
       }
+    });
+
+    Socket.on('connect_error', (Error) => {
+      Logger.warn(`Connection error to ${IP}:${Port}`, Error && Error.message ? Error.message : Error);
+      markConnectionError(IP, Port, Error);
     });
 
     Socket.on('UpdateSoftware', async (RequestID) => {
@@ -195,8 +241,10 @@ const Manager = {
     });
 
     Socket.on('Unadopt', async () => {
-      await ProfileManager.ResetAdopption();
-      BroadcastManager.emit('ReinitializeService');
+      BroadcastManager.emit('ServerAdoptionRejected', {
+        IP,
+        Port,
+      });
     });
 
     Socket.on('ExecuteScript', async (RequestID, ScriptID) => {

@@ -33,6 +33,7 @@ const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const dns = require('node:dns').promises;
 const { Manager: AppDataManager } = require('./Modules/AppData');
 const { Manager: ProfileManager } = require('./Modules/ProfileManager');
+const { Wait } = require('./Modules/Utils');
 AppDataManager.Initialize();
 
 const { Config } = require('./Modules/Config');
@@ -91,6 +92,21 @@ function getTrayImage() {
 let tray;
 let mainWindow;
 let appQuitRequested = false;
+let currentRecoveryStatus = { State: 'idle', Message: '' };
+let isReinitializing = false;
+let recoveryInProgress = false;
+let pendingRecoveryCandidate = null;
+const RECOVERY_MAX_ATTEMPTS = 5;
+const RECOVERY_COOLDOWN_MS = 15000;
+const RECOVERY_BACKOFF_BASE_MS = 1000;
+const RECOVERY_BACKOFF_MAX_MS = 10000;
+const recoveryMetrics = {
+  Attempts: 0,
+  LastAttemptAt: 0,
+  LastFailureAt: 0,
+  LastFailureReason: null,
+  LastRecoveredAt: 0,
+};
 
 function hasMainWindow() {
   return mainWindow && !mainWindow.isDestroyed();
@@ -183,6 +199,30 @@ function applyWindowSecurityGuards(windowInstance) {
       event.preventDefault();
     }
   });
+}
+
+function sendRecoveryStatus(payload) {
+  const base = payload || { State: 'idle', Message: '' };
+  currentRecoveryStatus = {
+    ...base,
+    Metrics: {
+      Attempts: recoveryMetrics.Attempts,
+      LastAttemptAt: recoveryMetrics.LastAttemptAt,
+      LastFailureAt: recoveryMetrics.LastFailureAt,
+      LastFailureReason: recoveryMetrics.LastFailureReason,
+      LastRecoveredAt: recoveryMetrics.LastRecoveredAt,
+      MaxAttempts: RECOVERY_MAX_ATTEMPTS,
+      CooldownMs: RECOVERY_COOLDOWN_MS,
+    },
+  };
+  try {
+    Logger.log('[Recovery] Status event', currentRecoveryStatus);
+  } catch {}
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ServerRecoveryStatus', currentRecoveryStatus);
+    }
+  } catch {}
 }
 
 function sendAppUpdateStatus(payload) {
@@ -410,6 +450,7 @@ app.whenReady().then(async () => {
     const Profile = await ProfileManager.GetProfile();
     mainWindow.webContents.send('SetProfile', Profile);
     mainWindow.webContents.send('ProcessMonitorStatus', ProcessMonitor.GetStatus());
+    mainWindow.webContents.send('ServerRecoveryStatus', currentRecoveryStatus);
     return [null, true];
   });
 
@@ -512,11 +553,187 @@ app.on('before-quit', () => {
 
 // ReinitializeService
 BroadcastManager.on('ReinitializeService', async () => {
-  try { await BonjourManager.Stop(); } catch {}
-  await AdoptionClientManager.Terminate();
-  await MainClientManager.Terminate();
-  await Main();
+  await restartService('external-reinitialize');
 });
+
+BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
+  if (recoveryInProgress) return;
+
+  if (recoveryMetrics.Attempts >= RECOVERY_MAX_ATTEMPTS) {
+    recoveryMetrics.LastFailureAt = Date.now();
+    recoveryMetrics.LastFailureReason = 'max_attempts_reached';
+    sendRecoveryStatus({
+      State: 'RecoveryFailed',
+      Message: 'Automatic recovery retry limit reached. Waiting for manual intervention.',
+    });
+    return;
+  }
+
+  const now = Date.now();
+  const sinceLastAttempt = recoveryMetrics.LastAttemptAt ? now - recoveryMetrics.LastAttemptAt : Infinity;
+  if (sinceLastAttempt < RECOVERY_COOLDOWN_MS) {
+    const waitMs = RECOVERY_COOLDOWN_MS - sinceLastAttempt;
+    sendRecoveryStatus({
+      State: 'PrimaryFailed',
+      Message: `Primary failed. Cooling down for ${Math.ceil(waitMs / 1000)}s before retry.`,
+    });
+    return;
+  }
+
+  try {
+    await recoverFromPrimaryFailure(Info);
+  } catch (Error) {
+    recoveryMetrics.LastFailureAt = Date.now();
+    recoveryMetrics.LastFailureReason = Error && Error.message ? String(Error.message) : 'unknown_error';
+    Logger.error('Recovery flow failed', Error);
+    sendRecoveryStatus({
+      State: 'RecoveryFailed',
+      Message: 'Unable to recover server connection automatically.',
+    });
+  }
+});
+
+BroadcastManager.on('ServerAdoptionRejected', async (Info = {}) => {
+  if (recoveryInProgress && pendingRecoveryCandidate) {
+    if (
+      pendingRecoveryCandidate.IP === Info.IP &&
+      Number(pendingRecoveryCandidate.Port) === Number(Info.Port)
+    ) {
+      sendRecoveryStatus({
+        State: 'RecoveryFailed',
+        Message: 'Discovered server rejected adoption identity.',
+      });
+      return;
+    }
+  }
+
+  Logger.warn('Server rejected client adoption; resetting profile to pending adoption state.');
+  await ProfileManager.ResetAdopption();
+  await restartService('server-unadopt');
+});
+
+BroadcastManager.on('MainClientConnectionStatus', (Info = {}) => {
+  if (!Info || Info.State !== 'connected') return;
+  if (!recoveryInProgress || !pendingRecoveryCandidate) {
+    sendRecoveryStatus({ State: 'idle', Message: '' });
+    return;
+  }
+
+  if (
+    pendingRecoveryCandidate.IP === Info.IP &&
+    Number(pendingRecoveryCandidate.Port) === Number(Info.Port)
+  ) {
+    // Keep explicit state during candidate validation window.
+    sendRecoveryStatus({
+      State: 'ValidatingIdentity',
+      Message: `Validating discovered server at ${Info.IP}:${Info.Port}`,
+    });
+  }
+});
+
+async function restartService(reason) {
+  if (isReinitializing) {
+    Logger.warn(`restartService ignored while already running (${reason})`);
+    return;
+  }
+  isReinitializing = true;
+  try {
+    try { await BonjourManager.Stop(); } catch {}
+    await AdoptionClientManager.Terminate();
+    await MainClientManager.Terminate();
+    await Main();
+  } finally {
+    isReinitializing = false;
+  }
+}
+
+async function recoverFromPrimaryFailure(Info = {}) {
+  recoveryMetrics.Attempts += 1;
+  recoveryMetrics.LastAttemptAt = Date.now();
+  recoveryInProgress = true;
+  pendingRecoveryCandidate = null;
+
+  const backoffDelay = Math.min(
+    RECOVERY_BACKOFF_MAX_MS,
+    RECOVERY_BACKOFF_BASE_MS * Math.pow(2, Math.max(0, recoveryMetrics.Attempts - 1))
+  );
+
+  sendRecoveryStatus({
+    State: 'PrimaryFailed',
+    Message: `Primary server ${Info.IP || 'Unknown'}:${Info.Port || 'Unknown'} is unreachable. Retry ${recoveryMetrics.Attempts}/${RECOVERY_MAX_ATTEMPTS}.`,
+  });
+
+  try {
+    await MainClientManager.Terminate();
+    if (backoffDelay > 0) {
+      sendRecoveryStatus({
+        State: 'PrimaryFailed',
+        Message: `Waiting ${Math.ceil(backoffDelay / 1000)}s before discovery retry...`,
+      });
+      await Wait(backoffDelay);
+    }
+
+    sendRecoveryStatus({
+      State: 'Discovering',
+      Message: 'Searching for adopted ShowTrak Server on local network...',
+    });
+
+    const Profile = await ProfileManager.GetProfile();
+    const ExpectedServerIdentity =
+      Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
+        ? Profile.Server.ServerIdentity.trim()
+        : '';
+
+    const Candidate = await discoverSingleServer(12000, {
+      ExpectedServerIdentity,
+    });
+    if (!Candidate || !Candidate.IP || !Candidate.Port) {
+      recoveryMetrics.LastFailureAt = Date.now();
+      recoveryMetrics.LastFailureReason = 'discovery_no_candidate';
+      sendRecoveryStatus({
+        State: 'RecoveryFailed',
+        Message: 'No server discovered for automatic recovery.',
+      });
+      await restartService('recovery-no-candidate');
+      return;
+    }
+
+    pendingRecoveryCandidate = Candidate;
+    sendRecoveryStatus({
+      State: 'ValidatingIdentity',
+      Message: `Validating discovered server at ${Candidate.IP}:${Candidate.Port}`,
+    });
+
+    await MainClientManager.Init(Profile.UUID, Candidate.IP, Candidate.Port);
+
+    const Validation = await waitForRecoveryValidation(Candidate, 6000);
+    if (!Validation.ok) {
+      recoveryMetrics.LastFailureAt = Date.now();
+      recoveryMetrics.LastFailureReason = Validation.reason || 'validation_failed';
+      sendRecoveryStatus({
+        State: 'RecoveryFailed',
+        Message: Validation.reason === 'rejected'
+          ? 'Discovered server rejected adoption identity.'
+          : 'Discovered server did not establish a stable connection.',
+      });
+      await restartService('recovery-validation-failed');
+      return;
+    }
+
+    await ProfileManager.UpdateServerEndpoint(Candidate.IP, Candidate.Port);
+    recoveryMetrics.Attempts = 0;
+    recoveryMetrics.LastFailureAt = 0;
+    recoveryMetrics.LastFailureReason = null;
+    recoveryMetrics.LastRecoveredAt = Date.now();
+    sendRecoveryStatus({
+      State: 'Reconnected',
+      Message: `Recovered connection to ${Candidate.IP}:${Candidate.Port}`,
+    });
+  } finally {
+    recoveryInProgress = false;
+    pendingRecoveryCandidate = null;
+  }
+}
 
 BroadcastManager.on('ProfileUpdated', async (Profile) => {
   if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
@@ -762,14 +979,79 @@ async function Main() {
     await BootWithStoredSettings();
   } else {
     Logger.log('Profile loaded [Unadopted]');
+    sendRecoveryStatus({
+      State: 'Discovering',
+      Message: 'Searching for ShowTrak Server for adoption...',
+    });
+
+    const Candidate = await discoverSingleServer(12000);
+    if (!Candidate || !Candidate.IP || !Candidate.Port) {
+      sendRecoveryStatus({
+        State: 'RecoveryFailed',
+        Message: 'No ShowTrak Server discovered for adoption.',
+      });
+      return;
+    }
+
+    await AdoptionClientManager.Init(Profile.UUID, Candidate.IP, Candidate.Port, {
+      ServerIdentity: Candidate.ServerIdentity || null,
+    });
+  }
+}
+
+async function BootWithStoredSettings() {
+  const Profile = await ProfileManager.GetProfile();
+  sendRecoveryStatus({
+    State: 'ConnectingPrimary',
+    Message: `Connecting to saved server ${Profile.Server.IP}:${Profile.Server.Port}`,
+  });
+  Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
+  await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
+}
+
+function extractServerIdentityToken(Service) {
+  const txt = Service && Service.txt ? Service.txt : null;
+  if (!txt || typeof txt !== 'object') return '';
+  if (typeof txt.ServerIdentity === 'string' && txt.ServerIdentity.trim()) {
+    return txt.ServerIdentity.trim();
+  }
+  return '';
+}
+
+async function discoverSingleServer(timeoutMs = 12000, Options = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const ExpectedServerIdentity =
+      Options && typeof Options.ExpectedServerIdentity === 'string'
+        ? Options.ExpectedServerIdentity.trim()
+        : '';
+
+    const finish = async (Result) => {
+      if (settled) return;
+      settled = true;
+      try { await BonjourManager.Stop(); } catch {}
+      resolve(Result || null);
+    };
+
+    const timer = setTimeout(() => {
+      finish(null);
+    }, timeoutMs);
+
     BonjourManager.OnFind(async (Server) => {
       Logger.log('Bonjour service found:', Server);
       try {
+        const ServerIdentity = extractServerIdentityToken(Server);
+        if (ExpectedServerIdentity && ServerIdentity !== ExpectedServerIdentity) {
+          Logger.warn(
+            `Skipping discovered server due to identity mismatch (${ServerIdentity || 'missing'} != ${ExpectedServerIdentity})`
+          );
+          return;
+        }
+
         const addrs = Array.isArray(Server.addresses) ? Server.addresses : [];
-        // Prefer IPv4 from addresses
         let targetIP = addrs.find((a) => typeof a === 'string' && a.includes('.')) || null;
         if (!targetIP && Server.referer && typeof Server.referer.address === 'string' && Server.referer.address.includes('.')) {
-          targetIP = Server.referer.address; // fallback to referer IPv4
+          targetIP = Server.referer.address;
         }
         if (!targetIP && typeof Server.host === 'string' && Server.host.length) {
           try {
@@ -781,19 +1063,62 @@ async function Main() {
           Logger.warn('Bonjour service discovered but no IPv4 address resolved; skipping this record.');
           return;
         }
+
+        clearTimeout(timer);
         Logger.log(`Discovered ShowTrak Server at ${targetIP}:${Server.port}`);
-        // Stop further browsing to avoid duplicate attempts
-        try { await BonjourManager.Stop(); } catch {}
-        await AdoptionClientManager.Init(Profile.UUID, targetIP, Server.port);
-      } catch (e) {
-        Logger.error('Failed to initialize adoption from Bonjour discovery:', e);
+        await finish({
+          IP: targetIP,
+          Port: Server.port,
+          ServerIdentity: ServerIdentity || null,
+        });
+      } catch (Error) {
+        clearTimeout(timer);
+        Logger.error('Failed to process Bonjour discovery record', Error);
+        await finish(null);
       }
     });
-  }
+  });
 }
 
-async function BootWithStoredSettings() {
-  const Profile = await ProfileManager.GetProfile();
-  Logger.log(`Attempting connection to ${Profile.Server.IP}:${Profile.Server.Port}`);
-  await MainClientManager.Init(Profile.UUID, Profile.Server.IP, Profile.Server.Port);
+async function waitForRecoveryValidation(Candidate, timeoutMs = 6000) {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (Result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      BroadcastManager.removeListener('ServerAdoptionRejected', onRejected);
+      BroadcastManager.removeListener('MainClientConnectionStatus', onConnectionStatus);
+      resolve(Result);
+    };
+
+    const onRejected = (Info = {}) => {
+      if (
+        Info.IP === Candidate.IP &&
+        Number(Info.Port) === Number(Candidate.Port)
+      ) {
+        finish({ ok: false, reason: 'rejected' });
+      }
+    };
+
+    const onConnectionStatus = (Info = {}) => {
+      if (
+        Info.IP !== Candidate.IP ||
+        Number(Info.Port) !== Number(Candidate.Port)
+      ) {
+        return;
+      }
+      if (Info.State === 'connected') {
+        finish({ ok: true });
+      }
+    };
+
+    const timer = setTimeout(() => {
+      finish({ ok: false, reason: 'timeout' });
+    }, timeoutMs);
+
+    BroadcastManager.on('ServerAdoptionRejected', onRejected);
+    BroadcastManager.on('MainClientConnectionStatus', onConnectionStatus);
+  });
 }

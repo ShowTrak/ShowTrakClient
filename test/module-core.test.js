@@ -145,10 +145,16 @@ test('ProfileManager creates and updates profile states', async () => {
   assert.equal(profileA.UUID, 'generated-uuid');
   assert.equal(profileA.Adopted, false);
 
-  await Manager.Adopt('127.0.0.1', 9000);
+  await Manager.Adopt('127.0.0.1', 9000, { ServerIdentity: 'server-token-a' });
   const adopted = await Manager.GetProfile();
   assert.equal(adopted.Adopted, true);
   assert.equal(adopted.Server.IP, '127.0.0.1');
+  assert.equal(adopted.Server.ServerIdentity, 'server-token-a');
+
+  await Manager.UpdateServerEndpoint('127.0.0.2', 9000);
+  const recovered = await Manager.GetProfile();
+  assert.equal(recovered.Server.IP, '127.0.0.2');
+  assert.equal(recovered.Server.ServerIdentity, 'server-token-a');
 
   await Manager.ResetAdopption();
   const reset = await Manager.GetProfile();

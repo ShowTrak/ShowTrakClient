@@ -29,8 +29,12 @@ const Manager = {
       Logger.log('No active socket to terminate.');
     }
   },
-  Init: async (UUID, IP, Port) => {
+  Init: async (UUID, IP, Port, Options = {}) => {
     const BootTime = Date.now();
+    const ServerIdentity =
+      Options && typeof Options.ServerIdentity === 'string' && Options.ServerIdentity.trim()
+        ? Options.ServerIdentity.trim()
+        : null;
     clearHeartbeatInterval();
 
     if (Socket) Socket.disconnect();
@@ -69,7 +73,7 @@ const Manager = {
 
     Socket.on('Adopt', async () => {
       Logger.log('Adopt command received');
-      await ProfileManager.Adopt(IP, Port);
+      await ProfileManager.Adopt(IP, Port, { ServerIdentity });
       BroadcastManager.emit('ReinitializeService');
     });
   },

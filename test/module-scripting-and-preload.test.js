@@ -314,9 +314,17 @@ test('preload exposes safe API wrappers and subscriptions', async () => {
   listeners.get('ProcessMonitorStatus')({}, { State: 'ok' });
   assert.deepEqual(processPayload, { State: 'ok' });
 
+  let recoveryPayload = null;
+  const unsubscribeRecovery = exposedAPI.OnServerRecoveryStatus((status) => {
+    recoveryPayload = status;
+  });
+  listeners.get('ServerRecoveryStatus')({}, { State: 'Discovering' });
+  assert.deepEqual(recoveryPayload, { State: 'Discovering' });
+
   unsubscribeProfile();
   unsubscribeUpdate();
   unsubscribeProcess();
+  unsubscribeRecovery();
 
   assert.equal(listeners.has('SetProfile'), false);
 

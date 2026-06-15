@@ -10,6 +10,7 @@
 var Profile = {};
 var Version = '0.0.0';
 var ProcessMonitorStatus = { State: 'unknown', Message: null };
+var ServerRecoveryStatus = { State: 'idle', Message: '' };
 
 function RenderProcessMonitorWarning() {
   const $warning = $('#PROCESS_MONITOR_WARNING');
@@ -29,6 +30,34 @@ function RenderProcessMonitorWarning() {
     return;
   }
   $warning.addClass('d-none').text('');
+}
+
+function RenderServerRecoveryStatus() {
+  const $status = $('#SERVER_RECOVERY_STATUS');
+  if (!$status || !$status.length) return;
+
+  const state = String(ServerRecoveryStatus && ServerRecoveryStatus.State ? ServerRecoveryStatus.State : 'idle');
+  const message =
+    ServerRecoveryStatus && typeof ServerRecoveryStatus.Message === 'string'
+      ? ServerRecoveryStatus.Message.trim()
+      : '';
+
+  if (!message || state === 'idle') {
+    $status.addClass('d-none').text('');
+    return;
+  }
+
+  $status.removeClass('d-none alert-info alert-warning alert-success alert-danger');
+  if (state === 'RecoveryFailed') {
+    $status.addClass('alert-danger');
+  } else if (state === 'Reconnected') {
+    $status.addClass('alert-success');
+  } else if (state === 'PrimaryFailed') {
+    $status.addClass('alert-warning');
+  } else {
+    $status.addClass('alert-info');
+  }
+  $status.text(message);
 }
 
 async function Main() {
@@ -139,6 +168,10 @@ async function Main() {
   window.API.OnProcessMonitorStatus((status) => {
     ProcessMonitorStatus = status || { State: 'unknown', Message: null };
     RenderProcessMonitorWarning();
+  });
+  window.API.OnServerRecoveryStatus((status) => {
+    ServerRecoveryStatus = status || { State: 'idle', Message: '' };
+    RenderServerRecoveryStatus();
   });
 }
 Main();

@@ -19,7 +19,12 @@ const INVOKE_CHANNELS = new Set([
   'AppUpdate:Install',
 ]);
 
-const SUBSCRIBE_CHANNELS = new Set(['SetProfile', 'AppUpdate:Status', 'ProcessMonitorStatus']);
+const SUBSCRIBE_CHANNELS = new Set([
+  'SetProfile',
+  'AppUpdate:Status',
+  'ProcessMonitorStatus',
+  'ServerRecoveryStatus',
+]);
 
 function invoke(channel, ...args) {
   if (!INVOKE_CHANNELS.has(channel)) {
@@ -53,6 +58,7 @@ contextBridge.exposeInMainWorld('API', {
   InstallAppUpdate: async () => invoke('AppUpdate:Install'),
   OnAppUpdateStatus: (cb) => subscribe('AppUpdate:Status', cb),
   OnProcessMonitorStatus: (cb) => subscribe('ProcessMonitorStatus', cb),
+  OnServerRecoveryStatus: (cb) => subscribe('ServerRecoveryStatus', cb),
   SetProfile: (Callback) =>
     subscribe('SetProfile', Callback),
 });

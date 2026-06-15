@@ -65,7 +65,6 @@ test('MainClient handles command events and reconnect lifecycle branches', async
   let setScriptsCalls = 0;
   let deleteScriptsCalls = 0;
   let downloadCalls = 0;
-  let resetAdoptionCalls = 0;
   let executeCalls = 0;
   let executeShouldFail = false;
   const broadcastEvents = [];
@@ -140,13 +139,6 @@ test('MainClient handles command events and reconnect lifecycle branches', async
         },
       },
     },
-    '../ProfileManager': {
-      Manager: {
-        ResetAdopption: async () => {
-          resetAdoptionCalls += 1;
-        },
-      },
-    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {},
@@ -188,8 +180,12 @@ test('MainClient handles command events and reconnect lifecycle branches', async
     assert.equal(downloadCalls, 1);
 
     await createdSocket.trigger('Unadopt');
-    assert.equal(resetAdoptionCalls, 1);
-    assert.equal(broadcastEvents.some(([event]) => event === 'ReinitializeService'), true);
+    assert.equal(broadcastEvents.some(([event]) => event === 'ServerAdoptionRejected'), true);
+
+    await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
+    await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
+    await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
+    assert.equal(broadcastEvents.some(([event]) => event === 'ServerConnectFailed'), true);
 
     executeShouldFail = true;
     await createdSocket.trigger('ExecuteScript', 'r-5', 'script-a');
