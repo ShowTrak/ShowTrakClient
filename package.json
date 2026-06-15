@@ -1,7 +1,7 @@
 {
   "name": "showtrak-client",
   "productName": "ShowTrak Client",
-  "version": "3.4.5",
+  "version": "3.5.0",
   "description": "Simple, Free LAN PC Monitoring for arcade style environments.",
   "main": "src/main.js",
   "scripts": {
@@ -51,7 +51,7 @@
     "prettier": "^3.6.2"
   },
   "dependencies": {
-  "electron-updater": "^6.3.9",
+    "electron-updater": "^6.3.9",
     "auto-launch": "^5.0.6",
     "bonjour": "^3.5.0",
     "bonjour-service": "^1.3.0",

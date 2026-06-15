@@ -110,35 +110,12 @@ When adding capability, prefer these in order:
 5. New module creation (last resort)
 - Only when no existing manager/registry can own the concern cleanly
 
-## 5) Commit and Changelog Prefix Standard
-
-At the end of every completed task, always ask the user:
-
-"Would you like me to commit these changes now?"
-
-Then provide commit options and a proposed commit message.
-
-Commit message standard (Conventional Commits):
-
-- `feat(scope): summary` for new features (default for feature delivery)
-- `fix(scope): summary` for bug fixes
-- `refactor(scope): summary` for internal restructuring without behavior change
-- `perf(scope): summary` for performance improvements
-- `docs(scope): summary` for documentation-only updates
-- `test(scope): summary` for tests-only changes
-- `chore(scope): summary` for maintenance tasks
-- `ci(scope): summary` for CI updates
-- `build(scope): summary` for build/release tooling changes
-
 Scope examples:
 
 - `server`, `client`, `scripts`, `ipc`, `alerts`, `ui`, `db`, `network`, `monitoring`
 
-If feature spans repos, prefer separate commits per repo with aligned prefix and summary.
-
-## 6) Guardrails
+## 5) Guardrails
 
 - Do not introduce duplicate business logic across Server and Client.
 - Do not bypass validators or invoke allowlists.
 - Do not skip version bump when a feature is complete.
-- Do not end a completed task without asking whether to commit.
