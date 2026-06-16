@@ -37,33 +37,32 @@ function RenderServerRecoveryStatus() {
   if (!$status || !$status.length) return;
 
   const state = String(ServerRecoveryStatus && ServerRecoveryStatus.State ? ServerRecoveryStatus.State : 'idle');
+  const normalizedState = state.toLowerCase();
   const message =
     ServerRecoveryStatus && typeof ServerRecoveryStatus.Message === 'string'
       ? ServerRecoveryStatus.Message.trim()
       : '';
-
-  if (!message || state === 'idle') {
-    $status.addClass('d-none').text('');
-    return;
-  }
+  const isConnectedState = !message || normalizedState === 'idle';
+  const text = isConnectedState ? 'Connected to ShowTrak Server' : message;
 
   $status.removeClass('d-none alert-info alert-warning alert-success alert-danger');
-  if (state === 'RecoveryFailed') {
+  if (normalizedState === 'recoveryfailed') {
     $status.addClass('alert-danger');
-  } else if (state === 'Reconnected') {
-    $status.addClass('alert-success');
-  } else if (state === 'PrimaryFailed') {
+  } else if (normalizedState === 'primaryfailed') {
     $status.addClass('alert-warning');
+  } else if (normalizedState === 'reconnected' || isConnectedState) {
+    $status.addClass('alert-success');
   } else {
     $status.addClass('alert-info');
   }
-  $status.text(message);
+  $status.text(text);
 }
 
 async function Main() {
   await window.API.Loaded();
   Version = await window.API.GetVersion();
   $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
+  RenderServerRecoveryStatus();
   // Bind updater UI
   $('#BTN_CHECK_UPDATES').off('click').on('click', async () => {
     try { await window.API.CheckForAppUpdates(); } catch {}
@@ -80,34 +79,6 @@ async function Main() {
   $('#UPDATE_LATER_BTN').off('click').on('click', async () => {
     $('#UPDATE_SECTION').addClass('d-none');
   });
-  const escapeHtml = (s) => String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-  const sanitizeHref = (href) => {
-    try { const h = String(href || '').trim(); if (/^(https?:|mailto:)/i.test(h)) return h; } catch {}
-    return '#';
-  };
-  const renderMarkdownSafe = (md) => {
-    if (!md || typeof md !== 'string') return '';
-    let text = md.replace(/\r\n/g, '\n');
-    text = escapeHtml(text);
-    const codeBlocks = [];
-    text = text.replace(/```([\s\S]*?)```/g, (_m, code) => { const idx = codeBlocks.push(code) - 1; return `%%CODEBLOCK_${idx}%%`; });
-    text = text.replace(/^#{1,6}\s+(.+)$/gm, (m) => { const hashes = m.match(/^#+/)[0].length; const content = m.replace(/^#{1,6}\s+/, ''); const level = Math.min(6, Math.max(1, hashes)); return `<h${level} class="h${level+2}">${content}</h${level}>`; });
-    text = text.replace(/`([^`]+)`/g, (_m, code) => `<code>${code}</code>`);
-    text = text.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, (_m, label, href) => { const url = sanitizeHref(href); return `<a href="${url}" target="_blank" rel="noopener">${label}</a>`; });
-    text = text.replace(/(?:^|\n)((?:[\-\*\+]\s+.*(?:\n|$))+)/g, (_m, block) => { const items = block.trim().split(/\n/).map((line) => line.replace(/^[\-\*\+]\s+/, '').trim()).filter((x) => x.length > 0).map((x) => `<li>${x}</li>`).join(''); return `\n<ul>${items}</ul>`; });
-    text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-               .replace(/__(.+?)__/g, '<strong>$1</strong>')
-               .replace(/(?<!\*)\*(?!\s)(.+?)(?<!\s)\*(?!\*)/g, '<em>$1</em>')
-               .replace(/_(?!\s)(.+?)(?<!\s)_/g, '<em>$1</em>');
-    const blocks = text.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
-    const html = blocks.map((b) => { if (/^<\/?(h\d|ul|ol|li|pre|blockquote|table|p|code)/i.test(b)) return b; return `<p>${b.replace(/\n/g, '<br/>')}</p>`; }).join('\n');
-    return html.replace(/%%CODEBLOCK_(\d+)%%/g, (_m, i) => { const code = codeBlocks[Number(i)] || ''; return `<pre class="mb-2"><code>${code}</code></pre>`; });
-  };
   window.API.OnAppUpdateStatus((payload) => {
     try {
       $('#UPDATE_SECTION').removeClass('d-none');
@@ -121,38 +92,16 @@ async function Main() {
       $later.addClass('d-none');
       $notesWrap.addClass('d-none');
       $notes.empty();
-      const extractNotes = (info) => {
-        if (!info) return '';
-        const raw = info.releaseNotes || info.notes || info.body || '';
-        if (Array.isArray(raw)) {
-          const first = raw.find(Boolean);
-          return (first && (first.releaseNotes || first.notes || first.body)) || '';
-        }
-        return raw || '';
-      };
-      const showNotes = (info) => {
-        const notes = extractNotes(info);
-        if (notes && typeof notes === 'string') {
-          const looksHtml = /<\w+[^>]*>/.test(notes);
-          if (looksHtml) { $notes.html(notes); } else { $notes.html(renderMarkdownSafe(notes)); }
-          $notesWrap.removeClass('d-none');
-        }
-      };
       if (st === 'checking') {
         $status.text('Checking for updates...');
       } else if (st === 'available') {
         const v = payload.info && (payload.info.version || payload.info.tag || 'Update available');
         $status.text(`Update available: ${v}. Downloading...`);
-        showNotes(payload.info);
       } else if (st === 'downloading') {
         const pct = payload.percent ? Math.floor(payload.percent) : 0;
         $status.text(`Downloading update... ${pct}%`);
       } else if (st === 'downloaded') {
-        const v = payload.info && (payload.info.version || 'pending');
-        $status.text(`Update ready to install: ${v}`);
-        showNotes(payload.info);
-        $install.removeClass('d-none');
-        $later.removeClass('d-none');
+        $status.text('Update downloaded. Restarting to apply...');
       } else if (st === 'installing') {
         $status.text('Installing update...');
       } else if (st === 'installed') {
@@ -161,7 +110,6 @@ async function Main() {
         $status.text('No updates available');
       } else if (st === 'error') {
         $status.text(`Update error: ${payload.error || 'Unknown error'}`);
-        $later.removeClass('d-none');
       }
     } catch {}
   });
@@ -214,4 +162,17 @@ $('#BTN_MINIMIZE').on('click', async () => {
 
 $('#BTN_SHUTDOWN').on('click', async () => {
   window.API.Shutdown();
+});
+
+$('#BTN_FACTORY_RESET').on('click', async () => {
+  const confirmed = window.confirm(
+    'Factory reset ShowTrak Client? This clears adoption status and local client configuration.'
+  );
+  if (!confirmed) return;
+
+  try {
+    await window.API.ResetClientFactoryDefaults();
+  } catch (error) {
+    console.error('Factory reset failed:', error);
+  }
 });

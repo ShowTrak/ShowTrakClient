@@ -33,6 +33,7 @@ const { Manager: BonjourManager } = require('./Modules/Bonjour');
 const dns = require('node:dns').promises;
 const { Manager: AppDataManager } = require('./Modules/AppData');
 const { Manager: ProfileManager } = require('./Modules/ProfileManager');
+const { Manager: ScriptManager } = require('./Modules/ScriptManager');
 const { Wait } = require('./Modules/Utils');
 AppDataManager.Initialize();
 
@@ -116,10 +117,10 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     show: false,
     backgroundColor: '#161618',
-    width: 600,
-    height: 460,
-    maxWidth: 600,
-    maxHeight: 460,
+    width: 660,
+    height: 485,
+    maxWidth: 660,
+    maxHeight: 485,
     resizable: false,
     fullscreenable: false,
     webPreferences: {
@@ -485,6 +486,19 @@ app.whenReady().then(async () => {
     return Config.Application.Version;
   });
 
+  RPC.handle('Profile:FactoryReset', async (_event, ...args) => {
+    try {
+      assertNoArgs('Profile:FactoryReset', args);
+      await ProfileManager.ResetProfileToFactoryDefaults();
+      await ScriptManager.DeleteScripts();
+      await restartService('factory-reset');
+      return [null, true];
+    } catch (error) {
+      Logger.error('Factory reset failed', error);
+      return validationErrorPayload(error);
+    }
+  });
+
   // Updater IPC
   RPC.handle('AppUpdate:Check', async (_event, ...args) => {
     try {
@@ -494,12 +508,25 @@ app.whenReady().then(async () => {
     }
     if (!app.isPackaged) {
       try {
+        autoInstallNext = true;
         sendAppUpdateStatus({ state: 'checking' });
         setTimeout(() => sendAppUpdateStatus({ state: 'available', info: { version: 'TEST' } }), 400);
-        let pct = 0; const t = setInterval(() => { pct += 20; if (pct >= 100) { clearInterval(t); sendAppUpdateStatus({ state: 'downloaded', info: { version: 'TEST' } }); } else { sendAppUpdateStatus({ state: 'downloading', percent: pct }); } }, 200);
+        let pct = 0;
+        const t = setInterval(() => {
+          pct += 20;
+          if (pct >= 100) {
+            clearInterval(t);
+            sendAppUpdateStatus({ state: 'downloaded', info: { version: 'TEST' } });
+            sendAppUpdateStatus({ state: 'installing' });
+            setTimeout(() => sendAppUpdateStatus({ state: 'installed' }), 400);
+          } else {
+            sendAppUpdateStatus({ state: 'downloading', percent: pct });
+          }
+        }, 200);
       } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
       return [null, true];
     }
+    autoInstallNext = true;
     await performUpdateCheck();
     return [null, true];
   });
@@ -668,14 +695,14 @@ async function recoverFromPrimaryFailure(Info = {}) {
     if (backoffDelay > 0) {
       sendRecoveryStatus({
         State: 'PrimaryFailed',
-        Message: `Waiting ${Math.ceil(backoffDelay / 1000)}s before discovery retry...`,
+        Message: `Waiting ${Math.ceil(backoffDelay / 1000)}s before discovery retry`,
       });
       await Wait(backoffDelay);
     }
 
     sendRecoveryStatus({
       State: 'Discovering',
-      Message: 'Searching for adopted ShowTrak Server on local network...',
+      Message: 'Searching for Controlling Server on Local Network',
     });
 
     const Profile = await ProfileManager.GetProfile();

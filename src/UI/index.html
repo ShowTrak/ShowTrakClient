@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="./index.css" />
   </head>
   <body>
-    <div class="dragbar bg-light d-flex justify-content-between align-items-center p-2">
+    <div class="dragbar d-flex justify-content-between align-items-center p-2">
       <span></span>
       <span id="APPLICATION_NAVBAR_TITLE">ShowTrak Client</span>
       <img id="APPLICATION_NAVBAR_LOGO" src="../images/ui-icon.png" alt="ShowTrak Logo" />
@@ -18,8 +18,8 @@
       </div>
       <div id="PROFILE"></div>
       <div id="PROCESS_MONITOR_WARNING" class="alert alert-warning d-none mb-0" role="alert"></div>
-      <div id="SERVER_RECOVERY_STATUS" class="alert alert-info d-none mb-0" role="status"></div>
-      <div class="row">
+      <div id="SERVER_RECOVERY_STATUS" class="alert alert-success mb-0" role="status"></div>
+      <div class="row g-3">
         <div class="col-6 d-grid">
           <a id="BTN_MINIMIZE" class="btn btn-light"> Minimise </a>
         </div>
@@ -28,11 +28,14 @@
         </div>
       </div>
 
-  <div id="UPDATE_SECTION" class="card bg-ghost border-0 rounded d-none mt-2 text-white">
+      <div class="d-grid">
+        <a id="BTN_FACTORY_RESET" class="btn btn-warning"> Factory Reset Client </a>
+      </div>
+
+  <div id="UPDATE_SECTION" class="card bg-ghost border-0 rounded d-none text-white">
         <div class="card-body p-2 small">
           <div class="d-flex justify-content-between align-items-center">
             <div class="text-start">
-              <strong>Client Update</strong>
               <div id="UPDATE_STATUS" class="text-muted">No pending update</div>
             </div>
             <div class="d-flex gap-2">
@@ -47,7 +50,7 @@
         </div>
       </div>
 
-      <div class="d-grid mt-2">
+      <div class="d-grid">
         <a id="BTN_CHECK_UPDATES" class="btn btn-secondary"> Check for Updates </a>
       </div>
     </div>

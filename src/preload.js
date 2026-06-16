@@ -15,6 +15,7 @@ const INVOKE_CHANNELS = new Set([
   'GetVersion',
   'Shutdown',
   'Minimise',
+  'Profile:FactoryReset',
   'AppUpdate:Check',
   'AppUpdate:Install',
 ]);
@@ -54,6 +55,7 @@ contextBridge.exposeInMainWorld('API', {
   GetVersion: async () => invoke('GetVersion'),
   Shutdown: async () => invoke('Shutdown'),
   Minimise: async () => invoke('Minimise'),
+  ResetClientFactoryDefaults: async () => invoke('Profile:FactoryReset'),
   CheckForAppUpdates: async () => invoke('AppUpdate:Check'),
   InstallAppUpdate: async () => invoke('AppUpdate:Install'),
   OnAppUpdateStatus: (cb) => subscribe('AppUpdate:Status', cb),

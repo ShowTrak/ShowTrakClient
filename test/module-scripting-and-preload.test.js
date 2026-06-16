@@ -289,9 +289,10 @@ test('preload exposes safe API wrappers and subscriptions', async () => {
   await exposedAPI.Loaded();
   await exposedAPI.Shutdown();
   await exposedAPI.Minimise();
+  await exposedAPI.ResetClientFactoryDefaults();
   await exposedAPI.CheckForAppUpdates();
   await exposedAPI.InstallAppUpdate();
-  assert.equal(invoked.length, 6);
+  assert.equal(invoked.length, 7);
 
   let profilePayload = null;
   const unsubscribeProfile = exposedAPI.SetProfile((profile) => {

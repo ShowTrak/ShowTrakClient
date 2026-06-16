@@ -76,16 +76,8 @@ For every new feature, execute this exact sequence:
 - Run lint and targeted tests for changed surfaces.
 - Add regression tests for bug fixes and new behavior.
 
-6. Version bump (mandatory on completed features)
-- Whenever a feature is completed, increment version in affected package.json file(s).
-- Use semantic versioning and no git tag creation:
-  - New feature: bump minor (`npm version minor --no-git-tag-version`).
-  - Fix-only follow-up without a new feature: bump patch.
-- If a feature spans both Server and Client, bump both package versions in the same change set.
-
-7. Final delivery checklist
+6. Final delivery checklist
 - Confirm tests/lint relevant to the feature.
-- Confirm version bumps are included.
 - Confirm docs/instruction touchpoints are updated if behavior changed.
 
 ## 4) Cross-Codebase Reuse Playbook
@@ -118,4 +110,3 @@ Scope examples:
 
 - Do not introduce duplicate business logic across Server and Client.
 - Do not bypass validators or invoke allowlists.
-- Do not skip version bump when a feature is complete.
