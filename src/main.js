@@ -1,3 +1,4 @@
+/* eslint-disable no-empty */
 const {
   app,
   BrowserWindow,
@@ -117,10 +118,10 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     show: false,
     backgroundColor: '#161618',
-    width: 660,
-    height: 485,
-    maxWidth: 660,
-    maxHeight: 485,
+    width: 800,
+    height: 550,
+    minWidth: 640,
+    minHeight: 380,
     resizable: false,
     fullscreenable: false,
     webPreferences: {
@@ -166,6 +167,82 @@ function openConfigureWindow() {
     mainWindow.show();
     mainWindow.focus();
   } catch {}
+}
+
+function buildTrayScriptMenuItems() {
+  const ScriptEntries = ScriptManager.GetTrayScriptEntries();
+  if (!ScriptEntries.length) {
+    return [{ label: 'No scripts available', enabled: false }];
+  }
+
+  return ScriptEntries.map(({ Script, Enabled, DisabledReason }) => {
+    const ScriptLabel = String(
+      (Script && Script.Name) || (Script && Script.ID) || 'Unnamed Script'
+    );
+    return {
+      label: ScriptLabel,
+      enabled: Enabled,
+      click: async () => {
+        if (!Enabled || !Script || !Script.ID) return;
+        const [Err, Success] = await ScriptManager.Execute('tray', Script.ID);
+        if (Err || !Success) {
+          Logger.warn('Tray script execution failed', {
+            scriptId: Script.ID,
+            scriptName: ScriptLabel,
+            reason: Err || DisabledReason || 'unknown_error',
+          });
+        }
+      },
+    };
+  });
+}
+
+function buildTrayContextMenuTemplate() {
+  return [
+    {
+      label: 'Configure',
+      click: async () => {
+        openConfigureWindow();
+      },
+    },
+    {
+      label: 'Run Script',
+      submenu: buildTrayScriptMenuItems(),
+    },
+    {
+      label: 'Open Logs Folder',
+      click: async () => {
+        const Opened = AppDataManager.OpenFolder(AppDataManager.GetLogsDirectory());
+        if (!Opened) {
+          Logger.warn('Failed to open logs folder from tray menu');
+        }
+      },
+    },
+    {
+      type: 'separator',
+    },
+    {
+      label: 'Stop Service',
+      click: async () => {
+        app.quit();
+      },
+    },
+    {
+      label: 'Check For Updates',
+      click: async () => {
+        await performUpdateCheck();
+      },
+    },
+  ];
+}
+
+function refreshTrayContextMenu() {
+  if (!tray) return;
+  try {
+    tray.setContextMenu(Menu.buildFromTemplate(buildTrayContextMenuTemplate()));
+  } catch (error) {
+    Logger.warn('Failed to refresh tray context menu', String(error));
+  }
 }
 
 function assertNoArgs(handlerName, args) {
@@ -230,7 +307,10 @@ function sendAppUpdateStatus(payload) {
   try {
     Logger.log('[Updater] Status event', payload || {});
   } catch {}
-  try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('AppUpdate:Status', payload); } catch {}
+  try {
+    if (mainWindow && !mainWindow.isDestroyed())
+      mainWindow.webContents.send('AppUpdate:Status', payload);
+  } catch {}
   try {
     if (ActiveRemoteUpdateSession && typeof ActiveRemoteUpdateSession.onStatus === 'function') {
       ActiveRemoteUpdateSession.onStatus(payload || {});
@@ -299,7 +379,8 @@ function mapUpdaterStateToProgress(payload = {}) {
   if (state === 'downloaded') return [100, 'Downloaded'];
   if (state === 'installing') return [100, 'Installing update'];
   if (state === 'none') return [100, 'Already up to date'];
-  if (state === 'error') return [0, payload && payload.error ? String(payload.error) : 'Update error'];
+  if (state === 'error')
+    return [0, payload && payload.error ? String(payload.error) : 'Update error'];
   return [0, 'Waiting'];
 }
 
@@ -317,7 +398,9 @@ function isSquirrelWindows() {
     const updateExe1 = path.resolve(execDir, '..', 'Update.exe');
     const updateExe2 = path.resolve(execDir, '..', '..', 'Update.exe');
     return fs.existsSync(updateExe1) || fs.existsSync(updateExe2);
-  } catch { return false; }
+  } catch {
+    return false;
+  }
 }
 function initSquirrelUpdater() {
   if (squirrelUpdaterInitialized) return;
@@ -379,39 +462,6 @@ app.whenReady().then(async () => {
   }
 
   if (tray) {
-    const contextMenu = Menu.buildFromTemplate([
-      {
-        label: 'Configure',
-        click: async () => {
-          openConfigureWindow();
-        },
-      },
-      {
-        label: 'Open Logs Folder',
-        click: async () => {
-          const Opened = AppDataManager.OpenFolder(AppDataManager.GetLogsDirectory());
-          if (!Opened) {
-            Logger.warn('Failed to open logs folder from tray menu');
-          }
-        },
-      },
-      {
-        type: 'separator',
-      },
-      {
-        label: 'Stop Service',
-        click: async () => {
-          app.quit();
-        },
-      },
-      {
-        label: 'Check For Updates',
-        click: async () => {
-          await performUpdateCheck();
-        },
-      },
-    ]);
-
     tray.setToolTip('ShowTrak Client Service');
     if (process.platform === 'darwin') {
       // Keep a visible fallback label in the menu bar in case the icon remains
@@ -424,7 +474,7 @@ app.whenReady().then(async () => {
         } catch {}
       }
     }
-    tray.setContextMenu(contextMenu);
+    refreshTrayContextMenu();
     tray.setIgnoreDoubleClickEvents(true);
   } else {
     // No tray: keep the app accessible by making the window visible.
@@ -499,6 +549,38 @@ app.whenReady().then(async () => {
     }
   });
 
+  RPC.handle('Profile:SetManualServer', async (_event, ...args) => {
+    try {
+      const [Host, Port] = args;
+      const NormalizedHost = typeof Host === 'string' ? Host.trim() : '';
+      if (!NormalizedHost) {
+        throw new Error('A server host or IP address is required.');
+      }
+      const NormalizedPort = Number(Port);
+      if (!Number.isInteger(NormalizedPort) || NormalizedPort < 1 || NormalizedPort > 65535) {
+        throw new Error('A valid server port between 1 and 65535 is required.');
+      }
+      await ProfileManager.SetManualServer(NormalizedHost, NormalizedPort);
+      await restartService('manual-server-set');
+      return [null, true];
+    } catch (error) {
+      Logger.error('Failed to set manual server endpoint', error);
+      return validationErrorPayload(error);
+    }
+  });
+
+  RPC.handle('Profile:ClearManualServer', async (_event, ...args) => {
+    try {
+      assertNoArgs('Profile:ClearManualServer', args);
+      await ProfileManager.ClearManualServer();
+      await restartService('manual-server-clear');
+      return [null, true];
+    } catch (error) {
+      Logger.error('Failed to clear manual server endpoint', error);
+      return validationErrorPayload(error);
+    }
+  });
+
   // Updater IPC
   RPC.handle('AppUpdate:Check', async (_event, ...args) => {
     try {
@@ -510,7 +592,10 @@ app.whenReady().then(async () => {
       try {
         autoInstallNext = true;
         sendAppUpdateStatus({ state: 'checking' });
-        setTimeout(() => sendAppUpdateStatus({ state: 'available', info: { version: 'TEST' } }), 400);
+        setTimeout(
+          () => sendAppUpdateStatus({ state: 'available', info: { version: 'TEST' } }),
+          400
+        );
         let pct = 0;
         const t = setInterval(() => {
           pct += 20;
@@ -523,7 +608,9 @@ app.whenReady().then(async () => {
             sendAppUpdateStatus({ state: 'downloading', percent: pct });
           }
         }, 200);
-      } catch (e) { sendAppUpdateStatus({ state: 'error', error: String(e) }); }
+      } catch (e) {
+        sendAppUpdateStatus({ state: 'error', error: String(e) });
+      }
       return [null, true];
     }
     autoInstallNext = true;
@@ -597,7 +684,9 @@ BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
   }
 
   const now = Date.now();
-  const sinceLastAttempt = recoveryMetrics.LastAttemptAt ? now - recoveryMetrics.LastAttemptAt : Infinity;
+  const sinceLastAttempt = recoveryMetrics.LastAttemptAt
+    ? now - recoveryMetrics.LastAttemptAt
+    : Infinity;
   if (sinceLastAttempt < RECOVERY_COOLDOWN_MS) {
     const waitMs = RECOVERY_COOLDOWN_MS - sinceLastAttempt;
     sendRecoveryStatus({
@@ -611,7 +700,8 @@ BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
     await recoverFromPrimaryFailure(Info);
   } catch (Error) {
     recoveryMetrics.LastFailureAt = Date.now();
-    recoveryMetrics.LastFailureReason = Error && Error.message ? String(Error.message) : 'unknown_error';
+    recoveryMetrics.LastFailureReason =
+      Error && Error.message ? String(Error.message) : 'unknown_error';
     Logger.error('Recovery flow failed', Error);
     sendRecoveryStatus({
       State: 'RecoveryFailed',
@@ -665,7 +755,9 @@ async function restartService(reason) {
   }
   isReinitializing = true;
   try {
-    try { await BonjourManager.Stop(); } catch {}
+    try {
+      await BonjourManager.Stop();
+    } catch {}
     await AdoptionClientManager.Terminate();
     await MainClientManager.Terminate();
     await Main();
@@ -711,9 +803,25 @@ async function recoverFromPrimaryFailure(Info = {}) {
         ? Profile.Server.ServerIdentity.trim()
         : '';
 
-    const Candidate = await discoverSingleServer(12000, {
-      ExpectedServerIdentity,
-    });
+    // When an operator-defined endpoint is configured, recover against it
+    // directly instead of relying on mDNS discovery (which cannot cross VLANs).
+    const ManualServer = Profile && Profile.ManualServer ? Profile.ManualServer : null;
+    let Candidate;
+    if (ManualServer && ManualServer.Host && ManualServer.Port) {
+      sendRecoveryStatus({
+        State: 'ConnectingPrimary',
+        Message: `Reconnecting to configured server ${ManualServer.Host}:${ManualServer.Port}`,
+      });
+      Candidate = {
+        IP: ManualServer.Host,
+        Port: ManualServer.Port,
+        ServerIdentity: null,
+      };
+    } else {
+      Candidate = await discoverSingleServer(12000, {
+        ExpectedServerIdentity,
+      });
+    }
     if (!Candidate || !Candidate.IP || !Candidate.Port) {
       recoveryMetrics.LastFailureAt = Date.now();
       recoveryMetrics.LastFailureReason = 'discovery_no_candidate';
@@ -739,9 +847,10 @@ async function recoverFromPrimaryFailure(Info = {}) {
       recoveryMetrics.LastFailureReason = Validation.reason || 'validation_failed';
       sendRecoveryStatus({
         State: 'RecoveryFailed',
-        Message: Validation.reason === 'rejected'
-          ? 'Discovered server rejected adoption identity.'
-          : 'Discovered server did not establish a stable connection.',
+        Message:
+          Validation.reason === 'rejected'
+            ? 'Discovered server rejected adoption identity.'
+            : 'Discovered server did not establish a stable connection.',
       });
       await restartService('recovery-validation-failed');
       return;
@@ -772,11 +881,16 @@ BroadcastManager.on('ProcessMonitorStatus', async (Status) => {
   }
 });
 
+BroadcastManager.on('ScriptsUpdated', () => {
+  refreshTrayContextMenu();
+});
+
 async function performUpdateCheck(options = {}) {
   try {
     const FeedURL = options && options.FeedURL ? String(options.FeedURL).trim() : '';
     const UseLANFeed = !!FeedURL;
-    const TargetVersion = options && options.TargetVersion ? String(options.TargetVersion).trim() : '';
+    const TargetVersion =
+      options && options.TargetVersion ? String(options.TargetVersion).trim() : '';
     const AllowDowngrade = !!(UseLANFeed && TargetVersion);
     Logger.log('[Updater] performUpdateCheck begin', {
       mode: UseLANFeed ? 'remote-lan' : 'self-default',
@@ -795,7 +909,11 @@ async function performUpdateCheck(options = {}) {
         ? FeedURL
         : 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
       Logger.log('[Updater][Squirrel] setting feed URL', { feed });
-      try { SquirrelUpdater.setFeedURL({ url: feed }); } catch { SquirrelUpdater.setFeedURL(feed); }
+      try {
+        SquirrelUpdater.setFeedURL({ url: feed });
+      } catch {
+        SquirrelUpdater.setFeedURL(feed);
+      }
       Logger.log('[Updater][Squirrel] checkForUpdates invoked');
       SquirrelUpdater.checkForUpdates();
       return;
@@ -859,9 +977,19 @@ async function performUpdateCheck(options = {}) {
     }
     // Provide update config dynamically if missing.
     const resourcesPath = typeof process !== 'undefined' ? process.resourcesPath : '';
-    const execDir = typeof process !== 'undefined' && process.execPath ? path.dirname(process.execPath) : '';
-    const ymlPaths = [resourcesPath ? path.join(resourcesPath, 'app-update.yml') : '', execDir ? path.join(execDir, 'app-update.yml') : ''].filter(Boolean);
-    const hasYml = ymlPaths.some((p) => { try { return fs.existsSync(p); } catch { return false; } });
+    const execDir =
+      typeof process !== 'undefined' && process.execPath ? path.dirname(process.execPath) : '';
+    const ymlPaths = [
+      resourcesPath ? path.join(resourcesPath, 'app-update.yml') : '',
+      execDir ? path.join(execDir, 'app-update.yml') : '',
+    ].filter(Boolean);
+    const hasYml = ymlPaths.some((p) => {
+      try {
+        return fs.existsSync(p);
+      } catch {
+        return false;
+      }
+    });
     Logger.log('[Updater][ElectronUpdater] update config inspection', {
       hasYml,
       ymlPaths,
@@ -887,7 +1015,9 @@ async function performUpdateCheck(options = {}) {
     if (UseLANFeed && typeof euAutoUpdater.setFeedURL === 'function') {
       try {
         euAutoUpdater.setFeedURL({ provider: 'generic', url: FeedURL });
-        Logger.log('[Updater][ElectronUpdater] setFeedURL applied for LAN feed', { feedUrl: FeedURL });
+        Logger.log('[Updater][ElectronUpdater] setFeedURL applied for LAN feed', {
+          feedUrl: FeedURL,
+        });
       } catch (err) {
         Logger.error('[Updater][ElectronUpdater] setFeedURL failed for LAN feed', err);
       }
@@ -919,7 +1049,8 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
   if (!app.isPackaged) return Callback('App is not packaged, skipping update check');
 
   const FeedURL = Payload && Payload.FeedURL ? String(Payload.FeedURL).trim() : '';
-  const TargetVersion = Payload && Payload.ReleaseVersion ? String(Payload.ReleaseVersion).trim() : '';
+  const TargetVersion =
+    Payload && Payload.ReleaseVersion ? String(Payload.ReleaseVersion).trim() : '';
   if (!FeedURL) return Callback('Missing LAN update feed URL');
 
   autoInstallNext = true;
@@ -958,16 +1089,15 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
             resolve(state);
             ActiveRemoteUpdateSession = null;
           } else if (state === 'error') {
-            const msg = statusPayload && statusPayload.error
-              ? String(statusPayload.error)
-              : 'Update failed';
+            const msg =
+              statusPayload && statusPayload.error ? String(statusPayload.error) : 'Update failed';
             Logger.error('[Updater][RemoteLAN] terminal error state', { message: msg });
             reject(new Error(msg));
             ActiveRemoteUpdateSession = null;
           }
         },
       };
-    
+
       performUpdateCheck({ FeedURL, TargetVersion }).catch((Err) => {
         Logger.error('[Updater][RemoteLAN] performUpdateCheck rejected', Err);
         reject(Err);
@@ -983,9 +1113,13 @@ BroadcastManager.on('UpdateSoftwareFromLAN', async (Payload, ProgressCallback, C
           requestedVersion,
           currentVersion,
         });
-        return Callback(`Requested version ${TargetVersion} was reported as unavailable by the updater`);
+        return Callback(
+          `Requested version ${TargetVersion} was reported as unavailable by the updater`
+        );
       }
-      Logger.log('[Updater][RemoteLAN] no update available because client is already on requested version');
+      Logger.log(
+        '[Updater][RemoteLAN] no update available because client is already on requested version'
+      );
       return Callback(null);
     }
     Logger.log('[Updater][RemoteLAN] remote LAN update download completed');
@@ -1006,6 +1140,21 @@ async function Main() {
     await BootWithStoredSettings();
   } else {
     Logger.log('Profile loaded [Unadopted]');
+
+    // Prefer an operator-defined endpoint so adoption works across VLANs where
+    // mDNS/Bonjour multicast cannot reach the server.
+    const ManualServer = Profile.ManualServer || null;
+    if (ManualServer && ManualServer.Host && ManualServer.Port) {
+      sendRecoveryStatus({
+        State: 'ConnectingPrimary',
+        Message: `Connecting to configured server ${ManualServer.Host}:${ManualServer.Port} for adoption...`,
+      });
+      await AdoptionClientManager.Init(Profile.UUID, ManualServer.Host, ManualServer.Port, {
+        ServerIdentity: null,
+      });
+      return;
+    }
+
     sendRecoveryStatus({
       State: 'Discovering',
       Message: 'Searching for ShowTrak Server for adoption...',
@@ -1056,7 +1205,9 @@ async function discoverSingleServer(timeoutMs = 12000, Options = {}) {
     const finish = async (Result) => {
       if (settled) return;
       settled = true;
-      try { await BonjourManager.Stop(); } catch {}
+      try {
+        await BonjourManager.Stop();
+      } catch {}
       resolve(Result || null);
     };
 
@@ -1077,7 +1228,12 @@ async function discoverSingleServer(timeoutMs = 12000, Options = {}) {
 
         const addrs = Array.isArray(Server.addresses) ? Server.addresses : [];
         let targetIP = addrs.find((a) => typeof a === 'string' && a.includes('.')) || null;
-        if (!targetIP && Server.referer && typeof Server.referer.address === 'string' && Server.referer.address.includes('.')) {
+        if (
+          !targetIP &&
+          Server.referer &&
+          typeof Server.referer.address === 'string' &&
+          Server.referer.address.includes('.')
+        ) {
           targetIP = Server.referer.address;
         }
         if (!targetIP && typeof Server.host === 'string' && Server.host.length) {
@@ -1087,7 +1243,9 @@ async function discoverSingleServer(timeoutMs = 12000, Options = {}) {
           } catch {}
         }
         if (!targetIP) {
-          Logger.warn('Bonjour service discovered but no IPv4 address resolved; skipping this record.');
+          Logger.warn(
+            'Bonjour service discovered but no IPv4 address resolved; skipping this record.'
+          );
           return;
         }
 
@@ -1121,19 +1279,13 @@ async function waitForRecoveryValidation(Candidate, timeoutMs = 6000) {
     };
 
     const onRejected = (Info = {}) => {
-      if (
-        Info.IP === Candidate.IP &&
-        Number(Info.Port) === Number(Candidate.Port)
-      ) {
+      if (Info.IP === Candidate.IP && Number(Info.Port) === Number(Candidate.Port)) {
         finish({ ok: false, reason: 'rejected' });
       }
     };
 
     const onConnectionStatus = (Info = {}) => {
-      if (
-        Info.IP !== Candidate.IP ||
-        Number(Info.Port) !== Number(Candidate.Port)
-      ) {
+      if (Info.IP !== Candidate.IP || Number(Info.Port) !== Number(Candidate.Port)) {
         return;
       }
       if (Info.State === 'connected') {

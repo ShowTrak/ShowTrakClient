@@ -9,11 +9,7 @@ const Manager = {};
 
 Manager.Hostname = os.hostname();
 Manager.OperatingSystem =
-  process.platform === 'win32'
-    ? 'Windows'
-    : process.platform === 'darwin'
-      ? 'macOS'
-      : 'Linux';
+  process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
 
 let CPUUsage = 0.0;
 let __prevCpuTimes = null;
@@ -23,7 +19,8 @@ const __CPU_WINDOW_SIZE = 3; // 2–3s smoothing
 function snapshotCpuTimes() {
   const list = os.cpus();
   // Summarize times across all logical CPUs
-  let idle = 0, total = 0;
+  let idle = 0,
+    total = 0;
   for (const c of list) {
     const t = c.times;
     idle += t.idle;
@@ -49,7 +46,9 @@ function sampleCPU() {
       }
     }
     __prevCpuTimes = curr;
-  } catch (_) {}
+  } catch (_error) {
+    // Best-effort CPU sampling should never crash runtime flow.
+  }
 }
 
 // Initialize snapshot and start a 1s sampler; this aligns with Task Manager more closely on Windows

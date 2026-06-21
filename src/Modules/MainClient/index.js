@@ -184,7 +184,10 @@ const Manager = {
     });
 
     Socket.on('connect_error', (Error) => {
-      Logger.warn(`Connection error to ${IP}:${Port}`, Error && Error.message ? Error.message : Error);
+      Logger.warn(
+        `Connection error to ${IP}:${Port}`,
+        Error && Error.message ? Error.message : Error
+      );
       markConnectionError(IP, Port, Error);
     });
 
@@ -228,13 +231,15 @@ const Manager = {
             await ScriptManager.DownloadScripts(IP, Port, Scripts);
             Socket.emit('ScriptExecutionResponse', RequestID, null);
           } catch (Err) {
-            const Message = Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
+            const Message =
+              Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
             Logger.error('UpdateScripts failed during download', Message);
             Socket.emit('ScriptExecutionResponse', RequestID, Message);
           }
         });
       } catch (Err) {
-        const Message = Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
+        const Message =
+          Err && Err.message ? Err.message : String(Err || 'Failed to deploy scripts');
         Logger.error('UpdateScripts failed before download', Message);
         Socket.emit('ScriptExecutionResponse', RequestID, Message);
       }

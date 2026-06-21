@@ -163,15 +163,37 @@ test('MainClient handles command events and reconnect lifecycle branches', async
     await createdSocket.trigger('connect');
 
     assert.equal(setScriptsCalls, 1);
-    assert.equal(createdSocket.getVolatileEmits().some(([event]) => event === 'Heartbeat'), true);
-    assert.equal(createdSocket.getEmits().some(([event]) => event === 'SystemInfo'), true);
-    assert.equal(createdSocket.getEmits().some(([event]) => event === 'NetworkInterfaces'), true);
+    assert.equal(
+      createdSocket.getVolatileEmits().some(([event]) => event === 'Heartbeat'),
+      true
+    );
+    assert.equal(
+      createdSocket.getEmits().some(([event]) => event === 'SystemInfo'),
+      true
+    );
+    assert.equal(
+      createdSocket.getEmits().some(([event]) => event === 'NetworkInterfaces'),
+      true
+    );
 
     await createdSocket.trigger('UpdateSoftware', 'r-1');
-    assert.equal(createdSocket.getEmits().some(([event, requestId]) => event === 'ScriptExecutionResponse' && requestId === 'r-1'), true);
+    assert.equal(
+      createdSocket
+        .getEmits()
+        .some(([event, requestId]) => event === 'ScriptExecutionResponse' && requestId === 'r-1'),
+      true
+    );
 
-    await createdSocket.trigger('UpdateSoftwareFromLAN', 'r-2', { FeedPath: '/feed', ReleaseVersion: '1.2.3' });
-    assert.equal(createdSocket.getEmits().some(([event, requestId]) => event === 'ScriptExecutionProgress' && requestId === 'r-2'), true);
+    await createdSocket.trigger('UpdateSoftwareFromLAN', 'r-2', {
+      FeedPath: '/feed',
+      ReleaseVersion: '1.2.3',
+    });
+    assert.equal(
+      createdSocket
+        .getEmits()
+        .some(([event, requestId]) => event === 'ScriptExecutionProgress' && requestId === 'r-2'),
+      true
+    );
 
     await createdSocket.trigger('DeleteScripts', 'r-3');
     assert.equal(deleteScriptsCalls, 1);
@@ -180,12 +202,18 @@ test('MainClient handles command events and reconnect lifecycle branches', async
     assert.equal(downloadCalls, 1);
 
     await createdSocket.trigger('Unadopt');
-    assert.equal(broadcastEvents.some(([event]) => event === 'ServerAdoptionRejected'), true);
+    assert.equal(
+      broadcastEvents.some(([event]) => event === 'ServerAdoptionRejected'),
+      true
+    );
 
     await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
     await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
     await createdSocket.trigger('connect_error', new Error('ECONNREFUSED'));
-    assert.equal(broadcastEvents.some(([event]) => event === 'ServerConnectFailed'), true);
+    assert.equal(
+      broadcastEvents.some(([event]) => event === 'ServerConnectFailed'),
+      true
+    );
 
     executeShouldFail = true;
     await createdSocket.trigger('ExecuteScript', 'r-5', 'script-a');
@@ -260,7 +288,13 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
       },
     },
     '../Config': { Config: { Application: { Version: 'v' } } },
-    '../USBMonitor': { Manager: { GetUSBDevices: async () => [null, []], OnUSBConnect: () => {}, OnUSBDisconnect: () => {} } },
+    '../USBMonitor': {
+      Manager: {
+        GetUSBDevices: async () => [null, []],
+        OnUSBConnect: () => {},
+        OnUSBDisconnect: () => {},
+      },
+    },
     '../ScriptManager': {
       Manager: {
         SetScripts: async () => {},
@@ -287,7 +321,12 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
     assert.equal(
       createdSocket
         .getEmits()
-        .some(([event, requestId, message]) => event === 'ScriptExecutionResponse' && requestId === 'req-download-fail' && String(message).includes('download failed')),
+        .some(
+          ([event, requestId, message]) =>
+            event === 'ScriptExecutionResponse' &&
+            requestId === 'req-download-fail' &&
+            String(message).includes('download failed')
+        ),
       true
     );
 
@@ -297,7 +336,12 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
     assert.equal(
       createdSocket
         .getEmits()
-        .some(([event, requestId, message]) => event === 'ScriptExecutionResponse' && requestId === 'req-pre-fail' && String(message).includes('pre-download')),
+        .some(
+          ([event, requestId, message]) =>
+            event === 'ScriptExecutionResponse' &&
+            requestId === 'req-pre-fail' &&
+            String(message).includes('pre-download')
+        ),
       true
     );
 

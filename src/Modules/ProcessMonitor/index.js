@@ -138,7 +138,9 @@ function setStatus(status) {
 }
 
 function classifyCollectionError(error) {
-  const message = String(error && error.message ? error.message : error || 'Unknown process monitor error');
+  const message = String(
+    error && error.message ? error.message : error || 'Unknown process monitor error'
+  );
   if (
     process.platform === 'darwin' &&
     /-1743|not authorized|not permitted|automation|apple events|system events/i.test(message)
@@ -158,9 +160,9 @@ function classifyCollectionError(error) {
 async function collectWindowsApplications() {
   const script = [
     "$ErrorActionPreference = 'Stop'",
-    "Get-Process",
-    "| Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName }",
-    "| Select-Object -ExpandProperty ProcessName",
+    'Get-Process',
+    '| Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName }',
+    '| Select-Object -ExpandProperty ProcessName',
   ].join(' ');
   const [error, stdout] = await execFileAsync('powershell.exe', [
     '-NoProfile',
@@ -171,7 +173,13 @@ async function collectWindowsApplications() {
     script,
   ]);
   if (error) return [error, null];
-  return [null, stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)];
+  return [
+    null,
+    stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  ];
 }
 
 async function collectMacApplications() {
@@ -187,18 +195,32 @@ async function collectMacApplications() {
   ].join('\n');
   const [error, stdout] = await execFileAsync('osascript', ['-e', script]);
   if (error) return [error, null];
-  return [null, stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)];
+  return [
+    null,
+    stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  ];
 }
 
 async function collectLinuxApplications() {
   let username = '';
   try {
     username = os.userInfo().username || '';
-  } catch {}
+  } catch (_error) {
+    // Fall back to process listing without user filtering.
+  }
   const args = username ? ['-u', username, '-o', 'comm='] : ['-e', '-o', 'comm='];
   const [error, stdout] = await execFileAsync('ps', args);
   if (error) return [error, null];
-  return [null, stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)];
+  return [
+    null,
+    stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  ];
 }
 
 async function collectRunningApplications() {

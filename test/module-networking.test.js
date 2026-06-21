@@ -21,7 +21,16 @@ test('OS manager returns vitals, mac addresses, and interfaces', async () => {
       uptime: () => 3661,
       cpus: () => [{ times: { user: 1, nice: 1, sys: 1, idle: 7, irq: 0 } }],
       networkInterfaces: () => ({
-        lo0: [{ family: 'IPv4', address: '127.0.0.1', netmask: '255.0.0.0', cidr: '127.0.0.1/8', mac: '00', internal: true }],
+        lo0: [
+          {
+            family: 'IPv4',
+            address: '127.0.0.1',
+            netmask: '255.0.0.0',
+            cidr: '127.0.0.1/8',
+            mac: '00',
+            internal: true,
+          },
+        ],
       }),
     },
     macaddress: {
@@ -96,7 +105,10 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
     },
     '../OS': {
       Manager: {
-        GetNetworkInterfaces: async () => [null, interfaceSnapshots[Math.min(idx++, interfaceSnapshots.length - 1)]],
+        GetNetworkInterfaces: async () => [
+          null,
+          interfaceSnapshots[Math.min(idx++, interfaceSnapshots.length - 1)],
+        ],
       },
     },
   });
@@ -184,7 +196,10 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     await waitTick();
     const status = Manager.GetStatus();
     assert.equal(status.State, 'permission_denied');
-    assert.equal(statusEvents.some(([event]) => event === 'ProcessMonitorStatus'), true);
+    assert.equal(
+      statusEvents.some(([event]) => event === 'ProcessMonitorStatus'),
+      true
+    );
 
     await Manager.Stop();
     assert.equal(intervalHandle, null);
@@ -239,7 +254,9 @@ test('Bonjour manager discovers service and can stop/terminate', async () => {
     },
     bonjour: bonjourFactory,
     os: {
-      networkInterfaces: () => ({ en0: [{ family: 'IPv4', address: '10.0.0.2', internal: false }] }),
+      networkInterfaces: () => ({
+        en0: [{ family: 'IPv4', address: '10.0.0.2', internal: false }],
+      }),
     },
   });
 
@@ -304,7 +321,11 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
       find: () => createBrowser(),
       findOne: (findOpts, callback) => {
         if (isFallback) {
-          fallbackFinds.push({ interface: opts.interface, type: findOpts.type, protocol: findOpts.protocol });
+          fallbackFinds.push({
+            interface: opts.interface,
+            type: findOpts.type,
+            protocol: findOpts.protocol,
+          });
           fallbackCallbacks.push(callback);
         }
         return createBrowser();
@@ -340,8 +361,14 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
     }
 
     assert.equal(fallbackFinds.length, 2);
-    assert.equal(fallbackFinds.some((entry) => entry.type === 'showtrak'), true);
-    assert.equal(fallbackFinds.some((entry) => entry.type === 'ShowTrak'), true);
+    assert.equal(
+      fallbackFinds.some((entry) => entry.type === 'showtrak'),
+      true
+    );
+    assert.equal(
+      fallbackFinds.some((entry) => entry.type === 'ShowTrak'),
+      true
+    );
 
     fallbackCallbacks[0]({ host: 'fallback.local', port: 4040 });
     assert.deepEqual(discovered, { host: 'fallback.local', port: 4040 });

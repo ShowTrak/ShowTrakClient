@@ -15,6 +15,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   const profileDir = tempDir('showtrak-client-profile-');
 
   const spawnCalls = [];
+  const broadcastEvents = [];
   const childProcessMock = {
     spawn: (command, args) => {
       spawnCalls.push([command, args]);
@@ -32,6 +33,13 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
     },
+    '../Broadcast': {
+      Manager: {
+        emit: (event, ...args) => {
+          broadcastEvents.push([event, ...args]);
+        },
+      },
+    },
     '../AppData': {
       Manager: {
         GetScriptsDirectory: () => scriptsDir,
@@ -46,6 +54,10 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   });
 
   await Manager.SetScripts([]);
+  assert.equal(
+    broadcastEvents.some(([event]) => event === 'ScriptsUpdated'),
+    true
+  );
   const [missingErr, missingOk] = await Manager.Execute('r1', 'missing');
   assert.equal(missingErr, 'Script not found');
   assert.equal(missingOk, false);
@@ -65,7 +77,22 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
       Arguments: { macOS: '--flag value' },
       Files: [{ Path: 'macos.sh', Type: 'file', Checksum: 'sum' }],
     },
+    {
+      ID: 'script-disabled',
+      Name: 'Windows Only',
+      Enabled: true,
+      Platforms: { Windows: 'windows.bat' },
+      Files: [{ Path: 'windows.bat', Type: 'file', Checksum: 'sum' }],
+    },
   ]);
+
+  const trayEntries = Manager.GetTrayScriptEntries();
+  assert.equal(trayEntries.length, 2);
+  assert.equal(trayEntries[0].Script.ID, scriptId);
+  assert.equal(trayEntries[0].Enabled, true);
+  assert.equal(trayEntries[1].Script.ID, 'script-disabled');
+  assert.equal(trayEntries[1].Enabled, false);
+  assert.equal(trayEntries[1].DisabledReason, 'No script is configured for this operating system');
 
   const [okErr, ok] = await withMocks({ child_process: childProcessMock }, () =>
     Manager.Execute('r2', scriptId)
@@ -87,6 +114,13 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   const [missingFileErr, missingFileOk] = await Manager.Execute('r3', scriptId);
   assert.equal(missingFileErr, 'Script file for this operating system was not found');
   assert.equal(missingFileOk, false);
+
+  await Manager.DeleteScripts();
+  assert.equal(
+    broadcastEvents.some(([event]) => event === 'ScriptsUpdated'),
+    true
+  );
+  assert.equal(Manager.GetTrayScriptEntries().length, 0);
 });
 
 test('ScriptManager download, fingerprint, and delete flow', async () => {
@@ -331,4 +365,3 @@ test('preload exposes safe API wrappers and subscriptions', async () => {
 
   assert.throws(() => exposedAPI.SetProfile('not-a-function'), /must be a function/);
 });
-

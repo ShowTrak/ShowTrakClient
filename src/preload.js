@@ -16,6 +16,8 @@ const INVOKE_CHANNELS = new Set([
   'Shutdown',
   'Minimise',
   'Profile:FactoryReset',
+  'Profile:SetManualServer',
+  'Profile:ClearManualServer',
   'AppUpdate:Check',
   'AppUpdate:Install',
 ]);
@@ -56,11 +58,12 @@ contextBridge.exposeInMainWorld('API', {
   Shutdown: async () => invoke('Shutdown'),
   Minimise: async () => invoke('Minimise'),
   ResetClientFactoryDefaults: async () => invoke('Profile:FactoryReset'),
+  SetManualServer: async (Host, Port) => invoke('Profile:SetManualServer', Host, Port),
+  ClearManualServer: async () => invoke('Profile:ClearManualServer'),
   CheckForAppUpdates: async () => invoke('AppUpdate:Check'),
   InstallAppUpdate: async () => invoke('AppUpdate:Install'),
   OnAppUpdateStatus: (cb) => subscribe('AppUpdate:Status', cb),
   OnProcessMonitorStatus: (cb) => subscribe('ProcessMonitorStatus', cb),
   OnServerRecoveryStatus: (cb) => subscribe('ServerRecoveryStatus', cb),
-  SetProfile: (Callback) =>
-    subscribe('SetProfile', Callback),
+  SetProfile: (Callback) => subscribe('SetProfile', Callback),
 });

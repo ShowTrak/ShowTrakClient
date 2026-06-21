@@ -3,7 +3,8 @@ body {
   user-select: none;
   -webkit-user-select: none;
   -ms-user-select: none;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .dragbar {
@@ -38,7 +39,7 @@ body {
   width: 100%;
   display: grid;
   grid-template-rows: auto 1fr;
-  overflow: hidden;
+  overflow: visible;
 }
 
 #LOGO {
@@ -63,6 +64,51 @@ body {
 
 .bg-ghost {
   background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+#MANUAL_SERVER_SECTION {
+  border-radius: 0.5rem !important;
+}
+
+.form-control {
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: none !important;
+}
+
+.form-control::placeholder {
+  color: rgba(255, 255, 255, 0.55) !important;
+}
+
+.form-control:focus {
+  background-color: rgba(255, 255, 255, 0.14) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.manual-server-label {
+  white-space: nowrap;
+}
+
+.manual-server-host {
+  flex: 1 1 15rem;
+  min-width: 12rem;
+  border-radius: 0.5rem !important;
+}
+
+.manual-server-port {
+  flex: 0 0 5.5rem;
+  border-radius: 0.5rem !important;
+}
+
+.manual-server-action {
+  flex: 0 0 auto;
+}
+
+#MANUAL_SERVER_HINT {
+  color: rgba(255, 255, 255, 0.68) !important;
 }
 
 #UPDATE_SECTION .text-muted {

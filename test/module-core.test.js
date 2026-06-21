@@ -117,6 +117,8 @@ test('Utils.Wait resolves asynchronously', async () => {
 test('ProfileManager creates and updates profile states', async () => {
   const profileRoot = tempDir('showtrak-client-profile-');
   const emitted = [];
+  const fs = require('node:fs');
+  const manualServerPath = path.join(profileRoot, 'ManualServer.json');
 
   const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
@@ -156,6 +158,38 @@ test('ProfileManager creates and updates profile states', async () => {
   assert.equal(recovered.Server.IP, '127.0.0.2');
   assert.equal(recovered.Server.ServerIdentity, 'server-token-a');
 
+  // Manual server endpoint persists through adoption transitions so cross-VLAN
+  // agents keep targeting the operator-defined server.
+  await Manager.SetManualServer('10.20.30.40', 3000);
+  const withManual = await Manager.GetProfile();
+  assert.deepEqual(withManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
+  assert.equal(fs.existsSync(manualServerPath), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(manualServerPath, 'utf-8')), {
+    Host: '10.20.30.40',
+    Port: 3000,
+  });
+
+  const manualLookup = await Manager.GetManualServer();
+  assert.deepEqual(manualLookup, { Host: '10.20.30.40', Port: 3000 });
+
+  await Manager.Adopt('10.20.30.40', 3000, { ServerIdentity: 'server-token-b' });
+  const adoptedManual = await Manager.GetProfile();
+  assert.deepEqual(adoptedManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
+
+  await Manager.ResetAdopption();
+  const resetWithManual = await Manager.GetProfile();
+  assert.equal(resetWithManual.Adopted, false);
+  assert.deepEqual(resetWithManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
+
+  await assert.rejects(() => Manager.SetManualServer('', 3000));
+  await assert.rejects(() => Manager.SetManualServer('10.20.30.40', 70000));
+
+  await Manager.ClearManualServer();
+  const cleared = await Manager.GetProfile();
+  assert.equal(Object.prototype.hasOwnProperty.call(cleared, 'ManualServer'), false);
+  assert.equal(await Manager.GetManualServer(), null);
+  assert.equal(fs.existsSync(manualServerPath), false);
+
   await Manager.ResetAdopption();
   const reset = await Manager.GetProfile();
   assert.equal(reset.Adopted, false);
@@ -164,12 +198,70 @@ test('ProfileManager creates and updates profile states', async () => {
   const resetFactory = await Manager.GetProfile();
   assert.equal(resetFactory.UUID, 'generated-uuid');
   assert.equal(resetFactory.Adopted, false);
+  assert.equal(fs.existsSync(manualServerPath), false);
 
   await Manager.ForceResetProfile();
   const resetForced = await Manager.GetProfile();
   assert.equal(resetForced.UUID, 'generated-uuid');
 
-  assert.equal(emitted.some(([event]) => event === 'ProfileUpdated'), true);
+  assert.equal(
+    emitted.some(([event]) => event === 'ProfileUpdated'),
+    true
+  );
+});
+
+test('ProfileManager migrates legacy manual server storage from Profile.json', async () => {
+  const profileRoot = tempDir('showtrak-client-profile-migrate-');
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
+  const fs = require('node:fs');
+
+  fs.writeFileSync(
+    path.join(profileRoot, 'Profile.json'),
+    JSON.stringify(
+      {
+        UUID: 'legacy-uuid',
+        Adopted: false,
+        ManualServer: { Host: '192.168.10.5', Port: 4000 },
+      },
+      null,
+      2
+    )
+  );
+
+  const { Manager } = loadWithMocks(modulePath, {
+    '../Logger': {
+      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+    },
+    '../AppData': {
+      Manager: {
+        Initialize: () => {},
+        GetProfileDirectory: () => profileRoot,
+      },
+    },
+    '../Broadcast': {
+      Manager: {
+        emit: () => {},
+      },
+    },
+    '../UUID': {
+      Manager: {
+        Generate: () => 'generated-uuid',
+      },
+    },
+  });
+
+  const profile = await Manager.GetProfile();
+  const storedProfile = JSON.parse(
+    fs.readFileSync(path.join(profileRoot, 'Profile.json'), 'utf-8')
+  );
+  const storedManual = JSON.parse(
+    fs.readFileSync(path.join(profileRoot, 'ManualServer.json'), 'utf-8')
+  );
+
+  assert.equal(profile.UUID, 'legacy-uuid');
+  assert.deepEqual(profile.ManualServer, { Host: '192.168.10.5', Port: 4000 });
+  assert.equal(Object.prototype.hasOwnProperty.call(storedProfile, 'ManualServer'), false);
+  assert.deepEqual(storedManual, { Host: '192.168.10.5', Port: 4000 });
 });
 
 test('USBMonitor formats connected devices and emits callbacks', async () => {

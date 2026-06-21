@@ -1,6 +1,7 @@
 const { CreateLogger } = require('../Logger');
 const Logger = CreateLogger('ScriptManager');
 
+const { Manager: BroadcastManager } = require('../Broadcast');
 const { Manager: AppDataManager } = require('../AppData');
 const { Manager: ChecksumManager } = require('../ChecksumManager');
 
@@ -143,6 +144,52 @@ Internal.ResolvePlatformArguments = (Script) => {
     if (value) return value;
   }
   return '';
+};
+
+Internal.GetScriptLaunchState = (Script) => {
+  const ScriptID = Script && Script.ID ? String(Script.ID) : '';
+  if (!Script || typeof Script !== 'object') {
+    return { Enabled: false, DisabledReason: 'Invalid script configuration' };
+  }
+  if (!ScriptID) {
+    return { Enabled: false, DisabledReason: 'Script is missing an ID' };
+  }
+  if (Script.isValid === false) {
+    return {
+      Enabled: false,
+      DisabledReason: Script.ParseError
+        ? String(Script.ParseError)
+        : 'Invalid script configuration',
+    };
+  }
+  if (Script.Enabled === false || Script.isEnabled === false) {
+    return { Enabled: false, DisabledReason: 'Script is disabled' };
+  }
+
+  const RelativePath = Internal.ResolvePlatformScript(Script);
+  if (!RelativePath) {
+    return { Enabled: false, DisabledReason: 'No script is configured for this operating system' };
+  }
+
+  const ScriptPath = path.join(AppDataManager.GetScriptsDirectory(), ScriptID);
+  if (!fs.existsSync(ScriptPath)) {
+    return { Enabled: false, DisabledReason: 'Script path does not exist' };
+  }
+
+  const TargetFile = path.join(ScriptPath, RelativePath);
+  if (!fs.existsSync(TargetFile)) {
+    return {
+      Enabled: false,
+      DisabledReason: 'Script file for this operating system was not found',
+    };
+  }
+
+  return {
+    Enabled: true,
+    DisabledReason: '',
+    RelativePath,
+    ScriptPath: TargetFile,
+  };
 };
 
 // Parse a shell-like argument string into argv tokens.
@@ -308,6 +355,31 @@ Internal.RunScriptFile = async (ScriptPath, ExtraArgs = []) => {
 
 Manager.SetScripts = async (Scripts) => {
   ScriptCache = Scripts || [];
+  BroadcastManager.emit('ScriptsUpdated', Manager.GetScripts());
+};
+
+Manager.GetScripts = () => {
+  return Array.isArray(ScriptCache) ? ScriptCache.slice() : [];
+};
+
+Manager.GetTrayScriptEntries = () => {
+  return Manager.GetScripts()
+    .filter((Script) => Script && typeof Script === 'object')
+    .sort((A, B) => {
+      const weightDelta = (Number(A.Weight) || 0) - (Number(B.Weight) || 0);
+      if (weightDelta !== 0) return weightDelta;
+      const nameDelta = String(A.Name || '').localeCompare(String(B.Name || ''));
+      if (nameDelta !== 0) return nameDelta;
+      return String(A.ID || '').localeCompare(String(B.ID || ''));
+    })
+    .map((Script) => {
+      const LaunchState = Internal.GetScriptLaunchState(Script);
+      return {
+        Script,
+        Enabled: !!LaunchState.Enabled,
+        DisabledReason: LaunchState.DisabledReason || '',
+      };
+    });
 };
 
 Manager.GetExpectedDeploymentFingerprint = async (Scripts = null) => {
@@ -325,24 +397,14 @@ Manager.Execute = async (_RequestID, ScriptID) => {
   if (!Script) return ['Script not found', false];
   Logger.log(`Executing script: ${Script.Name} (${Script.ID})`);
   try {
-    const RelativePath = Internal.ResolvePlatformScript(Script);
+    const LaunchState = Internal.GetScriptLaunchState(Script);
+    if (!LaunchState.Enabled) {
+      Logger.error(`Script is not runnable on this platform: ${LaunchState.DisabledReason}`);
+      return [LaunchState.DisabledReason, false];
+    }
     const PlatformArgString = Internal.ResolvePlatformArguments(Script);
     const PlatformArgs = Internal.ParseArgumentString(PlatformArgString);
-    if (!RelativePath) {
-      Logger.error(`No script defined for this platform (${process.platform}) on ${Script.Name}`);
-      return ['No script is configured for this operating system', false];
-    }
-    const ScriptPath = path.join(AppDataManager.GetScriptsDirectory(), Script.ID);
-    if (!fs.existsSync(ScriptPath)) {
-      Logger.error(`Script path does not exist: ${ScriptPath}`);
-      return ['Script path does not exist', false];
-    }
-    const TargetFile = path.join(ScriptPath, RelativePath);
-    if (!fs.existsSync(TargetFile)) {
-      Logger.error(`Script file does not exist: ${TargetFile}`);
-      return ['Script file for this operating system was not found', false];
-    }
-    await Internal.RunScriptFile(TargetFile, PlatformArgs);
+    await Internal.RunScriptFile(LaunchState.ScriptPath, PlatformArgs);
     Logger.success(`Script ${Script.Name} executed successfully`);
     return [null, true];
   } catch (error) {
@@ -362,6 +424,7 @@ Manager.DeleteScripts = async () => {
   Internal.LoadDeploymentState();
   LastAppliedDeploymentFingerprint = null;
   Internal.PersistDeploymentState();
+  BroadcastManager.emit('ScriptsUpdated', Manager.GetScripts());
   return;
 };
 
@@ -452,6 +515,7 @@ Manager.DownloadScripts = async (IP, Port, Scripts) => {
   Internal.LoadDeploymentState();
   LastAppliedDeploymentFingerprint = Internal.BuildDeploymentFingerprint(Scripts || []);
   Internal.PersistDeploymentState();
+  BroadcastManager.emit('ScriptsUpdated', Manager.GetScripts());
 };
 
 module.exports = {
