@@ -10,9 +10,32 @@ function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+function localPlatformConfig() {
+  if (process.platform === 'win32') {
+    return {
+      key: 'Windows',
+      fileName: 'windows.bat',
+      defaultContents: '@echo off\recho hello',
+    };
+  }
+  if (process.platform === 'darwin') {
+    return {
+      key: 'macOS',
+      fileName: 'macos.sh',
+      defaultContents: 'echo hello',
+    };
+  }
+  return {
+    key: 'Linux',
+    fileName: 'linux.sh',
+    defaultContents: 'echo hello',
+  };
+}
+
 test('ScriptManager executes scripts and handles missing scripts', async () => {
   const scriptsDir = tempDir('showtrak-client-scripts-');
   const profileDir = tempDir('showtrak-client-profile-');
+  const platform = localPlatformConfig();
 
   const spawnCalls = [];
   const broadcastEvents = [];
@@ -63,26 +86,28 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   assert.equal(missingOk, false);
 
   const scriptId = 'script-1';
+  const unsupportedPlatformKey =
+    platform.key === 'Windows' ? 'macOS' : platform.key === 'macOS' ? 'Linux' : 'Windows';
   const scriptFolder = path.join(scriptsDir, scriptId);
   fs.mkdirSync(scriptFolder, { recursive: true });
-  const scriptFile = path.join(scriptFolder, 'macos.sh');
-  fs.writeFileSync(scriptFile, 'echo hello', 'utf8');
+  const scriptFile = path.join(scriptFolder, platform.fileName);
+  fs.writeFileSync(scriptFile, platform.defaultContents, 'utf8');
 
   await Manager.SetScripts([
     {
       ID: scriptId,
       Name: 'Demo',
       Enabled: true,
-      Platforms: { macOS: 'macos.sh' },
-      Arguments: { macOS: '--flag value' },
-      Files: [{ Path: 'macos.sh', Type: 'file', Checksum: 'sum' }],
+      Platforms: { [platform.key]: platform.fileName },
+      Arguments: { [platform.key]: '--flag value' },
+      Files: [{ Path: platform.fileName, Type: 'file', Checksum: 'sum' }],
     },
     {
       ID: 'script-disabled',
-      Name: 'Windows Only',
+      Name: 'Other Platform Only',
       Enabled: true,
-      Platforms: { Windows: 'windows.bat' },
-      Files: [{ Path: 'windows.bat', Type: 'file', Checksum: 'sum' }],
+      Platforms: { [unsupportedPlatformKey]: 'unsupported-script' },
+      Files: [{ Path: 'unsupported-script', Type: 'file', Checksum: 'sum' }],
     },
   ]);
 
@@ -106,7 +131,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
       ID: scriptId,
       Name: 'Demo',
       Enabled: true,
-      Platforms: { macOS: 'missing.sh' },
+      Platforms: { [platform.key]: 'missing.sh' },
       Files: [{ Path: 'missing.sh', Type: 'file', Checksum: 'sum' }],
     },
   ]);
@@ -186,6 +211,7 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
 test('ScriptManager handles invalid configs and launcher errors', async () => {
   const scriptsDir = tempDir('showtrak-client-scripts-err-');
   const profileDir = tempDir('showtrak-client-profile-err-');
+  const platform = localPlatformConfig();
 
   const originalFetch = global.fetch;
   global.fetch = async () => ({
@@ -245,7 +271,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
       {
         ID: scriptId,
         Name: 'Missing Directory',
-        Platforms: { macOS: 'macos.sh' },
+        Platforms: { [platform.key]: platform.fileName },
       },
     ]);
     const [missingDirErr, missingDirSuccess] = await Manager.Execute('r-missing-dir', scriptId);
@@ -254,13 +280,13 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
 
     const scriptFolder = path.join(scriptsDir, scriptId);
     fs.mkdirSync(scriptFolder, { recursive: true });
-    fs.writeFileSync(path.join(scriptFolder, 'macos.sh'), 'echo ok', 'utf8');
+    fs.writeFileSync(path.join(scriptFolder, platform.fileName), platform.defaultContents, 'utf8');
 
     await Manager.SetScripts([
       {
         ID: scriptId,
         Name: 'Spawn Error',
-        Platforms: { macOS: 'macos.sh' },
+        Platforms: { [platform.key]: platform.fileName },
       },
     ]);
 

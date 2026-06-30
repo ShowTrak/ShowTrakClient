@@ -141,10 +141,7 @@ function classifyCollectionError(error) {
   const message = String(
     error && error.message ? error.message : error || 'Unknown process monitor error'
   );
-  if (
-    process.platform === 'darwin' &&
-    /-1743|not authorized|not permitted|automation|apple events|system events/i.test(message)
-  ) {
+  if (/-1743|not authorized|not permitted|automation|apple events|system events/i.test(message)) {
     return {
       State: 'permission_denied',
       Message:
@@ -159,7 +156,7 @@ function classifyCollectionError(error) {
 
 async function collectWindowsApplications() {
   const script = [
-    "$ErrorActionPreference = 'Stop'",
+    "$ErrorActionPreference = 'Stop';",
     'Get-Process',
     '| Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName }',
     '| Select-Object -ExpandProperty ProcessName',
