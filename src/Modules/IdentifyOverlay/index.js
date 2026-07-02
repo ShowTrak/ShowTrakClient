@@ -24,6 +24,22 @@ const OVERLAY_PRELOAD = path.join(__dirname, '..', '..', 'identify-preload.js');
 
 const Manager = {};
 
+function normalizeBounds(candidate, fallback) {
+  if (!candidate) return fallback;
+  const width = Number(candidate.width);
+  const height = Number(candidate.height);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return fallback;
+  }
+
+  return {
+    x: Math.floor(Number(candidate.x) || 0),
+    y: Math.floor(Number(candidate.y) || 0),
+    width: Math.ceil(width),
+    height: Math.ceil(height),
+  };
+}
+
 // Called once from main.js so the overlay uses the same hardened webPreferences
 // and can notify the socket layer when the user dismisses it.
 Manager.Configure = ({ webPreferences, onClose } = {}) => {
@@ -62,15 +78,12 @@ Manager.Show = (Payload = {}) => {
   for (const [displayIndex, display] of displays.entries()) {
     try {
       const Bounds = display.bounds || { x: 0, y: 0, width: 800, height: 600 };
+      const FallbackBounds = normalizeBounds(Bounds, { x: 0, y: 0, width: 800, height: 600 });
+      const WorkAreaBounds = normalizeBounds(display.workArea, FallbackBounds);
       const ScaleFactor = Number(display.scaleFactor) || 1;
       const NativeWidth = Math.max(1, Math.round(Number(Bounds.width) * ScaleFactor) || 800);
       const NativeHeight = Math.max(1, Math.round(Number(Bounds.height) * ScaleFactor) || 600);
-      const WindowBounds = {
-        x: Math.floor(Number(Bounds.x) || 0),
-        y: Math.floor(Number(Bounds.y) || 0),
-        width: Math.ceil(Number(Bounds.width) || 800),
-        height: Math.ceil(Number(Bounds.height) || 600),
-      };
+      const WindowBounds = WorkAreaBounds;
       const ScreenIndex = displayIndex + 1;
       const ResolutionLabel = `Screen ${ScreenIndex} (${NativeWidth}x${NativeHeight})`;
       const win = new BrowserWindow({
