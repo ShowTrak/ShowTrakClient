@@ -9,6 +9,7 @@ const Logger = CreateLogger('IdentifyOverlay');
 
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
+const os = require('os');
 
 let overlayWindows = [];
 let baseWebPreferences = {
@@ -21,6 +22,7 @@ let onUserClose = null;
 
 const OVERLAY_HTML = path.join(__dirname, '..', '..', 'UI', 'identify-overlay.html');
 const OVERLAY_PRELOAD = path.join(__dirname, '..', '..', 'identify-preload.js');
+const USE_WORK_AREA_BOUNDS = os.platform() === 'darwin';
 
 const Manager = {};
 
@@ -79,7 +81,9 @@ Manager.Show = (Payload = {}) => {
     try {
       const Bounds = display.bounds || { x: 0, y: 0, width: 800, height: 600 };
       const FallbackBounds = normalizeBounds(Bounds, { x: 0, y: 0, width: 800, height: 600 });
-      const WorkAreaBounds = normalizeBounds(display.workArea, FallbackBounds);
+      const WorkAreaBounds = USE_WORK_AREA_BOUNDS
+        ? normalizeBounds(display.workArea, FallbackBounds)
+        : FallbackBounds;
       const ScaleFactor = Number(display.scaleFactor) || 1;
       const NativeWidth = Math.max(1, Math.round(Number(Bounds.width) * ScaleFactor) || 800);
       const NativeHeight = Math.max(1, Math.round(Number(Bounds.height) * ScaleFactor) || 600);
