@@ -82,6 +82,11 @@ const Manager = {
       BroadcastManager.emit('HideIdentifyOverlay');
     });
 
+    Socket.on('connect_error', () => {
+      // Ensure identify overlay is never left open during transient failures.
+      BroadcastManager.emit('HideIdentifyOverlay');
+    });
+
     Socket.on('Adopt', async () => {
       Logger.log('Adopt command received');
       await ProfileManager.Adopt(IP, Port, { ServerIdentity });

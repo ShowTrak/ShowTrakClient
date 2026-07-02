@@ -207,6 +207,8 @@ const Manager = {
         `Connection error to ${IP}:${Port}`,
         Error && Error.message ? Error.message : Error
       );
+      // Treat connection failures as link loss for identify UI purposes.
+      BroadcastManager.emit('HideIdentifyOverlay');
       markConnectionError(IP, Port, Error);
     });
 
