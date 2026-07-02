@@ -152,6 +152,7 @@ test('ProfileManager creates and updates profile states', async () => {
   assert.equal(adopted.Adopted, true);
   assert.equal(adopted.Server.IP, '127.0.0.1');
   assert.equal(adopted.Server.ServerIdentity, 'server-token-a');
+  assert.equal(adopted.ServerIdentityLock, 'server-token-a');
 
   await Manager.UpdateServerEndpoint('127.0.0.2', 9000);
   const recovered = await Manager.GetProfile();
@@ -180,6 +181,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const resetWithManual = await Manager.GetProfile();
   assert.equal(resetWithManual.Adopted, false);
   assert.deepEqual(resetWithManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
+  assert.equal(resetWithManual.ServerIdentityLock, 'server-token-b');
 
   await assert.rejects(() => Manager.SetManualServer('', 3000));
   await assert.rejects(() => Manager.SetManualServer('10.20.30.40', 70000));

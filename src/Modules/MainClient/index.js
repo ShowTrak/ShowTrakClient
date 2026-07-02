@@ -11,6 +11,7 @@ const { Manager: USBMonitorManager } = require('../USBMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 const { Manager: ProcessMonitor } = require('../ProcessMonitor');
+const { Manager: ProfileManager } = require('../ProfileManager');
 
 const { Wait } = require('../Utils');
 
@@ -123,6 +124,12 @@ const Manager = {
     consecutiveConnectErrors = 0;
     connectFailureReported = false;
 
+    const Profile = await ProfileManager.GetProfile();
+    const ExpectedServerIdentity =
+      Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
+        ? Profile.Server.ServerIdentity.trim()
+        : '';
+
     if (Socket) {
       Socket.disconnect();
     }
@@ -136,6 +143,7 @@ const Manager = {
       query: {
         UUID: UUID,
         Adopted: true,
+        ...(ExpectedServerIdentity ? { ExpectedServerIdentity } : {}),
       },
     });
 
@@ -245,10 +253,13 @@ const Manager = {
       }
     });
 
-    Socket.on('Unadopt', async () => {
+    Socket.on('Unadopt', async (Info = {}) => {
       BroadcastManager.emit('ServerAdoptionRejected', {
         IP,
         Port,
+        Reason: Info && Info.Reason ? String(Info.Reason) : null,
+        ServerIdentity:
+          Info && typeof Info.ServerIdentity === 'string' ? Info.ServerIdentity.trim() : null,
       });
     });
 
@@ -287,7 +298,7 @@ const Manager = {
     }
 
     sysInfoInterval = setInterval(SysInfo, 20000);
-    deviceListInterval = setInterval(UpdateDeviceList, 60000);
+    deviceListInterval = setInterval(UpdateDeviceList, 20000);
 
     // Network Interfaces Reporting (initial snapshot)
     async function ReportNetworkInterfaces() {

@@ -156,6 +156,13 @@ test('MainClient handles command events and reconnect lifecycle branches', async
       },
     },
     '../Utils': { Wait: async () => {} },
+    '../ProfileManager': {
+      Manager: {
+        GetProfile: async () => ({
+          Server: { ServerIdentity: 'server-token-1' },
+        }),
+      },
+    },
   });
 
   try {
@@ -201,9 +208,18 @@ test('MainClient handles command events and reconnect lifecycle branches', async
     await createdSocket.trigger('UpdateScripts', 'r-4');
     assert.equal(downloadCalls, 1);
 
-    await createdSocket.trigger('Unadopt');
+    await createdSocket.trigger('Unadopt', {
+      Reason: 'server_identity_mismatch',
+      ServerIdentity: 'different-server-token',
+    });
     assert.equal(
-      broadcastEvents.some(([event]) => event === 'ServerAdoptionRejected'),
+      broadcastEvents.some(
+        ([event, payload]) =>
+          event === 'ServerAdoptionRejected' &&
+          payload &&
+          payload.Reason === 'server_identity_mismatch' &&
+          payload.ServerIdentity === 'different-server-token'
+      ),
       true
     );
 
@@ -306,7 +322,13 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
         },
       },
     },
-    '../ProfileManager': { Manager: { ResetAdopption: async () => {} } },
+    '../ProfileManager': {
+      Manager: {
+        GetProfile: async () => ({
+          Server: { ServerIdentity: 'server-token-1' },
+        }),
+      },
+    },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../Utils': { Wait: async () => {} },

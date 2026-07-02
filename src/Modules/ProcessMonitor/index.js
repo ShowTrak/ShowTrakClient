@@ -5,7 +5,7 @@ const { CreateLogger } = require('../Logger');
 const Logger = CreateLogger('ProcessMonitor');
 const { Manager: BroadcastManager } = require('../Broadcast');
 
-const POLL_INTERVAL_MS = 30000;
+const POLL_INTERVAL_MS = 20000;
 const COMMAND_TIMEOUT_MS = 8000;
 const MAX_REPORTED_APPLICATIONS = 64;
 

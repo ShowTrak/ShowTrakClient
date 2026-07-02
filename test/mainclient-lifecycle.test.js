@@ -117,7 +117,13 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
         GetLastAppliedDeploymentFingerprint: async () => null,
       },
     },
-    '../ProfileManager': { Manager: { ResetAdopption: async () => {} } },
+    '../ProfileManager': {
+      Manager: {
+        GetProfile: async () => ({
+          Server: { ServerIdentity: 'server-token-1' },
+        }),
+      },
+    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {

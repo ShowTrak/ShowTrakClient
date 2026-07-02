@@ -61,6 +61,7 @@ const Manager = {
         Hostname: OSManager.Hostname,
         OperatingSystem: OSManager.OperatingSystem,
         Version: Config.Application.Version,
+        ...(ServerIdentity ? { ServerIdentity } : {}),
       });
       return;
     }

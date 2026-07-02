@@ -95,13 +95,15 @@ let tray;
 let mainWindow;
 let appQuitRequested = false;
 let currentRecoveryStatus = { State: 'idle', Message: '' };
+let currentAppUpdateStatus = null;
 let isReinitializing = false;
 let recoveryInProgress = false;
 let pendingRecoveryCandidate = null;
-const RECOVERY_MAX_ATTEMPTS = 5;
 const RECOVERY_COOLDOWN_MS = 15000;
 const RECOVERY_BACKOFF_BASE_MS = 1000;
 const RECOVERY_BACKOFF_MAX_MS = 10000;
+let recoveryRetryTimer = null;
+let recoveryRetryInfo = null;
 const recoveryMetrics = {
   Attempts: 0,
   LastAttemptAt: 0,
@@ -137,14 +139,25 @@ function createMainWindow() {
   mainWindow.loadFile(path.join(__dirname, 'UI', 'index.html'));
   applyWindowSecurityGuards(mainWindow);
 
-  // Keep the app running in the background when the user clicks the window
-  // close button; explicit quit actions still terminate the app.
+  // Keep explicit app shutdown behavior separate from native window close
+  // events so external window lifecycle changes do not unexpectedly hide the
+  // client window.
   mainWindow.on('close', (event) => {
     if (appQuitRequested) return;
     event.preventDefault();
-    try {
-      mainWindow.hide();
-    } catch {}
+
+    const FocusedWindow = BrowserWindow.getFocusedWindow();
+    const isUserInitiatedClose =
+      FocusedWindow === mainWindow || (typeof mainWindow.isFocused === 'function' && mainWindow.isFocused());
+
+    // Only hide-to-tray when the user closes the active client window.
+    // Ignore non-user/native side-effect close events so connection/service
+    // transitions cannot collapse the UI unexpectedly.
+    if (isUserInitiatedClose) {
+      try {
+        mainWindow.hide();
+      } catch {}
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -289,7 +302,7 @@ function sendRecoveryStatus(payload) {
       LastFailureAt: recoveryMetrics.LastFailureAt,
       LastFailureReason: recoveryMetrics.LastFailureReason,
       LastRecoveredAt: recoveryMetrics.LastRecoveredAt,
-      MaxAttempts: RECOVERY_MAX_ATTEMPTS,
+      MaxAttempts: null,
       CooldownMs: RECOVERY_COOLDOWN_MS,
     },
   };
@@ -303,7 +316,40 @@ function sendRecoveryStatus(payload) {
   } catch {}
 }
 
+function clearRecoveryRetryTimer() {
+  if (recoveryRetryTimer) {
+    clearTimeout(recoveryRetryTimer);
+    recoveryRetryTimer = null;
+  }
+  recoveryRetryInfo = null;
+}
+
+function scheduleRecoveryRetry(waitMs, Info = {}) {
+  if (recoveryInProgress || isReinitializing) return;
+  if (recoveryRetryTimer) return;
+  const Delay = Math.max(0, Number(waitMs) || 0);
+  recoveryRetryInfo = Info || {};
+  recoveryRetryTimer = setTimeout(async () => {
+    const pendingInfo = recoveryRetryInfo || {};
+    clearRecoveryRetryTimer();
+    if (recoveryInProgress || isReinitializing) return;
+    try {
+      await recoverFromPrimaryFailure(pendingInfo);
+    } catch (Error) {
+      recoveryMetrics.LastFailureAt = Date.now();
+      recoveryMetrics.LastFailureReason =
+        Error && Error.message ? String(Error.message) : 'unknown_error';
+      Logger.error('Scheduled recovery flow failed', Error);
+      sendRecoveryStatus({
+        State: 'RecoveryFailed',
+        Message: 'Unable to recover server connection automatically.',
+      });
+    }
+  }, Delay);
+}
+
 function sendAppUpdateStatus(payload) {
+  currentAppUpdateStatus = payload || null;
   try {
     Logger.log('[Updater] Status event', payload || {});
   } catch {}
@@ -444,7 +490,6 @@ function initSquirrelUpdater() {
 }
 app.whenReady().then(async () => {
   await StartupManager.EnsureEnabled();
-  createMainWindow();
 
   // Create the tray icon. Tray support is reliable on Windows and macOS, but
   // varies across Linux desktops; if it fails there we fall back to showing the
@@ -478,6 +523,9 @@ app.whenReady().then(async () => {
     tray.setIgnoreDoubleClickEvents(true);
   } else {
     // No tray: keep the app accessible by making the window visible.
+    if (!hasMainWindow()) {
+      createMainWindow();
+    }
     mainWindow.once('ready-to-show', () => {
       try {
         if (process.platform === 'darwin' && app.dock) {
@@ -499,10 +547,15 @@ app.whenReady().then(async () => {
       return validationErrorPayload(error);
     }
     const Profile = await ProfileManager.GetProfile();
-    mainWindow.webContents.send('SetProfile', Profile);
-    mainWindow.webContents.send('ProcessMonitorStatus', ProcessMonitor.GetStatus());
-    mainWindow.webContents.send('ServerRecoveryStatus', currentRecoveryStatus);
-    return [null, true];
+    return [
+      null,
+      {
+        Profile,
+        ProcessMonitorStatus: ProcessMonitor.GetStatus(),
+        ServerRecoveryStatus: currentRecoveryStatus,
+        AppUpdateStatus: currentAppUpdateStatus,
+      },
+    ];
   });
 
   RPC.handle('Minimise', async (_event, ...args) => {
@@ -673,15 +726,7 @@ BroadcastManager.on('ReinitializeService', async () => {
 BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
   if (recoveryInProgress) return;
 
-  if (recoveryMetrics.Attempts >= RECOVERY_MAX_ATTEMPTS) {
-    recoveryMetrics.LastFailureAt = Date.now();
-    recoveryMetrics.LastFailureReason = 'max_attempts_reached';
-    sendRecoveryStatus({
-      State: 'RecoveryFailed',
-      Message: 'Automatic recovery retry limit reached. Waiting for manual intervention.',
-    });
-    return;
-  }
+  clearRecoveryRetryTimer();
 
   const now = Date.now();
   const sinceLastAttempt = recoveryMetrics.LastAttemptAt
@@ -693,6 +738,7 @@ BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
       State: 'PrimaryFailed',
       Message: `Primary failed. Cooling down for ${Math.ceil(waitMs / 1000)}s before retry.`,
     });
+    scheduleRecoveryRetry(waitMs, Info);
     return;
   }
 
@@ -711,6 +757,23 @@ BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {
 });
 
 BroadcastManager.on('ServerAdoptionRejected', async (Info = {}) => {
+  const Profile = await ProfileManager.GetProfile();
+  const ExpectedServerIdentity =
+    Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
+      ? Profile.Server.ServerIdentity.trim()
+      : '';
+  const RejectedByIdentity =
+    Info && typeof Info.ServerIdentity === 'string' ? Info.ServerIdentity.trim() : '';
+
+  if (ExpectedServerIdentity && RejectedByIdentity && ExpectedServerIdentity !== RejectedByIdentity) {
+    sendRecoveryStatus({
+      State: 'RecoveryFailed',
+      Message: 'Ignoring adoption rejection from a different server identity.',
+    });
+    await restartService('server-identity-mismatch');
+    return;
+  }
+
   if (recoveryInProgress && pendingRecoveryCandidate) {
     if (
       pendingRecoveryCandidate.IP === Info.IP &&
@@ -767,6 +830,7 @@ async function restartService(reason) {
 }
 
 async function recoverFromPrimaryFailure(Info = {}) {
+  clearRecoveryRetryTimer();
   recoveryMetrics.Attempts += 1;
   recoveryMetrics.LastAttemptAt = Date.now();
   recoveryInProgress = true;
@@ -779,7 +843,7 @@ async function recoverFromPrimaryFailure(Info = {}) {
 
   sendRecoveryStatus({
     State: 'PrimaryFailed',
-    Message: `Primary server ${Info.IP || 'Unknown'}:${Info.Port || 'Unknown'} is unreachable. Retry ${recoveryMetrics.Attempts}/${RECOVERY_MAX_ATTEMPTS}.`,
+    Message: `Primary server ${Info.IP || 'Unknown'}:${Info.Port || 'Unknown'} is unreachable. Retry attempt ${recoveryMetrics.Attempts}.`,
   });
 
   try {
@@ -872,7 +936,7 @@ async function recoverFromPrimaryFailure(Info = {}) {
 }
 
 BroadcastManager.on('ProfileUpdated', async (Profile) => {
-  if (mainWindow) mainWindow.webContents.send('SetProfile', Profile);
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('SetProfile', Profile);
 });
 
 BroadcastManager.on('ProcessMonitorStatus', async (Status) => {

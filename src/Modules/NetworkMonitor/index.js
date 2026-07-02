@@ -88,8 +88,8 @@ Manager.Start = async (Socket) => {
   }
   _lastSignature = null; // force first emit
   await sampleAndMaybeEmit();
-  // Check every 3 seconds; only emits on change
-  _timer = setInterval(sampleAndMaybeEmit, 3000);
+  // Check every 10 seconds; only emits on change
+  _timer = setInterval(sampleAndMaybeEmit, 10000);
   Logger.log('NetworkMonitor started');
 };
 

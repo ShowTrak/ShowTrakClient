@@ -13,6 +13,106 @@ var ProcessMonitorStatus = { State: 'unknown', Message: null };
 var ServerRecoveryStatus = { State: 'idle', Message: '' };
 const DEFAULT_SERVER_PORT = 3000;
 
+function getAdoptionBadgeModel() {
+  if (!Profile || !Profile.Adopted || !Profile.Server) {
+    return {
+      label: 'Pending Adoption',
+      className: 'bg-primary',
+    };
+  }
+
+  const state = String(
+    ServerRecoveryStatus && ServerRecoveryStatus.State ? ServerRecoveryStatus.State : 'idle'
+  ).toLowerCase();
+  const message =
+    ServerRecoveryStatus && typeof ServerRecoveryStatus.Message === 'string'
+      ? ServerRecoveryStatus.Message.trim()
+      : '';
+  const isConnected = !message || state === 'idle' || state === 'reconnected';
+
+  if (isConnected) {
+    return {
+      label: 'Adopted, Connected',
+      className: 'bg-success',
+    };
+  }
+
+  return {
+    label: 'Adopted, Disconnected',
+    className: 'bg-danger',
+  };
+}
+
+function ApplyProfile(NewProfile) {
+  Profile = NewProfile || {};
+  console.log('Profile set:', NewProfile);
+  const AdoptionBadge = getAdoptionBadgeModel();
+  RenderManualServer();
+  if (Profile.Adopted && Profile.Server) {
+    $('#PROFILE').html(`
+            <div class="text-center text-white mb-2">
+                <span class="badge ${AdoptionBadge.className}">${AdoptionBadge.label}</span>
+            </div>
+            <div class="text-center text-white mb-2">
+                <span class="badge bg-ghost">${Profile.Server.IP || 'Unknown IP'}</span>
+                <span class="badge bg-ghost">${Profile.Server.Port || 'Unknown Port'}</span>
+            </div>
+            <div class="text-center text-white">
+                <span class="badge bg-ghost">${Profile.UUID}</span>
+            </div>
+        `);
+  } else {
+    $('#PROFILE').html(`
+            <div class="text-center text-white mb-2">
+          <span class="badge ${AdoptionBadge.className}">${AdoptionBadge.label}</span>
+            </div>
+            <div class="text-center text-white mb-2">
+                <span class="badge bg-ghost">No Server Set</span>
+            </div>
+            <div class="text-center text-white">
+                <span class="badge bg-ghost">${Profile.UUID}</span>
+            </div>
+        `);
+  }
+  RenderManualServer();
+}
+
+function ApplyAppUpdateStatus(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  try {
+    $('#UPDATE_SECTION').removeClass('d-none');
+    const st = payload.state || 'none';
+    const $status = $('#UPDATE_STATUS');
+    const $install = $('#UPDATE_INSTALL_BTN');
+    const $later = $('#UPDATE_LATER_BTN');
+    const $notesWrap = $('#UPDATE_NOTES_WRAPPER');
+    const $notes = $('#UPDATE_CHANGELOG');
+    $install.addClass('d-none');
+    $later.addClass('d-none');
+    $notesWrap.addClass('d-none');
+    $notes.empty();
+    if (st === 'checking') {
+      $status.text('Checking for updates...');
+    } else if (st === 'available') {
+      const v = payload.info && (payload.info.version || payload.info.tag || 'Update available');
+      $status.text(`Update available: ${v}. Downloading...`);
+    } else if (st === 'downloading') {
+      const pct = payload.percent ? Math.floor(payload.percent) : 0;
+      $status.text(`Downloading update... ${pct}%`);
+    } else if (st === 'downloaded') {
+      $status.text('Update downloaded. Restarting to apply...');
+    } else if (st === 'installing') {
+      $status.text('Installing update...');
+    } else if (st === 'installed') {
+      $status.text('Update installed. Restarting...');
+    } else if (st === 'none') {
+      $status.text('No updates available');
+    } else if (st === 'error') {
+      $status.text(`Update error: ${payload.error || 'Unknown error'}`);
+    }
+  } catch {}
+}
+
 function RenderManualServerPortHint() {
   const $port = $('#MANUAL_SERVER_PORT');
   const $hint = $('#MANUAL_SERVER_HINT');
@@ -97,9 +197,37 @@ function RenderServerRecoveryStatus() {
 }
 
 async function Main() {
-  await window.API.Loaded();
+  window.API.OnAppUpdateStatus((payload) => {
+    ApplyAppUpdateStatus(payload);
+  });
+  window.API.OnProcessMonitorStatus((status) => {
+    ProcessMonitorStatus = status || { State: 'unknown', Message: null };
+    RenderProcessMonitorWarning();
+  });
+  window.API.OnServerRecoveryStatus((status) => {
+    ServerRecoveryStatus = status || { State: 'idle', Message: '' };
+    RenderServerRecoveryStatus();
+    ApplyProfile(Profile);
+  });
+
+  const [LoadedErr, LoadedSnapshot] = (await window.API.Loaded()) || [];
+  if (!LoadedErr && LoadedSnapshot && typeof LoadedSnapshot === 'object') {
+    if (LoadedSnapshot.Profile) {
+      ApplyProfile(LoadedSnapshot.Profile);
+    }
+    ProcessMonitorStatus = LoadedSnapshot.ProcessMonitorStatus || {
+      State: 'unknown',
+      Message: null,
+    };
+    ServerRecoveryStatus = LoadedSnapshot.ServerRecoveryStatus || {
+      State: 'idle',
+      Message: '',
+    };
+    ApplyAppUpdateStatus(LoadedSnapshot.AppUpdateStatus || null);
+  }
   Version = await window.API.GetVersion();
   $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
+  RenderProcessMonitorWarning();
   RenderServerRecoveryStatus();
   RenderManualServer();
   // Bind updater UI
@@ -128,49 +256,6 @@ async function Main() {
     .on('click', async () => {
       $('#UPDATE_SECTION').addClass('d-none');
     });
-  window.API.OnAppUpdateStatus((payload) => {
-    try {
-      $('#UPDATE_SECTION').removeClass('d-none');
-      const st = (payload && payload.state) || 'none';
-      const $status = $('#UPDATE_STATUS');
-      const $install = $('#UPDATE_INSTALL_BTN');
-      const $later = $('#UPDATE_LATER_BTN');
-      const $notesWrap = $('#UPDATE_NOTES_WRAPPER');
-      const $notes = $('#UPDATE_CHANGELOG');
-      $install.addClass('d-none');
-      $later.addClass('d-none');
-      $notesWrap.addClass('d-none');
-      $notes.empty();
-      if (st === 'checking') {
-        $status.text('Checking for updates...');
-      } else if (st === 'available') {
-        const v = payload.info && (payload.info.version || payload.info.tag || 'Update available');
-        $status.text(`Update available: ${v}. Downloading...`);
-      } else if (st === 'downloading') {
-        const pct = payload.percent ? Math.floor(payload.percent) : 0;
-        $status.text(`Downloading update... ${pct}%`);
-      } else if (st === 'downloaded') {
-        $status.text('Update downloaded. Restarting to apply...');
-      } else if (st === 'installing') {
-        $status.text('Installing update...');
-      } else if (st === 'installed') {
-        $status.text('Update installed. Restarting...');
-      } else if (st === 'none') {
-        $status.text('No updates available');
-      } else if (st === 'error') {
-        $status.text(`Update error: ${payload.error || 'Unknown error'}`);
-      }
-    } catch {}
-  });
-  window.API.OnProcessMonitorStatus((status) => {
-    ProcessMonitorStatus = status || { State: 'unknown', Message: null };
-    RenderProcessMonitorWarning();
-  });
-  window.API.OnServerRecoveryStatus((status) => {
-    ServerRecoveryStatus = status || { State: 'idle', Message: '' };
-    RenderServerRecoveryStatus();
-  });
-
   $('#MANUAL_SERVER_PORT')
     .off('input')
     .on('input', () => {
@@ -219,37 +304,8 @@ async function Main() {
 Main();
 
 window.API.SetProfile(async (NewProfile) => {
-  Profile = NewProfile;
   Version = await window.API.GetVersion();
-  console.log('Profile set:', NewProfile);
-  RenderManualServer();
-  if (Profile.Adopted && Profile.Server) {
-    $('#PROFILE').html(`
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-success">Adopted</span>
-            </div>
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-ghost">${Profile.Server.IP || 'Unknown IP'}</span>
-                <span class="badge bg-ghost">${Profile.Server.Port || 'Unknown Port'}</span>
-            </div>
-            <div class="text-center text-white">
-                <span class="badge bg-ghost">${Profile.UUID}</span>
-            </div>
-        `);
-  } else {
-    $('#PROFILE').html(`
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-secondary">Pending Adoption</span>
-            </div>
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-ghost">No Server Set</span>
-            </div>
-            <div class="text-center text-white">
-                <span class="badge bg-ghost">${Profile.UUID}</span>
-            </div>
-        `);
-  }
-  RenderManualServer();
+  ApplyProfile(NewProfile);
 });
 
 $('#BTN_MINIMIZE').on('click', async () => {

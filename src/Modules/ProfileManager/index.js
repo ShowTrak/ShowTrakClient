@@ -110,6 +110,7 @@ Manager.Adopt = async (IP, Port, Options = {}) => {
   const NewProfile = {
     UUID: Profile.UUID,
     Adopted: true,
+    ...(ServerIdentity ? { ServerIdentityLock: ServerIdentity } : {}),
     Server: {
       IP: IP,
       Port: Port,
@@ -156,9 +157,21 @@ Manager.UpdateServerEndpoint = async (IP, Port) => {
 
 Manager.ResetAdopption = async () => {
   const Profile = await Manager.GetProfile();
+  const ExistingServerIdentity =
+    Profile &&
+    Profile.Server &&
+    typeof Profile.Server.ServerIdentity === 'string' &&
+    Profile.Server.ServerIdentity.trim()
+      ? Profile.Server.ServerIdentity.trim()
+      : Profile &&
+          typeof Profile.ServerIdentityLock === 'string' &&
+          Profile.ServerIdentityLock.trim()
+        ? Profile.ServerIdentityLock.trim()
+        : null;
   const NewProfile = {
     UUID: Profile.UUID,
     Adopted: false,
+    ...(ExistingServerIdentity ? { ServerIdentityLock: ExistingServerIdentity } : {}),
   };
   fs.writeFileSync(ProfilePath, JSON.stringify(NewProfile, null, 2));
   Logger.log('Reset adoption state to pending.');
