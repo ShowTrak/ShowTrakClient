@@ -8,7 +8,11 @@
     try {
       const raw = window.location.search.replace(/^\?/, '');
       if (!raw) return {};
-      return JSON.parse(decodeURIComponent(raw)) || {};
+      const params = new URLSearchParams(raw);
+      const data = JSON.parse(params.get('data') || '{}') || {};
+      const resolutionLabel = params.get('resolutionLabel');
+      if (resolutionLabel) data.ResolutionLabel = resolutionLabel;
+      return data;
     } catch (_err) {
       return {};
     }
@@ -18,20 +22,30 @@
     const hostname = data && data.Hostname ? String(data.Hostname) : 'Unknown Host';
     const nickname = data && data.Nickname ? String(data.Nickname) : '';
     const ips = Array.isArray(data && data.IPs) ? data.IPs : [];
+    const displayNickname = nickname || hostname;
 
     const nicknameEl = document.getElementById('nickname');
     const hostnameEl = document.getElementById('hostname');
+    const resolutionLabelEl = document.getElementById('resolution-label');
     const ipsEl = document.getElementById('ips');
     const ipsEmptyEl = document.getElementById('ips-empty');
 
-    if (nickname && nickname !== hostname) {
-      nicknameEl.textContent = nickname;
+    if (resolutionLabelEl) {
+      resolutionLabelEl.textContent =
+        data && data.ResolutionLabel ? String(data.ResolutionLabel) : '';
+      resolutionLabelEl.style.display = data && data.ResolutionLabel ? '' : 'none';
+    }
+
+    if (displayNickname !== hostname) {
+      nicknameEl.textContent = displayNickname;
       nicknameEl.style.display = '';
       hostnameEl.textContent = hostname;
       hostnameEl.classList.remove('hero');
     } else {
-      // No distinct nickname: promote the hostname to the hero text.
-      nicknameEl.style.display = 'none';
+      // No distinct nickname: show the hostname as the client name.
+      nicknameEl.textContent = hostname;
+      nicknameEl.style.display = '';
+      hostnameEl.style.display = 'none';
       hostnameEl.textContent = hostname;
       hostnameEl.classList.add('hero');
     }

@@ -59,14 +59,25 @@ Manager.Show = (Payload = {}) => {
     }
   }
 
-  for (const display of displays) {
+  for (const [displayIndex, display] of displays.entries()) {
     try {
       const Bounds = display.bounds || { x: 0, y: 0, width: 800, height: 600 };
+      const ScaleFactor = Number(display.scaleFactor) || 1;
+      const NativeWidth = Math.max(1, Math.round(Number(Bounds.width) * ScaleFactor) || 800);
+      const NativeHeight = Math.max(1, Math.round(Number(Bounds.height) * ScaleFactor) || 600);
+      const WindowBounds = {
+        x: Math.floor(Number(Bounds.x) || 0),
+        y: Math.floor(Number(Bounds.y) || 0),
+        width: Math.ceil(Number(Bounds.width) || 800),
+        height: Math.ceil(Number(Bounds.height) || 600),
+      };
+      const ScreenIndex = displayIndex + 1;
+      const ResolutionLabel = `Screen ${ScreenIndex} (${NativeWidth}x${NativeHeight})`;
       const win = new BrowserWindow({
-        x: Bounds.x,
-        y: Bounds.y,
-        width: Bounds.width,
-        height: Bounds.height,
+        x: WindowBounds.x,
+        y: WindowBounds.y,
+        width: WindowBounds.width,
+        height: WindowBounds.height,
         frame: false,
         transparent: false,
         backgroundColor: '#05070d',
@@ -96,11 +107,21 @@ Manager.Show = (Payload = {}) => {
       }
       try {
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      } catch {}
+      } catch (_err) {
+        // Ignore platform-specific failures here; the overlay still works.
+      }
 
-      win.loadFile(OVERLAY_HTML, { search });
+      win.loadFile(OVERLAY_HTML, {
+        search: `?data=${search}&resolutionLabel=${encodeURIComponent(ResolutionLabel)}`,
+      });
       win.once('ready-to-show', () => {
-        if (!win.isDestroyed()) win.show();
+        if (win.isDestroyed()) return;
+        try {
+          win.setBounds(WindowBounds, false);
+        } catch (_err) {
+          // Ignore sizing failures and continue showing the overlay.
+        }
+        win.show();
       });
 
       // Keyboard fallback in case the renderer script fails to load.
@@ -140,7 +161,9 @@ Manager.Hide = () => {
   for (const win of overlayWindows) {
     try {
       if (win && !win.isDestroyed()) win.destroy();
-    } catch {}
+    } catch (_err) {
+      // Best-effort cleanup only.
+    }
   }
   overlayWindows = [];
 };

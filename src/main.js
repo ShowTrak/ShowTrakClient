@@ -729,9 +729,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Keep the client alive in the background so identify dismissal does not
+  // terminate the process when the last overlay window closes.
 });
 
 app.on('before-quit', () => {
