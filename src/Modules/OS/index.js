@@ -119,3 +119,27 @@ Manager.GetNetworkInterfaces = async () => {
     return [err, []];
   }
 };
+
+// Returns a de-duplicated list of the machine's non-internal IPv4 addresses.
+// Used by the identify overlay to show which LAN/VLAN IPs this client is on.
+Manager.GetLocalIPv4Addresses = () => {
+  try {
+    const nics = os.networkInterfaces();
+    const seen = new Set();
+    const results = [];
+    for (const addrs of Object.values(nics)) {
+      if (!Array.isArray(addrs)) continue;
+      for (const a of addrs) {
+        // Node <18 reports family as 'IPv4'; Node >=18 may report the number 4.
+        const isV4 = a && (a.family === 'IPv4' || a.family === 4);
+        if (!isV4 || a.internal) continue;
+        if (seen.has(a.address)) continue;
+        seen.add(a.address);
+        results.push(a.address);
+      }
+    }
+    return results;
+  } catch (_err) {
+    return [];
+  }
+};

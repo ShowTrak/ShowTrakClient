@@ -22,6 +22,15 @@ let usbListenersRegistered = false;
 let consecutiveConnectErrors = 0;
 let connectFailureReported = false;
 
+// When the identify overlay is dismissed locally (esc/click), tell the server
+// so it can clear identify state and stop the tile pulsing. Guarded for unit
+// tests that provide a partial BroadcastManager mock.
+if (BroadcastManager && typeof BroadcastManager.on === 'function') {
+  BroadcastManager.on('IdentifyStoppedByUser', () => {
+    if (Socket && Socket.connected) Socket.emit('IdentifyStopped');
+  });
+}
+
 function clearIntervals() {
   if (heartbeatInterval) {
     clearInterval(heartbeatInterval);
@@ -179,6 +188,8 @@ const Manager = {
         IP,
         Port,
       });
+      // Never leave the identify overlay stuck on screen if the link drops.
+      BroadcastManager.emit('HideIdentifyOverlay');
       try {
         ProcessMonitor.Stop();
       } catch (_error) {
@@ -273,6 +284,24 @@ const Manager = {
         Logger.success(`Script executed successfully: ${RequestID} ${ScriptID}`);
         Socket.emit('ScriptExecutionResponse', RequestID, null, Success);
       }
+    });
+
+    // Identify mode: show a full-screen overlay so an operator can locate this
+    // machine. The overlay windows live in the main process (IdentifyOverlay).
+    Socket.on('Identify', async (Payload = {}) => {
+      const Nickname =
+        Payload && typeof Payload.Nickname === 'string' && Payload.Nickname.trim()
+          ? Payload.Nickname.trim()
+          : null;
+      BroadcastManager.emit('ShowIdentifyOverlay', {
+        Hostname: OS.Hostname,
+        Nickname,
+        IPs: OS.GetLocalIPv4Addresses(),
+      });
+    });
+
+    Socket.on('StopIdentify', async () => {
+      BroadcastManager.emit('HideIdentifyOverlay');
     });
 
     async function Heartbeat() {

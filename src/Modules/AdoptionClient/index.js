@@ -11,6 +11,15 @@ const { Manager: ProfileManager } = require('../ProfileManager');
 
 let adoptionHeartbeatInterval = null;
 
+// When the identify overlay is dismissed locally (esc/click) while this client
+// is still pending adoption, notify the server so it clears identify state.
+// Guarded for unit tests that provide a partial BroadcastManager mock.
+if (BroadcastManager && typeof BroadcastManager.on === 'function') {
+  BroadcastManager.on('IdentifyStoppedByUser', () => {
+    if (Socket && Socket.connected) Socket.emit('IdentifyStopped');
+  });
+}
+
 function clearHeartbeatInterval() {
   if (adoptionHeartbeatInterval) {
     clearInterval(adoptionHeartbeatInterval);
@@ -70,12 +79,31 @@ const Manager = {
 
     Socket.on('disconnect', () => {
       Logger.log('Disconnected from server');
+      BroadcastManager.emit('HideIdentifyOverlay');
     });
 
     Socket.on('Adopt', async () => {
       Logger.log('Adopt command received');
       await ProfileManager.Adopt(IP, Port, { ServerIdentity });
       BroadcastManager.emit('ReinitializeService');
+    });
+
+    // Identify mode also works before adoption so an operator can locate a
+    // freshly-discovered machine from the DISCOVER lane.
+    Socket.on('Identify', async (Payload = {}) => {
+      const Nickname =
+        Payload && typeof Payload.Nickname === 'string' && Payload.Nickname.trim()
+          ? Payload.Nickname.trim()
+          : null;
+      BroadcastManager.emit('ShowIdentifyOverlay', {
+        Hostname: OSManager.Hostname,
+        Nickname,
+        IPs: OSManager.GetLocalIPv4Addresses(),
+      });
+    });
+
+    Socket.on('StopIdentify', async () => {
+      BroadcastManager.emit('HideIdentifyOverlay');
     });
   },
 };

@@ -26,6 +26,7 @@ if (!gotTheLock) {
 
 const { Manager: AdoptionClientManager } = require('./Modules/AdoptionClient');
 const { Manager: MainClientManager } = require('./Modules/MainClient');
+const { Manager: IdentifyOverlay } = require('./Modules/IdentifyOverlay');
 const { Manager: ProcessMonitor } = require('./Modules/ProcessMonitor');
 const { Manager: StartupManager } = require('./Modules/Startup');
 const path = require('path');
@@ -491,6 +492,13 @@ function initSquirrelUpdater() {
 app.whenReady().then(async () => {
   await StartupManager.EnsureEnabled();
 
+  IdentifyOverlay.Configure({
+    webPreferences: BASE_WEB_PREFERENCES,
+    onClose: () => {
+      BroadcastManager.emit('IdentifyStoppedByUser');
+    },
+  });
+
   // Create the tray icon. Tray support is reliable on Windows and macOS, but
   // varies across Linux desktops; if it fails there we fall back to showing the
   // window minimized so the app remains reachable.
@@ -577,6 +585,18 @@ app.whenReady().then(async () => {
       return validationErrorPayload(error);
     }
     app.quit();
+    return [null, true];
+  });
+
+  // Called by the identify overlay renderer when the user presses Escape or
+  // clicks anywhere. We close all overlay windows and notify the socket layer.
+  RPC.handle('Identify:Close', async (_event, ...args) => {
+    try {
+      assertNoArgs('Identify:Close', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
+    IdentifyOverlay.HandleUserClose();
     return [null, true];
   });
 
@@ -716,11 +736,30 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   appQuitRequested = true;
+  try {
+    IdentifyOverlay.Hide();
+  } catch {}
 });
 
 // ReinitializeService
 BroadcastManager.on('ReinitializeService', async () => {
   await restartService('external-reinitialize');
+});
+
+BroadcastManager.on('ShowIdentifyOverlay', (Payload = {}) => {
+  try {
+    IdentifyOverlay.Show(Payload);
+  } catch (e) {
+    Logger.error('Failed to show identify overlay', e);
+  }
+});
+
+BroadcastManager.on('HideIdentifyOverlay', () => {
+  try {
+    IdentifyOverlay.Hide();
+  } catch (e) {
+    Logger.error('Failed to hide identify overlay', e);
+  }
 });
 
 BroadcastManager.on('ServerConnectFailed', async (Info = {}) => {

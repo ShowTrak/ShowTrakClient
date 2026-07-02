@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self';" />
+    <title>Identify</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        user-select: none;
+        cursor: none;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05070d;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+          sans-serif;
+        color: #eaf2ff;
+      }
+      /* Slowly pulsing blue backdrop. */
+      #backdrop {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 6vmin;
+        background: radial-gradient(circle at 50% 45%, #1b4f8f 0%, #0a1c33 55%, #05070d 100%);
+        /* Smooth fade pulse (sin-like) */
+        animation: identify-pulse 3.6s cubic-bezier(0.445, 0.05, 0.55, 0.95) infinite;
+      }
+      @keyframes identify-pulse {
+        0% {
+          background: radial-gradient(circle at 50% 45%, #103156 0%, #071325 55%, #05070d 100%);
+        }
+        25% {
+          background: radial-gradient(circle at 50% 45%, #1a4f89 0%, #0a2441 55%, #061122 100%);
+        }
+        50% {
+          background: radial-gradient(circle at 50% 45%, #2d7ccf 0%, #113e6f 55%, #071224 100%);
+        }
+        75% {
+          background: radial-gradient(circle at 50% 45%, #1a4f89 0%, #0a2441 55%, #061122 100%);
+        }
+        100% {
+          background: radial-gradient(circle at 50% 45%, #103156 0%, #071325 55%, #05070d 100%);
+        }
+      }
+      #nickname {
+        font-size: 9vmin;
+        font-weight: 800;
+        line-height: 1.05;
+        letter-spacing: -0.01em;
+        text-shadow: 0 2px 24px rgba(0, 0, 0, 0.55);
+        word-break: break-word;
+        max-width: 92vw;
+      }
+      #hostname {
+        font-size: 6vmin;
+        font-weight: 600;
+        margin-top: 1.5vmin;
+        color: #bcd6ff;
+        word-break: break-word;
+        max-width: 92vw;
+      }
+      /* When there is no distinct nickname, the hostname becomes the hero text. */
+      #hostname.hero {
+        font-size: 9vmin;
+        font-weight: 800;
+        color: #eaf2ff;
+        margin-top: 0;
+      }
+      #ips {
+        margin-top: 5vmin;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2vmin 3vmin;
+        align-items: center;
+        justify-content: center;
+        max-width: 92vw;
+      }
+      .ip {
+        font-size: 4.5vmin;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        padding: 1.2vmin 3vmin;
+        border-radius: 2vmin;
+        background: rgba(255, 255, 255, 0.08);
+        border: 0.3vmin solid rgba(255, 255, 255, 0.16);
+        color: #ffffff;
+      }
+      #ips-empty {
+        margin-top: 5vmin;
+        font-size: 4vmin;
+        color: #9fb8dc;
+      }
+      #hint {
+        position: fixed;
+        bottom: 5vmin;
+        left: 0;
+        right: 0;
+        font-size: 1.7vmin;
+        font-weight: 500;
+        color: rgba(234, 242, 255, 0.72);
+        letter-spacing: 0.02em;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="backdrop">
+      <div id="nickname" style="display: none"></div>
+      <div id="hostname"></div>
+      <div id="ips"></div>
+      <div id="ips-empty" style="display: none">No network address detected</div>
+      <div id="hint">Tap anywhere to dismiss</div>
+    </div>
+    <script src="./identify-overlay.js"></script>
+  </body>
+</html>
