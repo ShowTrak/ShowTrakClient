@@ -67,13 +67,27 @@ function getTrayImage() {
           path.join(__dirname, 'images', 'trayTemplate.png'),
           path.join(__dirname, 'images', 'icon.png'),
         ];
+  const loaderOrder =
+    process.platform === 'win32'
+      ? ['path', 'buffer']
+      : ['buffer', 'path'];
 
   for (const iconPath of candidates) {
     try {
       if (!fs.existsSync(iconPath)) continue;
 
-      const imageBuffer = fs.readFileSync(iconPath);
-      const image = nativeImage.createFromBuffer(imageBuffer);
+      let image = null;
+      for (const loader of loaderOrder) {
+        try {
+          image =
+            loader === 'path'
+              ? nativeImage.createFromPath(iconPath)
+              : nativeImage.createFromBuffer(fs.readFileSync(iconPath));
+        } catch {
+          image = null;
+        }
+        if (image && !image.isEmpty()) break;
+      }
       if (!image || image.isEmpty()) continue;
 
       if (process.platform === 'darwin') {
