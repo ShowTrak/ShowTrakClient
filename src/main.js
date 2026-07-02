@@ -54,7 +54,7 @@ const BASE_WEB_PREFERENCES = Object.freeze({
 // Windows and prefers .png elsewhere; the .icns is only used by the packager.
 function getWindowIconPath() {
   const iconName = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
-  return path.join(__dirname, 'images', iconName);
+  return path.join(__dirname, 'Images', iconName);
 }
 
 // Resolve the tray image. Validate candidates and return the first usable one
@@ -62,10 +62,10 @@ function getWindowIconPath() {
 function getTrayImage() {
   const candidates =
     process.platform === 'win32'
-      ? [path.join(__dirname, 'images', 'icon.ico')]
+      ? [path.join(__dirname, 'Images', 'icon.ico')]
       : [
-          path.join(__dirname, 'images', 'trayTemplate.png'),
-          path.join(__dirname, 'images', 'icon.png'),
+          path.join(__dirname, 'Images', 'trayTemplate.png'),
+          path.join(__dirname, 'Images', 'icon.png'),
         ];
 
   for (const iconPath of candidates) {

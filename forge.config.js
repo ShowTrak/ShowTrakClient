@@ -21,7 +21,7 @@ module.exports = {
     executableName: 'showtrak-client',
     // Use extensionless base path so Electron Packager can resolve
     // platform-specific icon formats (.icns on macOS, .ico on Windows).
-    icon: './src/images/icon',
+    icon: './src/Images/icon',
     // Run as a macOS menu-bar agent (no Dock icon) so the client lives in the
     // tray, matching the Windows background-service behavior.
     extendInfo: {
@@ -60,7 +60,7 @@ module.exports = {
         // An URL to an ICO file to use as the application icon (displayed in Control Panel > Programs and Features).
         iconUrl: 'https://tkw.bz/img/ShowTrak.ico',
         // The ICO file to use as the icon for the generated Setup.exe
-        setupIcon: './src/images/icon.ico',
+        setupIcon: './src/Images/icon.ico',
       },
     },
     {
