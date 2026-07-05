@@ -336,6 +336,88 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
   assert.equal(disconnected.SerialNumber, 'S2');
 });
 
+test('DisplayMonitor formats displays and registers change listeners', async () => {
+  const registeredEvents = [];
+  const fakeScreen = {
+    getAllDisplays: () => [
+      {
+        id: 100,
+        label: 'Built-in',
+        size: { width: 1920, height: 1080 },
+        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+        scaleFactor: 2,
+        displayFrequency: 60,
+        rotation: 0,
+        internal: true,
+      },
+      {
+        id: 200,
+        label: 'External',
+        size: { width: 2560, height: 1440 },
+        bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+        scaleFactor: 1,
+        displayFrequency: 144,
+        rotation: 0,
+        internal: false,
+      },
+    ],
+    getPrimaryDisplay: () => ({ id: 100 }),
+    on: (event) => registeredEvents.push(event),
+  };
+
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'DisplayMonitor', 'index.js');
+  const mod = loadWithMocks(modulePath, {
+    '../Logger': {
+      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+    },
+    electron: { screen: fakeScreen },
+  });
+  const { Manager } = mod;
+
+  // Override the (OS-specific) hardware identity lookup so the test is fully
+  // deterministic and never shells out. The external monitor gets a stable
+  // EDID fingerprint; the built-in panel is left unidentified.
+  mod._internal.GetDisplayIdentities = async () => [
+    { Fingerprint: 'edid:DEL:1234:SER9', Name: 'DELL U2721', Width: 2560, Height: 1440 },
+  ];
+
+  const [err, displays] = await Manager.GetDisplays();
+  assert.equal(err, null);
+  assert.equal(displays.length, 2);
+  // Built-in panel: no identity match -> stable composite from resolution +
+  // refresh (physical 3840x2160 @60, internal panel).
+  assert.equal(displays[0].SessionID, '100');
+  assert.equal(displays[0].ScreenNumber, 1);
+  assert.equal(displays[0].DisplayID, 'attr:::3840x2160@60:i');
+  assert.equal(displays[0].IsStableIdentity, true);
+  assert.equal(displays[0].IdentitySource, 'attributes');
+  assert.equal(displays[0].Width, 1920);
+  assert.equal(displays[0].Height, 1080);
+  assert.equal(displays[0].RefreshRate, 60);
+  assert.equal(displays[0].Primary, true);
+  // External monitor: matched by resolution -> stable EDID id + label.
+  assert.equal(displays[1].SessionID, '200');
+  assert.equal(displays[1].ScreenNumber, 2);
+  assert.equal(displays[1].DisplayID, 'edid:DEL:1234:SER9');
+  assert.equal(displays[1].HardwareID, 'edid:DEL:1234:SER9');
+  assert.equal(displays[1].IsStableIdentity, true);
+  assert.equal(displays[1].IdentitySource, 'edid');
+  // Electron already provided a label, so it is preserved over the EDID name.
+  assert.equal(displays[1].Label, 'External');
+  assert.equal(displays[1].Primary, false);
+
+  let changeFired = 0;
+  Manager.OnDisplayChange(() => {
+    changeFired += 1;
+  });
+  assert.deepEqual(registeredEvents, [
+    'display-added',
+    'display-removed',
+    'display-metrics-changed',
+  ]);
+  void changeFired;
+});
+
 test('Logger writes file lines and supports all log levels', async () => {
   const logRoot = tempDir('showtrak-client-logger-');
   const appended = [];

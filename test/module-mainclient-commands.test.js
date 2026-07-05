@@ -120,6 +120,12 @@ test('MainClient handles command events and reconnect lifecycle branches', async
         },
       },
     },
+    '../DisplayMonitor': {
+      Manager: {
+        GetDisplays: async () => [null, []],
+        OnDisplayChange: () => {},
+      },
+    },
     '../ScriptManager': {
       Manager: {
         SetScripts: async () => {
@@ -309,6 +315,12 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
         GetUSBDevices: async () => [null, []],
         OnUSBConnect: () => {},
         OnUSBDisconnect: () => {},
+      },
+    },
+    '../DisplayMonitor': {
+      Manager: {
+        GetDisplays: async () => [null, []],
+        OnDisplayChange: () => {},
       },
     },
     '../ScriptManager': {

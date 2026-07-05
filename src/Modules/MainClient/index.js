@@ -8,6 +8,7 @@ const { Manager: OS } = require('../OS');
 const { Config } = require('../Config');
 
 const { Manager: USBMonitorManager } = require('../USBMonitor');
+const { Manager: DisplayMonitorManager } = require('../DisplayMonitor');
 const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 const { Manager: ProcessMonitor } = require('../ProcessMonitor');
@@ -18,7 +19,9 @@ const { Wait } = require('../Utils');
 let heartbeatInterval = null;
 let sysInfoInterval = null;
 let deviceListInterval = null;
+let displayListInterval = null;
 let usbListenersRegistered = false;
+let displayListenersRegistered = false;
 let consecutiveConnectErrors = 0;
 let connectFailureReported = false;
 
@@ -43,6 +46,10 @@ function clearIntervals() {
   if (deviceListInterval) {
     clearInterval(deviceListInterval);
     deviceListInterval = null;
+  }
+  if (displayListInterval) {
+    clearInterval(displayListInterval);
+    displayListInterval = null;
   }
 }
 
@@ -107,6 +114,26 @@ function registerUSBListeners() {
   usbListenersRegistered = true;
 }
 
+async function UpdateDisplayList() {
+  if (!Socket || !Socket.connected)
+    return Logger.warn('Socket not connected, aborting UpdateDisplayList');
+  let [Err, DisplayList] = await DisplayMonitorManager.GetDisplays();
+  if (Err) Logger.error('Error getting displays:', Err);
+  Socket.emit('DisplayList', Err || !Array.isArray(DisplayList) ? [] : DisplayList);
+}
+
+function registerDisplayListeners() {
+  if (displayListenersRegistered) return;
+
+  DisplayMonitorManager.OnDisplayChange(async () => {
+    if (!Socket || !Socket.connected)
+      return Logger.warn('Socket not connected, aborting OnDisplayChange');
+    await UpdateDisplayList();
+  });
+
+  displayListenersRegistered = true;
+}
+
 const Manager = {
   Terminate: async () => {
     clearIntervals();
@@ -144,6 +171,7 @@ const Manager = {
     }
 
     registerUSBListeners();
+    registerDisplayListeners();
 
     // Create a Socket.IO client instance
     Socket = io(`http://${IP}:${Port}`, {
@@ -167,6 +195,8 @@ const Manager = {
       SysInfo();
       await Wait(1000);
       UpdateDeviceList();
+      await Wait(1000);
+      UpdateDisplayList();
       await Wait(1000);
       ReportNetworkInterfaces();
       try {
@@ -330,6 +360,7 @@ const Manager = {
 
     sysInfoInterval = setInterval(SysInfo, 20000);
     deviceListInterval = setInterval(UpdateDeviceList, 20000);
+    displayListInterval = setInterval(UpdateDisplayList, 20000);
 
     // Network Interfaces Reporting (initial snapshot)
     async function ReportNetworkInterfaces() {

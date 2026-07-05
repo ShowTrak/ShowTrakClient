@@ -129,7 +129,7 @@ Manager.Show = (Payload = {}) => {
       }
 
       win.loadFile(OVERLAY_HTML, {
-        search: `?data=${search}&resolutionLabel=${encodeURIComponent(ResolutionLabel)}`,
+        search: `?data=${search}&resolutionLabel=${encodeURIComponent(ResolutionLabel)}&screenNumber=${encodeURIComponent(String(ScreenIndex))}`,
       });
       win.once('ready-to-show', () => {
         if (win.isDestroyed()) return;

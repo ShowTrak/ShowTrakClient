@@ -109,6 +109,12 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
         },
       },
     },
+    '../DisplayMonitor': {
+      Manager: {
+        GetDisplays: async () => [null, []],
+        OnDisplayChange: () => {},
+      },
+    },
     '../ScriptManager': {
       Manager: {
         SetScripts: async () => {},

@@ -67,10 +67,7 @@ function getTrayImage() {
           path.join(__dirname, 'images', 'trayTemplate.png'),
           path.join(__dirname, 'images', 'icon.png'),
         ];
-  const loaderOrder =
-    process.platform === 'win32'
-      ? ['path', 'buffer']
-      : ['buffer', 'path'];
+  const loaderOrder = process.platform === 'win32' ? ['path', 'buffer'] : ['buffer', 'path'];
 
   for (const iconPath of candidates) {
     try {
@@ -166,7 +163,8 @@ function createMainWindow() {
 
     const FocusedWindow = BrowserWindow.getFocusedWindow();
     const isUserInitiatedClose =
-      FocusedWindow === mainWindow || (typeof mainWindow.isFocused === 'function' && mainWindow.isFocused());
+      FocusedWindow === mainWindow ||
+      (typeof mainWindow.isFocused === 'function' && mainWindow.isFocused());
 
     // Only hide-to-tray when the user closes the active client window.
     // Ignore non-user/native side-effect close events so connection/service
@@ -820,7 +818,11 @@ BroadcastManager.on('ServerAdoptionRejected', async (Info = {}) => {
   const RejectedByIdentity =
     Info && typeof Info.ServerIdentity === 'string' ? Info.ServerIdentity.trim() : '';
 
-  if (ExpectedServerIdentity && RejectedByIdentity && ExpectedServerIdentity !== RejectedByIdentity) {
+  if (
+    ExpectedServerIdentity &&
+    RejectedByIdentity &&
+    ExpectedServerIdentity !== RejectedByIdentity
+  ) {
     sendRecoveryStatus({
       State: 'RecoveryFailed',
       Message: 'Ignoring adoption rejection from a different server identity.',

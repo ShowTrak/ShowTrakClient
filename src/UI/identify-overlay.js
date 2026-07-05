@@ -11,7 +11,9 @@
       const params = new URLSearchParams(raw);
       const data = JSON.parse(params.get('data') || '{}') || {};
       const resolutionLabel = params.get('resolutionLabel');
+      const screenNumber = params.get('screenNumber');
       if (resolutionLabel) data.ResolutionLabel = resolutionLabel;
+      if (screenNumber) data.ScreenNumber = screenNumber;
       return data;
     } catch (_err) {
       return {};
@@ -26,9 +28,21 @@
 
     const nicknameEl = document.getElementById('nickname');
     const hostnameEl = document.getElementById('hostname');
+    const screenNumberEl = document.getElementById('screen-number');
     const resolutionLabelEl = document.getElementById('resolution-label');
     const ipsEl = document.getElementById('ips');
     const ipsEmptyEl = document.getElementById('ips-empty');
+
+    if (screenNumberEl) {
+      const numberValue =
+        data && data.ScreenNumber != null && String(data.ScreenNumber).trim().length > 0
+          ? String(data.ScreenNumber).trim()
+          : '';
+      screenNumberEl.textContent = numberValue;
+      screenNumberEl.style.display = numberValue ? '' : 'none';
+      screenNumberEl.classList.toggle('single-digit', numberValue.length === 1);
+      screenNumberEl.classList.toggle('digit-one', numberValue === '1');
+    }
 
     if (resolutionLabelEl) {
       resolutionLabelEl.textContent =
