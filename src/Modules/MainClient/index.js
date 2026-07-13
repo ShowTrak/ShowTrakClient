@@ -13,6 +13,7 @@ const { Manager: ScriptManager } = require('../ScriptManager');
 const { Manager: NetworkMonitor } = require('../NetworkMonitor');
 const { Manager: ProcessMonitor } = require('../ProcessMonitor');
 const { Manager: ProfileManager } = require('../ProfileManager');
+const { Manager: LaunchConfigManager } = require('../LaunchConfig');
 
 const { Wait } = require('../Utils');
 
@@ -24,6 +25,10 @@ let usbListenersRegistered = false;
 let displayListenersRegistered = false;
 let consecutiveConnectErrors = 0;
 let connectFailureReported = false;
+// Run-on-launch fires at most once per client process, on the first successful
+// connection. This module-level flag survives reconnects/service restarts (the
+// module instance is cached for the process lifetime), so it never re-runs.
+let launchSequenceStarted = false;
 
 // When the identify overlay is dismissed locally (esc/click), tell the server
 // so it can clear identify state and stop the tile pulsing. Guarded for unit
@@ -134,6 +139,45 @@ function registerDisplayListeners() {
   displayListenersRegistered = true;
 }
 
+// Run-on-launch orchestration (client side). Runs at most once per process,
+// after the first successful connection. Ensures the script catalog (metadata +
+// files on disk) and the auto-start settings are up to date with the server,
+// then hands off to the main process to show the countdown and execute. Any
+// accidental repeat is a no-op thanks to launchSequenceStarted + the main-side
+// LaunchActionsHandled guard.
+async function RunLaunchSequence(Socket, IP, Port) {
+  try {
+    // 1. Fetch the auto-start settings fresh from the server (single source of
+    // truth — the client keeps no local copy). If nothing is configured, stop
+    // here so we don't needlessly re-sync scripts on every launch.
+    const LaunchConfig = await new Promise((resolve) => {
+      Socket.emit('GetLaunchConfig', (Result) => resolve(Result));
+    });
+    const Normalized = LaunchConfigManager.Normalize(LaunchConfig);
+    if (!Normalized.ScriptID) return;
+
+    // 2. A launch script is configured: ensure the catalog + files are current
+    // on disk before we run it.
+    const Scripts = await new Promise((resolve) => {
+      Socket.emit('GetScripts', (Result) => resolve(Array.isArray(Result) ? Result : []));
+    });
+    try {
+      await ScriptManager.DownloadScripts(IP, Port, Scripts);
+    } catch (Err) {
+      // A partial deployment failure shouldn't abort launch; the main-side
+      // runnable check will skip the specific script if its file is missing.
+      Logger.warn(`Run-on-launch: script sync reported issues: ${Err.message}`);
+    }
+
+    // 3. Hand off to the main process: countdown + execution. The config is
+    // passed in the event payload — nothing is written to disk.
+    Logger.log('Run-on-launch: scripts + settings synced, handing off to launch action');
+    BroadcastManager.emit('RunLaunchAction', Normalized);
+  } catch (Err) {
+    Logger.error('Run-on-launch sequence failed', Err);
+  }
+}
+
 const Manager = {
   Terminate: async () => {
     clearIntervals();
@@ -190,6 +234,13 @@ const Manager = {
       Socket.emit('GetScripts', async (Scripts) => {
         await ScriptManager.SetScripts(Scripts);
       });
+      // Run-on-launch: on the FIRST successful connection this launch, sync
+      // scripts + auto-start settings and then run (see RunLaunchSequence).
+      // Guarded so reconnects never re-trigger it.
+      if (!launchSequenceStarted) {
+        launchSequenceStarted = true;
+        RunLaunchSequence(Socket, IP, Port);
+      }
       Heartbeat();
       await Wait(1000);
       SysInfo();

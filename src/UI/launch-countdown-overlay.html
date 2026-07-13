@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <title>Startup Script</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        user-select: none;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #05070d;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        color: #eaf2ff;
+      }
+      #wrap {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 28px;
+        background: linear-gradient(180deg, #0a1524 0%, #05070d 100%);
+        border: 1px solid rgba(140, 190, 255, 0.14);
+      }
+      #eyebrow {
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: #7fa8e0;
+      }
+      #script-name {
+        margin-top: 10px;
+        font-size: 26px;
+        font-weight: 800;
+        line-height: 1.15;
+        word-break: break-word;
+        max-width: 100%;
+      }
+      #countdown {
+        margin: 18px 0 6px;
+        font-size: 64px;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums lining-nums;
+        letter-spacing: -0.02em;
+        color: #ffffff;
+        text-shadow: 0 6px 26px rgba(46, 124, 207, 0.5);
+      }
+      #countdown-label {
+        font-size: 13px;
+        color: #9fb8dc;
+        font-weight: 600;
+      }
+      #cancel {
+        margin-top: 22px;
+        appearance: none;
+        border: 1px solid rgba(255, 255, 255, 0.24);
+        background: rgba(255, 255, 255, 0.06);
+        color: #ffffff;
+        font-size: 15px;
+        font-weight: 700;
+        padding: 11px 26px;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      #cancel:hover {
+        background: rgba(255, 90, 90, 0.18);
+        border-color: rgba(255, 120, 120, 0.55);
+      }
+      #hint {
+        margin-top: 14px;
+        font-size: 12px;
+        color: rgba(234, 242, 255, 0.6);
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="eyebrow">Running startup script in</div>
+      <div id="countdown">--</div>
+      <div id="countdown-label">seconds</div>
+      <div id="script-name">startup script</div>
+      <button id="cancel" type="button">Cancel</button>
+      <div id="hint">Press Esc or Shift, or click Cancel, to skip</div>
+    </div>
+    <script src="./launch-countdown-overlay.js"></script>
+  </body>
+</html>

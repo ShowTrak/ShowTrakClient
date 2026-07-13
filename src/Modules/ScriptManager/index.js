@@ -392,6 +392,23 @@ Manager.GetLastAppliedDeploymentFingerprint = async () => {
   return LastAppliedDeploymentFingerprint;
 };
 
+// Resolve a script by ID (from the in-RAM cache, which may have been hydrated
+// from disk at launch) and report whether it is runnable on this platform.
+// Used by the run-on-launch flow to decide whether to show the countdown.
+Manager.GetLaunchState = (ScriptID) => {
+  const Script = ScriptCache.find((s) => s && s.ID === ScriptID);
+  if (!Script) {
+    return { Found: false, Enabled: false, DisabledReason: 'Script not found', Name: null };
+  }
+  const State = Internal.GetScriptLaunchState(Script);
+  return {
+    Found: true,
+    Enabled: !!State.Enabled,
+    DisabledReason: State.DisabledReason || '',
+    Name: Script.Name ? String(Script.Name) : ScriptID,
+  };
+};
+
 Manager.Execute = async (_RequestID, ScriptID) => {
   let Script = ScriptCache.find((s) => s.ID === ScriptID);
   if (!Script) return ['Script not found', false];

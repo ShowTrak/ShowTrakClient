@@ -22,11 +22,25 @@ if (!gotTheLock) {
   process.exit(0);
 } else {
   Logger.log('Single instance lock acquired');
+
+  // When a user launches a second instance, Electron routes it here instead of
+  // starting a new process. Surface the existing instance's config GUI so the
+  // relaunch reads as "open settings" rather than silently doing nothing.
+  app.on('second-instance', () => {
+    Logger.log('Second instance launch detected; opening config window on the primary instance');
+    try {
+      openConfigureWindow();
+    } catch (error) {
+      Logger.warn('Failed to open config window for second-instance launch', String(error));
+    }
+  });
 }
 
 const { Manager: AdoptionClientManager } = require('./Modules/AdoptionClient');
 const { Manager: MainClientManager } = require('./Modules/MainClient');
 const { Manager: IdentifyOverlay } = require('./Modules/IdentifyOverlay');
+const { Manager: LaunchCountdownOverlay } = require('./Modules/LaunchCountdownOverlay');
+const { Manager: LaunchConfigManager } = require('./Modules/LaunchConfig');
 const { Manager: ProcessMonitor } = require('./Modules/ProcessMonitor');
 const { Manager: StartupManager } = require('./Modules/Startup');
 const path = require('path');
@@ -504,6 +518,84 @@ function initSquirrelUpdater() {
     });
   } catch {}
 }
+
+// Guards against re-running the launch action within a single process (whenReady
+// only fires once, but the flag makes the intent explicit and future-proof).
+let LaunchActionsHandled = false;
+
+// Absence-of-file sentinel to disable ALL launch actions — the boot-loop escape
+// hatch for the headless case where the countdown overlay isn't reliably seen.
+function IsSafeModeEnabled() {
+  try {
+    return fs.existsSync(path.join(AppDataManager.GetProfileDirectory(), 'SafeMode'));
+  } catch {
+    return false;
+  }
+}
+
+
+// Run the configured run-on-launch script, gated behind a cancellable countdown.
+// Triggered once per client launch by MainClient after the FIRST successful
+// server connection — MainClient first ensures scripts and the auto-start config
+// are freshly synced, then emits 'RunLaunchAction'. The LaunchActionsHandled
+// guard makes reconnects no-ops, so the script runs at most once per launch.
+async function RunLaunchActions(Config) {
+  if (LaunchActionsHandled) return;
+  LaunchActionsHandled = true;
+
+  try {
+    if (IsSafeModeEnabled()) {
+      Logger.warn('Safe mode enabled (SafeMode sentinel present) — skipping launch actions');
+      return;
+    }
+
+    const { ScriptID, DelaySeconds, ShowCountdown } = LaunchConfigManager.Normalize(Config);
+    if (!ScriptID) return;
+
+    const LaunchState = ScriptManager.GetLaunchState(ScriptID);
+    if (!LaunchState.Found) {
+      Logger.warn(`Run-on-launch script ${ScriptID} not found in catalog — skipping`);
+      return;
+    }
+    if (!LaunchState.Enabled) {
+      Logger.warn(
+        `Run-on-launch script ${ScriptID} is not runnable: ${LaunchState.DisabledReason} — skipping`
+      );
+      return;
+    }
+
+    const Delay = Math.max(
+      LaunchConfigManager.MIN_LAUNCH_DELAY_SECONDS,
+      Number(DelaySeconds) || LaunchConfigManager.MIN_LAUNCH_DELAY_SECONDS
+    );
+
+    Logger.log(`Run-on-launch: "${LaunchState.Name}" scheduled in ${Delay}s`);
+
+    if (ShowCountdown) {
+      const Outcome = await LaunchCountdownOverlay.Show({
+        ScriptName: LaunchState.Name,
+        Seconds: Delay,
+      });
+
+      if (Outcome === 'cancelled') {
+        Logger.warn(`Run-on-launch action "${LaunchState.Name}" cancelled by operator`);
+        return;
+      }
+    } else {
+      // Server disabled the visible countdown: honor the delay silently so the
+      // script still fires on schedule, but with no overlay and no abort window.
+      Logger.log('Run-on-launch: countdown overlay disabled by server — waiting silently');
+      await Wait(Delay * 1000);
+    }
+
+    Logger.log(`Run-on-launch: executing "${LaunchState.Name}"`);
+    const [Err] = await ScriptManager.Execute('launch', ScriptID);
+    if (Err) Logger.error(`Run-on-launch execution failed: ${Err}`);
+  } catch (Err) {
+    Logger.error('RunLaunchActions failed', Err);
+  }
+}
+
 app.whenReady().then(async () => {
   await StartupManager.EnsureEnabled();
 
@@ -513,6 +605,8 @@ app.whenReady().then(async () => {
       BroadcastManager.emit('IdentifyStoppedByUser');
     },
   });
+
+  LaunchCountdownOverlay.Configure({ webPreferences: BASE_WEB_PREFERENCES });
 
   // Create the tray icon. Tray support is reliable on Windows and macOS, but
   // varies across Linux desktops; if it fails there we fall back to showing the
@@ -545,20 +639,23 @@ app.whenReady().then(async () => {
     refreshTrayContextMenu();
     tray.setIgnoreDoubleClickEvents(true);
   } else {
-    // No tray: keep the app accessible by making the window visible.
+    // No tray/menu-bar item could be created: keep the app reachable but out of
+    // the way by starting the window MINIMIZED and never visible on boot. On
+    // macOS we show the Dock icon so the minimized window can be restored from
+    // there (see the 'activate' handler below).
     if (!hasMainWindow()) {
       createMainWindow();
     }
     mainWindow.once('ready-to-show', () => {
       try {
+        // Show the Dock icon on macOS so the minimized window stays reachable
+        // (clicking the Dock icon triggers the 'activate' handler above).
         if (process.platform === 'darwin' && app.dock) {
           app.dock.show();
-          mainWindow.show();
-          mainWindow.focus();
-          return;
         }
+        // Start minimized and never focused — reachable (taskbar/Dock) but not
+        // visible on boot.
         mainWindow.minimize();
-        mainWindow.show();
       } catch {}
     });
   }
@@ -612,6 +709,18 @@ app.whenReady().then(async () => {
       return validationErrorPayload(error);
     }
     IdentifyOverlay.HandleUserClose();
+    return [null, true];
+  });
+
+  // Called by the launch countdown overlay renderer when the operator aborts the
+  // pending run-on-launch script (Cancel button, Esc, or Shift).
+  RPC.handle('LaunchCountdown:Cancel', async (_event, ...args) => {
+    try {
+      assertNoArgs('LaunchCountdown:Cancel', args);
+    } catch (error) {
+      return validationErrorPayload(error);
+    }
+    LaunchCountdownOverlay.HandleUserCancel();
     return [null, true];
   });
 
@@ -755,9 +864,29 @@ app.on('before-quit', () => {
   } catch {}
 });
 
+// macOS Dock-icon click. Only relevant to the no-tray fallback, which created a
+// minimized window: restore and focus it. In normal tray mode no window exists
+// (and the Dock is hidden), so this is a no-op and the app stays a pure
+// menu-bar agent.
+app.on('activate', () => {
+  if (!hasMainWindow()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  } catch {}
+});
+
 // ReinitializeService
 BroadcastManager.on('ReinitializeService', async () => {
   await restartService('external-reinitialize');
+});
+
+// MainClient fires this once per launch after the first successful connection
+// (with scripts + auto-start settings already refreshed). RunLaunchActions is
+// self-guarded, so any accidental repeat is a no-op.
+BroadcastManager.on('RunLaunchAction', (Config) => {
+  RunLaunchActions(Config);
 });
 
 BroadcastManager.on('ShowIdentifyOverlay', (Payload = {}) => {
