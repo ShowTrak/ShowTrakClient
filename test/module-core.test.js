@@ -94,17 +94,6 @@ test('Config exposes app and shared versions', async () => {
   assert.equal(Config.Application.Name, 'ShowTrak Client');
 });
 
-test('UUID manager delegates to uuid.v4', async () => {
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'UUID', 'index.js');
-  const { Manager } = loadWithMocks(modulePath, {
-    uuid: {
-      v4: () => 'uuid-value',
-    },
-  });
-
-  assert.equal(Manager.Generate(), 'uuid-value');
-});
-
 test('Utils.Wait resolves asynchronously', async () => {
   const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Utils', 'index.js');
   const Utils = require(modulePath);
@@ -123,7 +112,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {} }),
+      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
     },
     '../AppData': {
       Manager: {
@@ -136,9 +125,13 @@ test('ProfileManager creates and updates profile states', async () => {
         emit: (event, payload) => emitted.push([event, payload]),
       },
     },
-    '../UUID': {
+    '../HardwareIdentity': {
       Manager: {
-        Generate: () => 'generated-uuid',
+        Resolve: async () => ({
+          UUID: 'generated-uuid',
+          Source: 'firmware',
+          Witness: 'firmware-witness',
+        }),
       },
     },
   });
@@ -232,7 +225,7 @@ test('ProfileManager migrates legacy manual server storage from Profile.json', a
 
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
     },
     '../AppData': {
       Manager: {
@@ -245,9 +238,13 @@ test('ProfileManager migrates legacy manual server storage from Profile.json', a
         emit: () => {},
       },
     },
-    '../UUID': {
+    '../HardwareIdentity': {
       Manager: {
-        Generate: () => 'generated-uuid',
+        Resolve: async () => ({
+          UUID: 'generated-uuid',
+          Source: 'firmware',
+          Witness: 'firmware-witness',
+        }),
       },
     },
   });
@@ -260,7 +257,12 @@ test('ProfileManager migrates legacy manual server storage from Profile.json', a
     fs.readFileSync(path.join(profileRoot, 'ManualServer.json'), 'utf-8')
   );
 
-  assert.equal(profile.UUID, 'legacy-uuid');
+  // A legacy profile carries a random UUID that a Clonezilla image would have
+  // duplicated across machines, so it is deliberately replaced by the
+  // hardware-derived one. This costs a one-time re-adopt and is the whole point
+  // of the feature.
+  assert.equal(profile.UUID, 'generated-uuid');
+  assert.equal(profile.Identity.Source, 'firmware');
   assert.deepEqual(profile.ManualServer, { Host: '192.168.10.5', Port: 4000 });
   assert.equal(Object.prototype.hasOwnProperty.call(storedProfile, 'ManualServer'), false);
   assert.deepEqual(storedManual, { Host: '192.168.10.5', Port: 4000 });
