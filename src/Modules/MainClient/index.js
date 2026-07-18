@@ -359,7 +359,13 @@ const Manager = {
 
     Socket.on('ExecuteScript', async (RequestID, ScriptID) => {
       console.log(`Received ExecuteScript for RequestID: ${RequestID}, ScriptID: ${ScriptID}`);
-      let [Err, Success] = await ScriptManager.Execute(RequestID, ScriptID);
+      // Relay per-stage progress back to the server so the operator's execution
+      // panel can fill a progress bar / show a running spinner for this client.
+      const ReportProgress = (Progress = 0, StatusText = '') => {
+        if (!Socket || !Socket.connected) return;
+        Socket.emit('ScriptExecutionProgress', RequestID, Progress, StatusText);
+      };
+      let [Err, Success] = await ScriptManager.Execute(RequestID, ScriptID, ReportProgress);
       if (Err) {
         Logger.error(`Error executing script: ${Err}`);
         Socket.emit('ScriptExecutionResponse', RequestID, Err, null);

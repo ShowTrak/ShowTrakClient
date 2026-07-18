@@ -533,7 +533,6 @@ function IsSafeModeEnabled() {
   }
 }
 
-
 // Run the configured run-on-launch script, gated behind a cancellable countdown.
 // Triggered once per client launch by MainClient after the FIRST successful
 // server connection — MainClient first ensures scripts and the auto-start config

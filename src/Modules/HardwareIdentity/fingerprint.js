@@ -54,8 +54,12 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 // Virtual adapter OUIs. Bare-metal only deployment, so these are always noise.
 const VIRTUAL_OUIS = [
-  '000569', '000c29', '001c14', '005056', // VMware
-  '080027', '0a0027', // VirtualBox
+  '000569',
+  '000c29',
+  '001c14',
+  '005056', // VMware
+  '080027',
+  '0a0027', // VirtualBox
   '00155d', // Hyper-V
   '00163e', // Xen
   '001c42', // Parallels
@@ -90,7 +94,10 @@ function IsTrustworthyFirmwareId(value) {
 // 'aa:bb:cc:dd:ee:ff' -> 'aabbccddeeff'. Returns null when unusable.
 function NormalizeMac(mac) {
   if (typeof mac !== 'string') return null;
-  const hex = mac.trim().toLowerCase().replace(/[^0-9a-f]/g, '');
+  const hex = mac
+    .trim()
+    .toLowerCase()
+    .replace(/[^0-9a-f]/g, '');
   if (hex.length !== 12) return null;
   if (/^0+$/.test(hex)) return null;
   return hex;

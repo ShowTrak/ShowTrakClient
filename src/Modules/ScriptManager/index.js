@@ -53,6 +53,14 @@ Internal.BuildDeploymentFingerprint = (Scripts) => {
         Enabled: !!(Script.isEnabled || Script.Enabled),
         Platforms: Script.Platforms || {},
         Arguments: Script.Arguments || {},
+        ConsoleFilter:
+          Script.ConsoleFilter && typeof Script.ConsoleFilter === 'object'
+            ? {
+                Mode: String(Script.ConsoleFilter.Mode || 'none'),
+                Pattern: String(Script.ConsoleFilter.Pattern || ''),
+                Strip: Script.ConsoleFilter.Strip === true,
+              }
+            : { Mode: 'none', Pattern: '', Strip: false },
         isValid: Script.isValid !== false,
         ParseError: Script.ParseError ? String(Script.ParseError) : '',
         Files,
@@ -302,7 +310,64 @@ Internal.ResolveLauncher = (ScriptPath) => {
   }
 };
 
-Internal.RunScriptFile = async (ScriptPath, ExtraArgs = []) => {
+// Compile a script's optional ConsoleFilter ({ Mode, Pattern }) into a line
+// predicate, or return null when no filtering should be applied. Filtering is
+// intentionally done on the CLIENT so scripts control what console output the
+// server ever sees. Mode "none" (or an empty pattern) disables the filter; an
+// uncompilable regex is treated as "no filter" so a bad pattern never silences
+// all output.
+Internal.CompileConsoleFilter = (ConsoleFilter) => {
+  if (!ConsoleFilter || typeof ConsoleFilter !== 'object') return null;
+  const Mode = String(ConsoleFilter.Mode || 'none');
+  const Pattern = typeof ConsoleFilter.Pattern === 'string' ? ConsoleFilter.Pattern.trim() : '';
+  if (Mode === 'none' || !Pattern) return null;
+
+  if (Mode === 'startsWith') return (line) => line.startsWith(Pattern);
+  if (Mode === 'regex') {
+    let Regex;
+    try {
+      Regex = new RegExp(Pattern);
+    } catch (Err) {
+      Logger.warn(`Invalid console filter regex "${Pattern}" (${Err.message}); filter disabled`);
+      return null;
+    }
+    return (line) => Regex.test(line);
+  }
+  // Default / "includes".
+  return (line) => line.includes(Pattern);
+};
+
+// Compile a script's optional ConsoleFilter into a strip transform, or return
+// null when nothing should be stripped. When ConsoleFilter.Strip is true the
+// matched text is removed from a surfaced line, leaving only the remainder
+// (trimmed). Only applied to lines that already passed CompileConsoleFilter.
+// An uncompilable regex disables stripping (the whole line is surfaced as-is).
+Internal.CompileConsoleStrip = (ConsoleFilter) => {
+  if (!ConsoleFilter || typeof ConsoleFilter !== 'object') return null;
+  if (ConsoleFilter.Strip !== true) return null;
+  const Mode = String(ConsoleFilter.Mode || 'none');
+  const Pattern = typeof ConsoleFilter.Pattern === 'string' ? ConsoleFilter.Pattern.trim() : '';
+  if (Mode === 'none' || !Pattern) return null;
+
+  if (Mode === 'startsWith') {
+    return (line) => (line.startsWith(Pattern) ? line.slice(Pattern.length).trim() : line);
+  }
+  if (Mode === 'regex') {
+    let Regex;
+    try {
+      Regex = new RegExp(Pattern, 'g');
+    } catch (Err) {
+      Logger.warn(`Invalid console filter regex "${Pattern}" (${Err.message}); strip disabled`);
+      return null;
+    }
+    return (line) => line.replace(Regex, '').trim();
+  }
+  // Default / "includes": remove every occurrence of the pattern.
+  return (line) => line.split(Pattern).join('').trim();
+};
+
+Internal.RunScriptFile = async (ScriptPath, ExtraArgs = [], OnProgress, ConsoleFilter = null) => {
+  const Report = typeof OnProgress === 'function' ? OnProgress : () => {};
   return new Promise((resolve, reject) => {
     const { spawn } = require('child_process');
 
@@ -325,22 +390,78 @@ Internal.RunScriptFile = async (ScriptPath, ExtraArgs = []) => {
       windowsHide: true,
     });
 
+    // The process is now live — the server treats the Running stage (progress
+    // >= 50) as the spinner state; StatusText from here on is live console tail.
+    Child.on('spawn', () => Report(65, 'Running'));
+
     let StdOut = '';
     let StdErr = '';
 
+    // Tail the console: surface the most recent non-empty output line as the
+    // running StatusText so it shows inline in the server's execution modal.
+    // Emits are throttled (trailing edge) so chatty scripts don't flood the
+    // socket, and capped in length (the server also enforces a 512-char limit).
+    // When the script defines a ConsoleFilter, only lines matching it are
+    // surfaced (see CompileConsoleFilter); non-matching output is still captured
+    // in StdOut/StdErr but never becomes the live status tail.
+    const MatchesConsoleFilter = Internal.CompileConsoleFilter(ConsoleFilter);
+    const StripConsoleFilter = Internal.CompileConsoleStrip(ConsoleFilter);
+    let LatestLine = '';
+    let LastSentLine = '';
+    let FlushTimer = null;
+    const ExtractLastLine = (text) => {
+      const lines = String(text).split(/\r?\n/);
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const trimmed = lines[i].trim();
+        if (!trimmed) continue;
+        if (MatchesConsoleFilter && !MatchesConsoleFilter(trimmed)) continue;
+        if (StripConsoleFilter) {
+          // Surface only the remainder after removing the matched text; an
+          // empty remainder means nothing useful to show, so keep scanning
+          // earlier lines for the most recent meaningful tail.
+          const stripped = StripConsoleFilter(trimmed);
+          if (!stripped) continue;
+          return stripped;
+        }
+        return trimmed;
+      }
+      return '';
+    };
+    const FlushLine = () => {
+      FlushTimer = null;
+      if (!LatestLine || LatestLine === LastSentLine) return;
+      LastSentLine = LatestLine;
+      Report(65, LatestLine.slice(0, 200));
+    };
+    const QueueOutput = (chunk) => {
+      const line = ExtractLastLine(chunk);
+      if (!line) return;
+      LatestLine = line;
+      if (FlushTimer) return;
+      FlushTimer = setTimeout(FlushLine, 200);
+      if (FlushTimer && typeof FlushTimer.unref === 'function') FlushTimer.unref();
+    };
+
     Child.stdout.on('data', (data) => {
-      StdOut += data.toString();
+      const text = data.toString();
+      StdOut += text;
+      QueueOutput(text);
     });
     Child.stderr.on('data', (data) => {
-      StdErr += data.toString();
+      const text = data.toString();
+      StdErr += text;
+      QueueOutput(text);
     });
 
     Child.on('error', (error) => {
+      if (FlushTimer) clearTimeout(FlushTimer);
       Logger.error(`Error executing script: ${error.message}`);
       reject(error);
     });
 
     Child.on('close', (code) => {
+      // Stop tailing; the Complete response now owns the final StatusText.
+      if (FlushTimer) clearTimeout(FlushTimer);
       // A non-zero exit code still means the script process completed.
       if (code !== 0) {
         const Message = StdErr.trim() || `Script exited with code ${code}`;
@@ -409,11 +530,15 @@ Manager.GetLaunchState = (ScriptID) => {
   };
 };
 
-Manager.Execute = async (_RequestID, ScriptID) => {
+Manager.Execute = async (_RequestID, ScriptID, OnProgress) => {
+  // OnProgress(Progress:0-100, StatusText) lets the server render a live
+  // progress bar / running spinner. It is optional so other callers still work.
+  const Report = typeof OnProgress === 'function' ? OnProgress : () => {};
   let Script = ScriptCache.find((s) => s.ID === ScriptID);
   if (!Script) return ['Script not found', false];
   Logger.log(`Executing script: ${Script.Name} (${Script.ID})`);
   try {
+    Report(10, 'Preparing');
     const LaunchState = Internal.GetScriptLaunchState(Script);
     if (!LaunchState.Enabled) {
       Logger.error(`Script is not runnable on this platform: ${LaunchState.DisabledReason}`);
@@ -421,7 +546,13 @@ Manager.Execute = async (_RequestID, ScriptID) => {
     }
     const PlatformArgString = Internal.ResolvePlatformArguments(Script);
     const PlatformArgs = Internal.ParseArgumentString(PlatformArgString);
-    await Internal.RunScriptFile(LaunchState.ScriptPath, PlatformArgs);
+    Report(30, 'Launching');
+    await Internal.RunScriptFile(
+      LaunchState.ScriptPath,
+      PlatformArgs,
+      Report,
+      Script.ConsoleFilter
+    );
     Logger.success(`Script ${Script.Name} executed successfully`);
     return [null, true];
   } catch (error) {

@@ -106,7 +106,11 @@ test('unchanged firmware keeps the cached UUID and does not rewrite the profile'
 
   assert.equal(profile.UUID, 'uuid-source');
   assert.equal(profile.Adopted, true, 'a stable machine must stay adopted');
-  assert.equal(readProfile(profileRoot).Identity.ResolvedAt, 1, 'should not rewrite when unchanged');
+  assert.equal(
+    readProfile(profileRoot).Identity.ResolvedAt,
+    1,
+    'should not rewrite when unchanged'
+  );
 });
 
 test('legacy profile migrates to the hardware UUID and keeps adoption for the server to reject', async () => {

@@ -148,6 +148,80 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   assert.equal(Manager.GetTrayScriptEntries().length, 0);
 });
 
+test('ScriptManager ConsoleFilter surfaces only matching lines as the status tail', async () => {
+  const scriptsDir = tempDir('showtrak-client-scripts-filter-');
+  const profileDir = tempDir('showtrak-client-profile-filter-');
+  const platform = localPlatformConfig();
+
+  const scriptId = 'filter-script';
+  const scriptFolder = path.join(scriptsDir, scriptId);
+  fs.mkdirSync(scriptFolder, { recursive: true });
+  fs.writeFileSync(path.join(scriptFolder, platform.fileName), platform.defaultContents, 'utf8');
+
+  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ScriptManager', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    '../Logger': {
+      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+    },
+    '../Broadcast': { Manager: { emit: () => {} } },
+    '../AppData': {
+      Manager: {
+        GetScriptsDirectory: () => scriptsDir,
+        GetProfileDirectory: () => profileDir,
+      },
+    },
+    '../ChecksumManager': { Manager: { Checksum: async () => 'sum' } },
+  });
+
+  // A child that emits a chunk whose LAST line does not match the filter, then
+  // closes after the 200ms throttle window so the trailing flush fires.
+  const makeChild = () => ({
+    stdout: {
+      on: (event, cb) => {
+        if (event === 'data') cb(Buffer.from('KEEP me\nignore this tail\n'));
+      },
+    },
+    stderr: { on: () => {} },
+    on: (event, cb) => {
+      if (event === 'spawn') cb();
+      if (event === 'close') setTimeout(() => cb(0), 260);
+    },
+  });
+
+  const runWithFilter = async (ConsoleFilter) => {
+    const statuses = [];
+    await Manager.SetScripts([
+      {
+        ID: scriptId,
+        Name: 'Filtered',
+        Enabled: true,
+        Platforms: { [platform.key]: platform.fileName },
+        Files: [{ Path: platform.fileName, Type: 'file', Checksum: 'sum' }],
+        ConsoleFilter,
+      },
+    ]);
+    await withMocks({ child_process: { spawn: () => makeChild() } }, () =>
+      Manager.Execute('req', scriptId, (_p, statusText) => statuses.push(statusText))
+    );
+    return statuses;
+  };
+
+  // No filter → the last non-empty line ("ignore this tail") is surfaced.
+  const unfiltered = await runWithFilter({ Mode: 'none', Pattern: '' });
+  assert.equal(unfiltered.includes('ignore this tail'), true);
+  assert.equal(unfiltered.includes('KEEP me'), false);
+
+  // includes "KEEP" → only the matching line is surfaced, the tail is skipped.
+  const filtered = await runWithFilter({ Mode: 'includes', Pattern: 'KEEP' });
+  assert.equal(filtered.includes('KEEP me'), true);
+  assert.equal(filtered.includes('ignore this tail'), false);
+
+  // includes "KEEP" with Strip → the matched text is removed, leaving "me".
+  const stripped = await runWithFilter({ Mode: 'includes', Pattern: 'KEEP', Strip: true });
+  assert.equal(stripped.includes('me'), true);
+  assert.equal(stripped.includes('KEEP me'), false);
+});
+
 test('ScriptManager download, fingerprint, and delete flow', async () => {
   const scriptsDir = tempDir('showtrak-client-scripts-dl-');
   const profileDir = tempDir('showtrak-client-profile-dl-');

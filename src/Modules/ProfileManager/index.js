@@ -164,7 +164,9 @@ async function ReconcileIdentity(Profile) {
     // it still falls through to re-derivation below.
     if (Overlap) {
       if (Cached.Witness !== Live.Witness) {
-        Logger.log('Physical MAC set changed but still overlaps; keeping UUID, refreshing witness.');
+        Logger.log(
+          'Physical MAC set changed but still overlaps; keeping UUID, refreshing witness.'
+        );
         const Refreshed = { ...Profile, Identity: BuildIdentityBlock(Live) };
         WriteProfileFile(Refreshed);
         return Refreshed;

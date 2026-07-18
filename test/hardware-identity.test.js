@@ -49,7 +49,11 @@ test('IsTrustworthyFirmwareId rejects known-bogus firmware ids', () => {
   ];
 
   for (const value of bogus) {
-    assert.equal(IsTrustworthyFirmwareId(value), false, `expected reject: ${JSON.stringify(value)}`);
+    assert.equal(
+      IsTrustworthyFirmwareId(value),
+      false,
+      `expected reject: ${JSON.stringify(value)}`
+    );
   }
 });
 
@@ -206,12 +210,15 @@ test('Linux probe walks DMI paths and degrades when unreadable', () => {
 });
 
 function loadResolver(mocks) {
-  return loadWithMocks(path.join(__dirname, '..', 'src', 'Modules', 'HardwareIdentity', 'index.js'), {
-    '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
-    },
-    ...mocks,
-  });
+  return loadWithMocks(
+    path.join(__dirname, '..', 'src', 'Modules', 'HardwareIdentity', 'index.js'),
+    {
+      '../Logger': {
+        CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      },
+      ...mocks,
+    }
+  );
 }
 
 test('resolver prefers firmware when it is trustworthy', async () => {

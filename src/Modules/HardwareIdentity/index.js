@@ -15,7 +15,12 @@ const Logger = CreateLogger('HardwareIdentity');
 const { v4: uuidv4 } = require('uuid');
 
 const { GetFirmwareId } = require('./probes');
-const { IsTrustworthyFirmwareId, GetPhysicalMacs, DeriveUUID, MacWitness } = require('./fingerprint');
+const {
+  IsTrustworthyFirmwareId,
+  GetPhysicalMacs,
+  DeriveUUID,
+  MacWitness,
+} = require('./fingerprint');
 
 // Outer guard for a child process that ignores the execFile timeout/SIGTERM.
 const RESOLVE_TIMEOUT_MS = 6000;
