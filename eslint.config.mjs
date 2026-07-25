@@ -13,6 +13,9 @@ export default defineConfig([
       'src/UI/vendors/**',
       'node_modules/**',
       'dist/**',
+      'dist-test/**',
+      // c8's generated HTML report (added with the coverage script in WP-0).
+      'coverage/**',
       'out/**',
       // Types-only protocol submodule; linted in its own repo.
       'shared/**',

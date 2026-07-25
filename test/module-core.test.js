@@ -429,9 +429,16 @@ test('Logger writes file lines and supports all log levels', async () => {
   const originalConsoleLog = console.log;
   console.log = (...args) => printed.push(args);
 
+  // The level is read at module load. Under `node --test` there is no Electron,
+  // so `process.defaultApp` is undefined and the module correctly reads that as
+  // a shipped build (level 'info') — which would suppress debug/database here.
+  // This test is about every method reaching its sinks, so it asks for them all;
+  // the gating itself is covered in logger-levels.test.js.
+  const previousLogLevel = process.env.LOG_LEVEL;
+  process.env.LOG_LEVEL = 'trace';
+
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Logger', 'index.js');
   const { CreateLogger } = loadWithMocks(modulePath, {
-    '../Config': { Production: false },
     colors: {
       cyan: (value) => String(value),
       magenta: (value) => String(value),
@@ -480,5 +487,7 @@ test('Logger writes file lines and supports all log levels', async () => {
     assert.equal(appended.length >= 8, true);
   } finally {
     console.log = originalConsoleLog;
+    if (previousLogLevel === undefined) delete process.env.LOG_LEVEL;
+    else process.env.LOG_LEVEL = previousLogLevel;
   }
 });

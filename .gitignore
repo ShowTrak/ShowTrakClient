@@ -94,3 +94,6 @@ src/Profile.json
 
 # TypeScript build output
 dist/
+
+# Test-only renderer compile (see tsconfig.renderer.test.json)
+dist-test/

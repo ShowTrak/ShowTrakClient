@@ -30,8 +30,12 @@ module.exports = {
       /^\/shared($|\/)/,
       /^\/scripts($|\/)/,
       /^\/build($|\/)/,
-      // Tests.
+      // Tests. dist-test/ is the test-only per-file compile of the renderer
+      // (tsconfig.renderer.test.json); the app runs the esbuild bundles in
+      // dist/, so this must never ship.
       /^\/test($|\/)/,
+      /^\/dist-test($|\/)/,
+      /^\/coverage($|\/)/,
       // Repo/tooling directories.
       /^\/\.github($|\/)/,
       /^\/\.husky($|\/)/,
