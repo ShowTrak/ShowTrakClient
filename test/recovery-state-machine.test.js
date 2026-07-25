@@ -135,19 +135,27 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
         return fakeWindow;
       },
       Menu: { buildFromTemplate: () => ({}) },
+      // Deliberately unavailable, on every platform.
+      //
+      // Recovery status is only pushed to an open window, and main.ts only
+      // creates one when it CANNOT put an icon in the tray (with a tray, the
+      // window appears when the operator opens it). So a working tray means
+      // these statuses are computed and dropped, and there is nothing to
+      // observe.
+      //
+      // This was previously implicit and only worked by accident: the
+      // nativeImage stub below returned a resized image with no isEmpty(), so
+      // tray creation threw on macOS and took the fallback path — while on
+      // Linux the tray succeeded and every test in this file saw nothing at
+      // all. Failing it explicitly makes the harness behave the same
+      // everywhere.
       Tray: function Tray() {
-        return {
-          destroy: () => {},
-          setToolTip: () => {},
-          setTitle: () => {},
-          setContextMenu: () => {},
-          setIgnoreDoubleClickEvents: () => {},
-        };
+        throw new Error('no system tray in this environment');
       },
       nativeImage: {
         createFromPath: () => ({
           isEmpty: () => false,
-          resize: () => ({ setTemplateImage: () => {} }),
+          resize: () => ({ isEmpty: () => false, setTemplateImage: () => {} }),
         }),
         createEmpty: () => ({ isEmpty: () => true }),
       },
