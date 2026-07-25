@@ -33,6 +33,43 @@ const PRIMARY_IP = '10.0.0.10';
 const tick = (ms = 0) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Wait until `predicate` holds, polling rather than sleeping a guessed duration.
+ *
+ * Recovery is an async chain (discovery -> address resolution -> connect ->
+ * validate), so how long it takes is a property of the machine running the test,
+ * not of the code. Fixed `await tick(80)` waits passed locally and failed every
+ * time on a 2-core CI runner with test files running concurrently. Polling for
+ * the condition is both faster in the normal case and immune to load.
+ */
+async function waitFor(predicate, description, timeoutMs = 5000) {
+  const Deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const Value = predicate();
+    if (Value) return Value;
+    if (Date.now() > Deadline) {
+      const What = typeof description === 'function' ? description() : description;
+      throw new Error(`Timed out waiting for ${What}`);
+    }
+    await tick(2);
+  }
+}
+
+/**
+ * The checkpoint for a test whose assertion is that something did NOT happen.
+ *
+ * A negative assertion has no event of its own to wait for, so it needs a
+ * positive one first. `Discovering` is the right marker: it is pushed after the
+ * primary has failed and the browser is live, so by then a candidate record has
+ * been offered and "did we wrongly connect to it / persist it" is decidable.
+ *
+ * Deliberately NOT `ConnectingPrimary` — that is pushed BEFORE the primary is
+ * known to have failed, so waiting on it proves nothing about discovery.
+ */
+function reachedDiscovery(H) {
+  return () => H.states().includes('Discovering');
+}
+
+/**
  * Load main.js with a controllable environment.
  *
  * @param profile         the stored client profile (may carry ManualServer)
@@ -212,6 +249,23 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
     states: () => statuses.map((S) => S.State),
     /** The last status carrying the given State, if any. */
     lastStatus: (state) => [...statuses].reverse().find((S) => S.State === state) || null,
+    /** The first status carrying the given State, if any. */
+    firstStatus: (state) => statuses.find((S) => S.State === state) || null,
+    /**
+     * Resolve once the given State has been pushed at least once.
+     *
+     * Returns nothing: several states are pushed more than once per recovery, so
+     * tests name firstStatus/lastStatus explicitly rather than relying on which
+     * one a wait happens to hand back.
+     */
+    waitForState: async (state, timeoutMs) => {
+      await waitFor(
+        () => statuses.some((S) => S.State === state),
+        () =>
+          `recovery state "${state}" (saw: ${statuses.map((S) => S.State).join(' -> ') || 'nothing'})`,
+        timeoutMs
+      );
+    },
   };
 }
 
@@ -243,7 +297,7 @@ function record({ address = GOOD_IP, port = 3000, identity = 'server-token-1', .
  */
 async function settleDiscovery(H) {
   H.deliver(record());
-  await tick(60);
+  await H.waitForState('Reconnected');
 }
 
 // --- Identity matching ------------------------------------------------------
@@ -256,7 +310,7 @@ test('a discovered server with a mismatched identity is skipped, not adopted', a
     discover: [record({ address: '10.0.0.50', identity: 'someone-elses-server' })],
   });
 
-  await tick(60);
+  await waitFor(reachedDiscovery(H), 'discovery to start');
 
   assert.ok(
     !H.initCalls.map((C) => C[1]).includes('10.0.0.50'),
@@ -273,7 +327,7 @@ test('a discovered server with no identity token is skipped when one is expected
     discover: [record({ address: '10.0.0.50', identity: null })],
   });
 
-  await tick(60);
+  await waitFor(reachedDiscovery(H), 'discovery to start');
   assert.ok(!H.initCalls.map((C) => C[1]).includes('10.0.0.50'));
   assert.deepEqual(H.profileUpdates, []);
 
@@ -289,9 +343,8 @@ test('the matching server is taken even when a mismatched one is discovered firs
     ],
   });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
   assert.deepEqual(H.profileUpdates, [[GOOD_IP, 3000]]);
-  assert.ok(H.states().includes('Reconnected'));
 });
 
 // --- Discovery ---------------------------------------------------------------
@@ -299,11 +352,10 @@ test('the matching server is taken even when a mismatched one is discovered firs
 test('discovery keeps the operator informed while it searches', async () => {
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [] });
 
-  await tick(60);
+  await H.waitForState('Discovering');
+  const Discovering = H.lastStatus('Discovering');
 
   assert.ok(H.states().includes('PrimaryFailed'));
-  assert.ok(H.states().includes('Discovering'));
-  const Discovering = H.lastStatus('Discovering');
   assert.match(Discovering.Message, /Searching for Controlling Server/i);
   assert.deepEqual(H.profileUpdates, [], 'nothing should be persisted while still searching');
 
@@ -315,7 +367,7 @@ test('discovery stops the Bonjour browser once a candidate is accepted', async (
   // exactly what throws EADDRNOTAVAIL on the next interface change.
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [record()] });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
   assert.ok(H.bonjourStops.length > 0, 'the Bonjour browser was left running');
 });
 
@@ -330,10 +382,8 @@ test('a server that rejects our adoption identity fails recovery explicitly', as
     },
   });
 
-  await tick(120);
-
+  await H.waitForState('RecoveryFailed');
   const Failed = H.lastStatus('RecoveryFailed');
-  assert.ok(Failed, 'no RecoveryFailed status was reported');
   assert.match(Failed.Message, /rejected adoption identity/i);
   assert.deepEqual(H.profileUpdates, [], 'a rejecting server must not be persisted');
 });
@@ -352,9 +402,7 @@ test('a rejection for a different endpoint does not settle the validation', asyn
     },
   });
 
-  await tick(120);
-
-  assert.ok(H.states().includes('Reconnected'), 'an unrelated rejection aborted recovery');
+  await H.waitForState('Reconnected');
   assert.deepEqual(H.profileUpdates, [[GOOD_IP, 3000]]);
 });
 
@@ -376,7 +424,8 @@ test('a stale connected status for the OLD primary does not validate the candida
     },
   });
 
-  await tick(120);
+  await H.waitForState('ValidatingIdentity');
+  await tick(50); // give a wrong-endpoint validation the chance to land
 
   assert.ok(!H.states().includes('Reconnected'), 'validated against the wrong endpoint');
   assert.deepEqual(H.profileUpdates, []);
@@ -394,7 +443,8 @@ test('a non-connected status for the right endpoint does not validate either', a
     },
   });
 
-  await tick(120);
+  await H.waitForState('ValidatingIdentity');
+  await tick(50); // give a premature validation the chance to land
   assert.ok(!H.states().includes('Reconnected'));
   assert.deepEqual(H.profileUpdates, []);
 });
@@ -409,11 +459,17 @@ test('a manually configured server is used directly, bypassing mDNS', async () =
     discover: [record()],
   });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
 
-  const Connecting = H.lastStatus('ConnectingPrimary');
-  assert.ok(Connecting, 'no ConnectingPrimary status for the configured endpoint');
-  assert.match(Connecting.Message, /192\.168\.9\.5:4000/);
+  // The configured endpoint is consulted during RECOVERY, not at boot — the
+  // first ConnectingPrimary is still the saved server, which has to fail before
+  // the manual endpoint is reached. So the property is that some attempt named
+  // it, not which position that attempt was in.
+  const Attempts = H.statuses.filter((S) => S.State === 'ConnectingPrimary');
+  assert.ok(
+    Attempts.some((S) => /192\.168\.9\.5:4000/.test(S.Message)),
+    `the configured endpoint was never tried (saw: ${Attempts.map((S) => S.Message).join(' | ')})`
+  );
   assert.deepEqual(H.profileUpdates, [['192.168.9.5', 4000]]);
   assert.ok(!H.initCalls.map((C) => C[1]).includes(GOOD_IP), 'discovery was consulted anyway');
 });
@@ -425,7 +481,7 @@ test('an incomplete manual server falls back to discovery', async () => {
       discover: [record()],
     });
 
-    await tick(80);
+    await H.waitForState('Reconnected');
     assert.deepEqual(
       H.profileUpdates,
       [[GOOD_IP, 3000]],
@@ -439,7 +495,7 @@ test('an incomplete manual server falls back to discovery', async () => {
 test('recovery walks the operator through each state in order', async () => {
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [record()] });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
 
   const States = H.states();
   let Cursor = -1;
@@ -453,7 +509,7 @@ test('recovery walks the operator through each state in order', async () => {
 test('every status carries the metrics block the renderer renders', async () => {
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [record()] });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
 
   assert.ok(H.statuses.length > 0);
   for (const Status of H.statuses) {
@@ -469,10 +525,8 @@ test('a successful recovery resets the failure metrics', async () => {
   // across unrelated future outages.
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [record()] });
 
-  await tick(80);
-
+  await H.waitForState('Reconnected');
   const Reconnected = H.lastStatus('Reconnected');
-  assert.ok(Reconnected);
   assert.equal(Reconnected.Metrics.Attempts, 0);
   assert.equal(Reconnected.Metrics.LastFailureAt, 0);
   assert.equal(Reconnected.Metrics.LastFailureReason, null);
@@ -483,9 +537,9 @@ test('a successful recovery resets the failure metrics', async () => {
 test('the first failure reports attempt 1 and names the unreachable primary', async () => {
   const H = createHarness({ profile: ADOPTED_PROFILE, discover: [record()] });
 
-  await tick(80);
+  await waitFor(reachedDiscovery(H), 'the primary to fail and discovery to start');
 
-  const First = H.statuses.find((S) => S.State === 'PrimaryFailed');
+  const First = H.firstStatus('PrimaryFailed');
   assert.match(First.Message, /10\.0\.0\.10:3000 is unreachable/);
   assert.match(First.Message, /Retry attempt 1/);
   assert.equal(First.Metrics.Attempts, 1);
@@ -499,7 +553,7 @@ test('a record with no IPv4 address falls back to the referer address', async ()
     discover: [record({ address: null, referer: { address: GOOD_IP } })],
   });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
   assert.deepEqual(H.profileUpdates, [[GOOD_IP, 3000]]);
 });
 
@@ -510,7 +564,7 @@ test('an IPv6-only record falls back to a DNS lookup of the host', async () => {
     discover: [record({ address: 'fe80::1' })],
   });
 
-  await tick(80);
+  await H.waitForState('Reconnected');
   assert.deepEqual(H.profileUpdates, [[GOOD_IP, 3000]]);
 });
 
@@ -520,7 +574,7 @@ test('a record with no resolvable address at all is skipped', async () => {
     discover: [record({ address: null, host: '' })],
   });
 
-  await tick(60);
+  await waitFor(reachedDiscovery(H), 'discovery to start');
   assert.deepEqual(H.profileUpdates, []);
 
   await settleDiscovery(H);
