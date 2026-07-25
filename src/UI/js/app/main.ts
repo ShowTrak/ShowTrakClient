@@ -13,6 +13,14 @@
  */
 import type { ClientProfile, ProcessMonitorStatus } from '../../../types/client';
 import type { AppUpdateStatus, ServerRecoveryStatus } from '../../../types/preload';
+import {
+  DEFAULT_SERVER_PORT,
+  GetAdoptionBadgeModel,
+  GetAppUpdateStatusText,
+  GetManualServerModel,
+  GetProcessMonitorWarningModel,
+  GetServerRecoveryBannerModel,
+} from './lib/status-models';
 
 let Profile: ClientProfile = {};
 let Version = '0.0.0';
@@ -22,44 +30,11 @@ let ProcessMonitorStatusState: ProcessMonitorStatus = {
   Platform: '',
 };
 let ServerRecoveryStatusState: ServerRecoveryStatus = { State: 'idle', Message: '' };
-const DEFAULT_SERVER_PORT = 3000;
-
-function getAdoptionBadgeModel(): { label: string; className: string } {
-  if (!Profile || !Profile.Adopted || !Profile.Server) {
-    return {
-      label: 'Pending Adoption',
-      className: 'bg-primary',
-    };
-  }
-
-  const state = String(
-    ServerRecoveryStatusState && ServerRecoveryStatusState.State
-      ? ServerRecoveryStatusState.State
-      : 'idle'
-  ).toLowerCase();
-  const message =
-    ServerRecoveryStatusState && typeof ServerRecoveryStatusState.Message === 'string'
-      ? ServerRecoveryStatusState.Message.trim()
-      : '';
-  const isConnected = !message || state === 'idle' || state === 'reconnected';
-
-  if (isConnected) {
-    return {
-      label: 'Adopted, Connected',
-      className: 'bg-success',
-    };
-  }
-
-  return {
-    label: 'Adopted, Disconnected',
-    className: 'bg-danger',
-  };
-}
 
 function ApplyProfile(NewProfile: ClientProfile | null | undefined): void {
   Profile = NewProfile || {};
   console.log('Profile set:', NewProfile);
-  const AdoptionBadge = getAdoptionBadgeModel();
+  const AdoptionBadge = GetAdoptionBadgeModel(Profile, ServerRecoveryStatusState);
   RenderManualServer();
   if (Profile.Adopted && Profile.Server) {
     $('#PROFILE').html(`
@@ -94,7 +69,6 @@ function ApplyAppUpdateStatus(payload: AppUpdateStatus | null | undefined): void
   if (!payload || typeof payload !== 'object') return;
   try {
     $('#UPDATE_SECTION').removeClass('d-none');
-    const st = payload.state || 'none';
     const $status = $('#UPDATE_STATUS');
     const $install = $('#UPDATE_INSTALL_BTN');
     const $later = $('#UPDATE_LATER_BTN');
@@ -104,25 +78,8 @@ function ApplyAppUpdateStatus(payload: AppUpdateStatus | null | undefined): void
     $later.addClass('d-none');
     $notesWrap.addClass('d-none');
     $notes.empty();
-    if (st === 'checking') {
-      $status.text('Checking for updates...');
-    } else if (st === 'available') {
-      const v = payload.info && (payload.info.version || payload.info.tag || 'Update available');
-      $status.text(`Update available: ${v}. Downloading...`);
-    } else if (st === 'downloading') {
-      const pct = payload.percent ? Math.floor(payload.percent) : 0;
-      $status.text(`Downloading update... ${pct}%`);
-    } else if (st === 'downloaded') {
-      $status.text('Update downloaded. Restarting to apply...');
-    } else if (st === 'installing') {
-      $status.text('Installing update...');
-    } else if (st === 'installed') {
-      $status.text('Update installed. Restarting...');
-    } else if (st === 'none') {
-      $status.text('No updates available');
-    } else if (st === 'error') {
-      $status.text(`Update error: ${payload.error || 'Unknown error'}`);
-    }
+    const StatusText = GetAppUpdateStatusText(payload);
+    if (StatusText != null) $status.text(StatusText);
   } catch {}
 }
 
@@ -137,29 +94,15 @@ function RenderManualServerPortHint(): void {
 function RenderProcessMonitorWarning(): void {
   const $warning = $('#PROCESS_MONITOR_WARNING');
   if (!$warning || !$warning.length) return;
-  const state = String(
-    ProcessMonitorStatusState && ProcessMonitorStatusState.State
-      ? ProcessMonitorStatusState.State
-      : 'unknown'
-  ).toLowerCase();
-  const message =
-    ProcessMonitorStatusState && typeof ProcessMonitorStatusState.Message === 'string'
-      ? ProcessMonitorStatusState.Message.trim()
-      : '';
-  if (state === 'permission_denied' || state === 'error') {
-    $warning
-      .removeClass('d-none')
-      .text(
-        message ||
-          'Application monitoring is unavailable. Check system permissions for ShowTrak Client.'
-      );
+  const Model = GetProcessMonitorWarningModel(ProcessMonitorStatusState);
+  if (Model.visible) {
+    $warning.removeClass('d-none').text(Model.text);
     return;
   }
   $warning.addClass('d-none').text('');
 }
 
 function RenderManualServer(): void {
-  const manual = Profile && Profile.ManualServer ? Profile.ManualServer : null;
   const $section = $('#MANUAL_SERVER_SECTION');
   const $status = $('#MANUAL_SERVER_STATUS');
   const $clear = $('#BTN_MANUAL_SERVER_CLEAR');
@@ -169,17 +112,11 @@ function RenderManualServer(): void {
 
   $section.removeClass('d-none');
 
-  if (manual && manual.Host) {
-    $status.removeClass('bg-secondary').addClass('bg-success').text('Manual');
-    $clear.removeClass('d-none');
-    if (!$host.is(':focus')) $host.val(manual.Host);
-    if (!$port.is(':focus')) $port.val(manual.Port || DEFAULT_SERVER_PORT);
-  } else {
-    $status.removeClass('bg-success').addClass('bg-secondary').text('Not Set');
-    $clear.addClass('d-none');
-    if (!$host.is(':focus')) $host.val('');
-    if (!$port.is(':focus')) $port.val(DEFAULT_SERVER_PORT);
-  }
+  const Model = GetManualServerModel(Profile);
+  $status.removeClass(Model.removeClass).addClass(Model.addClass).text(Model.statusText);
+  $clear.toggleClass('d-none', !Model.isManual);
+  if (!$host.is(':focus')) $host.val(Model.host);
+  if (!$port.is(':focus')) $port.val(Model.port);
   RenderManualServerPortHint();
 }
 
@@ -187,30 +124,10 @@ function RenderServerRecoveryStatus(): void {
   const $status = $('#SERVER_RECOVERY_STATUS');
   if (!$status || !$status.length) return;
 
-  const state = String(
-    ServerRecoveryStatusState && ServerRecoveryStatusState.State
-      ? ServerRecoveryStatusState.State
-      : 'idle'
-  );
-  const normalizedState = state.toLowerCase();
-  const message =
-    ServerRecoveryStatusState && typeof ServerRecoveryStatusState.Message === 'string'
-      ? ServerRecoveryStatusState.Message.trim()
-      : '';
-  const isConnectedState = !message || normalizedState === 'idle';
-  const text = isConnectedState ? 'Connected to ShowTrak Server' : message;
-
+  const Model = GetServerRecoveryBannerModel(ServerRecoveryStatusState);
   $status.removeClass('d-none alert-info alert-warning alert-success alert-danger');
-  if (normalizedState === 'recoveryfailed') {
-    $status.addClass('alert-danger');
-  } else if (normalizedState === 'primaryfailed') {
-    $status.addClass('alert-warning');
-  } else if (normalizedState === 'reconnected' || isConnectedState) {
-    $status.addClass('alert-success');
-  } else {
-    $status.addClass('alert-info');
-  }
-  $status.text(text);
+  $status.addClass(Model.className);
+  $status.text(Model.text);
 }
 
 async function Main(): Promise<void> {
