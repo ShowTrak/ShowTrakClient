@@ -7,7 +7,7 @@ const { loadWithMocks } = require('./test-helpers');
 test('Startup manager enables autostart when packaged and disabled', async () => {
   const autoLaunchCalls = [];
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Startup', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Startup', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     electron: {
       app: { isPackaged: true },
@@ -48,7 +48,7 @@ test('Startup manager enables autostart when packaged and disabled', async () =>
 test('Startup manager skips autostart while unpackaged', async () => {
   let constructed = false;
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Startup', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Startup', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     electron: {
       app: { isPackaged: false },
@@ -81,7 +81,7 @@ test('Startup manager skips autostart while unpackaged', async () => {
 test('Startup manager leaves an existing autostart entry alone', async () => {
   let enableCalls = 0;
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Startup', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Startup', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     electron: {
       app: { isPackaged: true },

@@ -12,7 +12,7 @@ test('OS manager returns vitals, mac addresses, and interfaces', async () => {
   const originalSetInterval = global.setInterval;
   global.setInterval = () => ({ id: 'cpu' });
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'OS', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'OS', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     os: {
       hostname: () => 'unit-host',
@@ -98,7 +98,7 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
   ];
 
   let idx = 0;
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'NetworkMonitor', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, error: () => {}, debug: () => {} }),
@@ -159,7 +159,7 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     [new Error('Not authorized -1743'), ''],
   ];
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProcessMonitor', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProcessMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     child_process: {
       execFile: (_command, _args, _opts, callback) => {
@@ -247,7 +247,7 @@ test('Bonjour manager discovers service and can stop/terminate', async () => {
     },
   });
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Bonjour', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
@@ -334,7 +334,7 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
     };
   };
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Bonjour', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),

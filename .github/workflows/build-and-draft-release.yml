@@ -90,11 +90,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          # shared/ is the ShowTrak-Protocol submodule; premake runs the full
+          # TypeScript build, which needs it present.
+          submodules: recursive
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install Linux packaging tools

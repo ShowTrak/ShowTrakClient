@@ -16,6 +16,40 @@ const shouldNotarizeMac =
 module.exports = {
   packagerConfig: {
     asar: true,
+    // Keep the asar lean: only `dist/`, production `node_modules`, and
+    // package.json are needed at runtime. Without an ignore list, Electron
+    // Packager bundles the entire project tree (src/, test/, source maps,
+    // dotfiles). Top-level dirs are anchored with `^/` so we don't accidentally
+    // match paths inside node_modules.
+    ignore: [
+      // Source & build inputs — the renderer, images and icons are served from
+      // dist/ (copied there by scripts/copy-assets.js); shared/ is the
+      // TypeScript-only protocol submodule; the app icon is read from disk at
+      // package time, not from the asar.
+      /^\/src($|\/)/,
+      /^\/shared($|\/)/,
+      /^\/scripts($|\/)/,
+      /^\/build($|\/)/,
+      // Tests.
+      /^\/test($|\/)/,
+      // Repo/tooling directories.
+      /^\/\.github($|\/)/,
+      /^\/\.husky($|\/)/,
+      /^\/\.vscode($|\/)/,
+      // Config & docs.
+      /^\/tsconfig.*\.json$/,
+      /^\/eslint\.config\.mjs$/,
+      /^\/\.prettier/,
+      /^\/\.gitignore$/,
+      /^\/\.gitattributes$/,
+      /^\/\.gitmodules$/,
+      /^\/README\.md$/,
+      /^\/package-lock\.json$/,
+      // Source maps are debug-only; strip from release builds.
+      /\.map$/,
+      // Cruft.
+      /\.DS_Store$/,
+    ],
     // Keep the runtime binary name stable across platforms so Linux makers
     // can reliably locate it when building deb/rpm packages.
     executableName: 'showtrak-client',

@@ -71,7 +71,7 @@ test('MainClient handles command events and reconnect lifecycle branches', async
   let onUsbConnect = null;
   let onUsbDisconnect = null;
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'MainClient', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
@@ -268,7 +268,7 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
   let shouldThrowGetScripts = false;
   let shouldFailDownload = false;
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'MainClient', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),

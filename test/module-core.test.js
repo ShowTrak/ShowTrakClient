@@ -16,7 +16,7 @@ test('AppData initialize creates required directories and open folder checks exi
   process.env.APPDATA = appDataRoot;
 
   const opened = [];
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'AppData', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'AppData', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     electron: {
       shell: {
@@ -62,7 +62,7 @@ test('AppData initialize creates required directories and open folder checks exi
 });
 
 test('Broadcast manager emits and handles events', async () => {
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Broadcast', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Broadcast', 'index.js');
   const { Manager } = require(modulePath);
 
   let payload = null;
@@ -75,7 +75,7 @@ test('Broadcast manager emits and handles events', async () => {
 });
 
 test('ChecksumManager.Checksum resolves file checksum value', async () => {
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ChecksumManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ChecksumManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     checksum: {
       file: (_filePath, callback) => callback(null, 'abc123'),
@@ -87,7 +87,7 @@ test('ChecksumManager.Checksum resolves file checksum value', async () => {
 });
 
 test('Config exposes app and shared versions', async () => {
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Config', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Config', 'index.js');
   const { Config } = require(modulePath);
   assert.equal(typeof Config.Application.Version, 'string');
   assert.equal(Config.Shared.Version, Config.Application.Version);
@@ -95,7 +95,7 @@ test('Config exposes app and shared versions', async () => {
 });
 
 test('Utils.Wait resolves asynchronously', async () => {
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Utils', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js');
   const Utils = require(modulePath);
 
   const start = Date.now();
@@ -109,7 +109,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const fs = require('node:fs');
   const manualServerPath = path.join(profileRoot, 'ManualServer.json');
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProfileManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
@@ -207,7 +207,7 @@ test('ProfileManager creates and updates profile states', async () => {
 
 test('ProfileManager migrates legacy manual server storage from Profile.json', async () => {
   const profileRoot = tempDir('showtrak-client-profile-migrate-');
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ProfileManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProfileManager', 'index.js');
   const fs = require('node:fs');
 
   fs.writeFileSync(
@@ -299,7 +299,7 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
     }
   }
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'USBMonitor', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'USBMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, error: () => {} }),
@@ -367,7 +367,7 @@ test('DisplayMonitor formats displays and registers change listeners', async () 
     on: (event) => registeredEvents.push(event),
   };
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'DisplayMonitor', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'index.js');
   const mod = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, error: () => {} }),
@@ -429,7 +429,7 @@ test('Logger writes file lines and supports all log levels', async () => {
   const originalConsoleLog = console.log;
   console.log = (...args) => printed.push(args);
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'Logger', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Logger', 'index.js');
   const { CreateLogger } = loadWithMocks(modulePath, {
     '../Config': { Production: false },
     colors: {

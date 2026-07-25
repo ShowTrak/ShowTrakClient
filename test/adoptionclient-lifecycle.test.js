@@ -63,7 +63,7 @@ test('AdoptionClient reinit/terminate clears adoption heartbeat intervals', asyn
 
   const createdSockets = [];
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'AdoptionClient', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'AdoptionClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),

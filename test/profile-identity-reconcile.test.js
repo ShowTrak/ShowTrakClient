@@ -16,7 +16,7 @@ const { loadWithMocks } = require('./test-helpers');
 const profileManagerPath = path.join(
   __dirname,
   '..',
-  'src',
+  'dist',
   'Modules',
   'ProfileManager',
   'index.js'

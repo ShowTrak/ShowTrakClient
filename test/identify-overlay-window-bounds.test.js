@@ -46,7 +46,7 @@ function createOverlayHarness({ displays, platform = 'darwin' }) {
     }
   }
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'IdentifyOverlay', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'IdentifyOverlay', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     os: {
       platform: () => platform,

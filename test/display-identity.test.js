@@ -2,12 +2,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const edidPath = path.join(__dirname, '..', 'src', 'Modules', 'DisplayMonitor', 'edid.js');
-const identityPath = path.join(__dirname, '..', 'src', 'Modules', 'DisplayMonitor', 'identity.js');
+const edidPath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'edid.js');
+const identityPath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'identity.js');
 const displayMonitorPath = path.join(
   __dirname,
   '..',
-  'src',
+  'dist',
   'Modules',
   'DisplayMonitor',
   'index.js'

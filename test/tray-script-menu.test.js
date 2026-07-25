@@ -48,7 +48,7 @@ test('tray menu exposes run script submenu and refreshes on ScriptsUpdated', asy
     removeAllListeners: () => {},
   };
 
-  loadWithMocks(path.join(__dirname, '..', 'src', 'main.js'), {
+  loadWithMocks(path.join(__dirname, '..', 'dist', 'main.js'), {
     electron: {
       app: {
         requestSingleInstanceLock: () => true,

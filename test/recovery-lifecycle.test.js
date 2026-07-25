@@ -54,7 +54,7 @@ test('main process recovery re-discovers server and updates saved endpoint', asy
     removeAllListeners: () => {},
   };
 
-  const modulePath = path.join(__dirname, '..', 'src', 'main.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'main.js');
 
   loadWithMocks(modulePath, {
     electron: {

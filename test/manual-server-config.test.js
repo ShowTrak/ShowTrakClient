@@ -88,7 +88,7 @@ test('manual server bypasses Bonjour for adoption across VLANs', async () => {
   };
 
   const fakeWindow = buildFakeWindow();
-  const modulePath = path.join(__dirname, '..', 'src', 'main.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'main.js');
 
   loadWithMocks(modulePath, {
     electron: baseElectronMocks(fakeWindow),
@@ -163,7 +163,7 @@ test('manual server recovery reconnects to the configured endpoint without Bonjo
   };
 
   const fakeWindow = buildFakeWindow();
-  const modulePath = path.join(__dirname, '..', 'src', 'main.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'main.js');
 
   loadWithMocks(modulePath, {
     electron: baseElectronMocks(fakeWindow),

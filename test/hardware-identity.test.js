@@ -7,12 +7,12 @@ const { loadWithMocks } = require('./test-helpers');
 const fingerprintPath = path.join(
   __dirname,
   '..',
-  'src',
+  'dist',
   'Modules',
   'HardwareIdentity',
   'fingerprint.js'
 );
-const probesPath = path.join(__dirname, '..', 'src', 'Modules', 'HardwareIdentity', 'probes.js');
+const probesPath = path.join(__dirname, '..', 'dist', 'Modules', 'HardwareIdentity', 'probes.js');
 
 const {
   IsTrustworthyFirmwareId,
@@ -211,7 +211,7 @@ test('Linux probe walks DMI paths and degrades when unreadable', () => {
 
 function loadResolver(mocks) {
   return loadWithMocks(
-    path.join(__dirname, '..', 'src', 'Modules', 'HardwareIdentity', 'index.js'),
+    path.join(__dirname, '..', 'dist', 'Modules', 'HardwareIdentity', 'index.js'),
     {
       '../Logger': {
         CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),

@@ -76,7 +76,7 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
 
   const createdSockets = [];
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'MainClient', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),

@@ -91,3 +91,6 @@ typings/
 # Electron-Forge
 out/
 src/Profile.json
+
+# TypeScript build output
+dist/

@@ -51,7 +51,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
       };
     },
   };
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ScriptManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
@@ -158,7 +158,7 @@ test('ScriptManager ConsoleFilter surfaces only matching lines as the status tai
   fs.mkdirSync(scriptFolder, { recursive: true });
   fs.writeFileSync(path.join(scriptFolder, platform.fileName), platform.defaultContents, 'utf8');
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ScriptManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
@@ -232,7 +232,7 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
     arrayBuffer: async () => Buffer.from('echo deployed').buffer,
   });
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ScriptManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
@@ -295,7 +295,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
     arrayBuffer: async () => new ArrayBuffer(0),
   });
 
-  const modulePath = path.join(__dirname, '..', 'src', 'Modules', 'ScriptManager', 'index.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
       CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
@@ -391,7 +391,7 @@ test('preload exposes safe API wrappers and subscriptions', async () => {
   const invoked = [];
   const listeners = new Map();
 
-  const modulePath = path.join(__dirname, '..', 'src', 'preload.js');
+  const modulePath = path.join(__dirname, '..', 'dist', 'preload.js');
   loadWithMocks(modulePath, {
     electron: {
       contextBridge: {
