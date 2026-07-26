@@ -43,3 +43,65 @@ export function ErrorMessage(Err: unknown, Fallback = 'Unknown error'): string {
   if (Err) return String(Err);
   return Fallback;
 }
+
+/** The shape every telemetry delta takes: what appeared, what went, what moved. */
+export interface KeyedDiff<T> {
+  Added: T[];
+  /** Keys of entries present before and absent now. */
+  Removed: string[];
+  Changed: T[];
+}
+
+/**
+ * Diff two snapshots of a keyed collection.
+ *
+ * Used by every telemetry source that reports incrementally (network
+ * interfaces, displays, running applications). Sharing one implementation keeps
+ * the three deltas consistent about what "changed" means, and means the edge
+ * cases — an entry with no usable key, a duplicate key within one snapshot —
+ * are handled the same way everywhere rather than three times over.
+ *
+ * `key` identifies an entry across snapshots; entries it returns null for are
+ * skipped entirely, since they can be neither tracked nor removed. `signature`
+ * decides whether an entry that is present in both has actually changed.
+ */
+export function DiffByKey<T>(
+  Previous: readonly T[],
+  Next: readonly T[],
+  key: (item: T) => string | null,
+  signature: (item: T) => string
+): KeyedDiff<T> {
+  const previousByKey = new Map<string, T>();
+  for (const item of Previous) {
+    const Key = key(item);
+    if (Key) previousByKey.set(Key, item);
+  }
+
+  const Added: T[] = [];
+  const Changed: T[] = [];
+  const seen = new Set<string>();
+
+  for (const item of Next) {
+    const Key = key(item);
+    if (!Key || seen.has(Key)) continue;
+    seen.add(Key);
+    const before = previousByKey.get(Key);
+    if (!before) {
+      Added.push(item);
+      continue;
+    }
+    if (signature(before) !== signature(item)) Changed.push(item);
+  }
+
+  const Removed: string[] = [];
+  for (const Key of previousByKey.keys()) {
+    if (!seen.has(Key)) Removed.push(Key);
+  }
+
+  return { Added, Removed, Changed };
+}
+
+/** Whether a diff carries nothing at all, and so is not worth emitting. */
+export function IsEmptyDiff<T>(Diff: KeyedDiff<T>): boolean {
+  return Diff.Added.length === 0 && Diff.Removed.length === 0 && Diff.Changed.length === 0;
+}

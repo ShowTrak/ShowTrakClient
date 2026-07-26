@@ -1,5 +1,6 @@
 import { io } from 'socket.io-client';
 
+import type { ClientDisplay } from '@showtrak/protocol';
 import type { ClientScript } from '../../types/client';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
@@ -13,9 +14,15 @@ import { Manager as NetworkMonitor } from '../NetworkMonitor';
 import { Manager as ProcessMonitor } from '../ProcessMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
-import { ErrorMessage, ReadIdentityToken, Wait } from '../Utils';
+import { Manager as ServerCapabilities } from '../ServerCapabilities';
+import { DiffByKey, ErrorMessage, IsEmptyDiff, ReadIdentityToken, Wait } from '../Utils';
 
 const Logger = CreateLogger('MainClient');
+
+// Cadence of the full USB / display list resyncs. See the comment at the
+// setInterval calls for why these are a reconciliation channel rather than the
+// primary signal.
+const FULL_LIST_RESYNC_INTERVAL_MS = 60000;
 
 let Socket: ShowTrakSocket | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
@@ -24,6 +31,10 @@ let deviceListInterval: NodeJS.Timeout | null = null;
 let displayListInterval: NodeJS.Timeout | null = null;
 let usbListenersRegistered = false;
 let displayListenersRegistered = false;
+let lastDisplaySignature: string | null = null;
+// Last display list actually reported, and so the baseline the next delta is
+// computed against. Cleared on disconnect along with the signature.
+let lastDisplayList: ClientDisplay[] = [];
 let consecutiveConnectErrors = 0;
 let connectFailureReported = false;
 // Run-on-launch fires at most once per client process, on the first successful
@@ -108,35 +119,92 @@ async function UpdateDeviceList(): Promise<void> {
 function registerUSBListeners(): void {
   if (usbListenersRegistered) return;
 
-  USBMonitorManager.OnUSBConnect(async (Device) => {
+  // The connect/disconnect events are the real-time signal: the server applies
+  // each one to its connected list incrementally. A full list used to be sent
+  // straight after every event as well, which meant plugging in a hub emitted
+  // one complete device list per port; the periodic resync below covers drift.
+  USBMonitorManager.OnUSBConnect((Device) => {
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBConnect');
       return;
     }
     Socket.emit('USBDeviceConnected', Device);
-    await UpdateDeviceList();
   });
 
-  USBMonitorManager.OnUSBDisconnect(async (Device) => {
+  USBMonitorManager.OnUSBDisconnect((Device) => {
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBDisconnect');
       return;
     }
     Socket.emit('USBDeviceDisconnected', Device);
-    await UpdateDeviceList();
   });
 
   usbListenersRegistered = true;
 }
 
-async function UpdateDisplayList(): Promise<void> {
+/** Everything about a display the server stores, so any change is reported. */
+function displaySignature(Display: ClientDisplay): string {
+  try {
+    return JSON.stringify(Display);
+  } catch (_error) {
+    return String(Display && Display.DisplayID);
+  }
+}
+
+/**
+ * Report the display topology.
+ *
+ * `Force` sends the full list unconditionally and is what the periodic resync
+ * and the on-connect report use — the full list is the authority the server
+ * replaces its state from. Otherwise this reports the change only:
+ *
+ *  - against a server that supports deltas, as a `DisplayDelta`;
+ *  - against an older one, as a full `DisplayList`, exactly as before.
+ *
+ * Either way nothing is sent when nothing we report has changed.
+ * `display-metrics-changed` fires for changes that do not affect this payload at
+ * all — the dock auto-hiding moves every display's workArea, for one — so an
+ * unconditional emit turned routine desktop activity into traffic from every
+ * client on the rig.
+ */
+async function UpdateDisplayList(Force = false): Promise<void> {
   if (!Socket || !Socket.connected) {
     Logger.warn('Socket not connected, aborting UpdateDisplayList');
     return;
   }
   const [Err, DisplayList] = await DisplayMonitorManager.GetDisplays();
   if (Err) Logger.error('Error getting displays:', Err);
-  Socket.emit('DisplayList', Err || !Array.isArray(DisplayList) ? [] : DisplayList);
+  const Payload = Err || !Array.isArray(DisplayList) ? [] : DisplayList;
+  let Signature: string | null;
+  try {
+    Signature = JSON.stringify(Payload);
+  } catch (_error) {
+    Signature = null; // Unserialisable payload: fall through and always emit.
+  }
+
+  if (!Force) {
+    if (Signature !== null && Signature === lastDisplaySignature) return;
+    if (ServerCapabilities.SupportsDeltas()) {
+      const Delta = DiffByKey(
+        lastDisplayList,
+        Payload,
+        (Display) => (Display && Display.DisplayID ? String(Display.DisplayID) : null),
+        displaySignature
+      );
+      // A change that produced no diff means every display lacked a usable id;
+      // fall through to the full list rather than reporting nothing.
+      if (!IsEmptyDiff(Delta)) {
+        lastDisplaySignature = Signature;
+        lastDisplayList = Payload;
+        Socket.emit('DisplayDelta', Delta);
+        return;
+      }
+    }
+  }
+
+  lastDisplaySignature = Signature;
+  lastDisplayList = Payload;
+  Socket.emit('DisplayList', Payload);
 }
 
 function registerDisplayListeners(): void {
@@ -255,6 +323,9 @@ export const Manager = {
     ActiveSocket.on('connect', async () => {
       Logger.success('Connected to server successfully');
       markConnected(IP, Port);
+      // Ask what this server understands before any telemetry goes out. An
+      // older server never answers, and everything stays on full lists.
+      ServerCapabilities.Probe(ActiveSocket);
       ActiveSocket.emit('GetScripts', async (Scripts) => {
         await ScriptManager.SetScripts(Array.isArray(Scripts) ? (Scripts as ClientScript[]) : []);
       });
@@ -271,7 +342,9 @@ export const Manager = {
       await Wait(1000);
       UpdateDeviceList();
       await Wait(1000);
-      UpdateDisplayList();
+      // Forced: a reconnecting client must resend its list even when the
+      // hardware has not changed, because this server may never have seen it.
+      UpdateDisplayList(true);
       await Wait(1000);
       ReportNetworkInterfaces();
       try {
@@ -288,6 +361,11 @@ export const Manager = {
 
     ActiveSocket.on('disconnect', () => {
       Logger.warn('Disconnected from server');
+      // Drop the change-detection baseline: the next connection starts from a
+      // clean slate rather than suppressing an emit the new server never got.
+      lastDisplaySignature = null;
+      lastDisplayList = [];
+      ServerCapabilities.Reset();
       BroadcastManager.emit('MainClientConnectionStatus', {
         State: 'disconnected',
         IP,
@@ -450,8 +528,16 @@ export const Manager = {
     }
 
     sysInfoInterval = setInterval(SysInfo, 20000);
-    deviceListInterval = setInterval(UpdateDeviceList, 20000);
-    displayListInterval = setInterval(UpdateDisplayList, 20000);
+    // USB and display changes both reach the server as events the moment they
+    // happen (libusb hotplug and Electron's screen events respectively), so
+    // these full lists are purely a reconciliation channel: they exist to
+    // correct drift if an event was missed or the server restarted, not to
+    // deliver the news. A minute is frequent enough for that job.
+    deviceListInterval = setInterval(UpdateDeviceList, FULL_LIST_RESYNC_INTERVAL_MS);
+    displayListInterval = setInterval(
+      () => void UpdateDisplayList(true),
+      FULL_LIST_RESYNC_INTERVAL_MS
+    );
 
     // Network Interfaces Reporting (initial snapshot)
     async function ReportNetworkInterfaces(): Promise<void> {

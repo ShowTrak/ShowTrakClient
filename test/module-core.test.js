@@ -420,6 +420,75 @@ test('DisplayMonitor formats displays and registers change listeners', async () 
   void changeFired;
 });
 
+test('DisplayMonitor coalesces a burst of screen events into one callback', async () => {
+  // Electron fires these in bursts: a hotplug is display-added followed by
+  // several display-metrics-changed as the OS settles the layout, and
+  // metrics-changed also fires for changes that do not affect the reported
+  // payload at all (the dock auto-hiding moves every display's workArea).
+  // Each event invalidates the identity cache, and refilling it costs ~250ms on
+  // macOS (system_profiler) and more on Windows (a PowerShell WMI query) — so
+  // an undebounced burst is the most expensive thing this module can do.
+  const handlers = {};
+  const fakeScreen = {
+    getAllDisplays: () => [],
+    getPrimaryDisplay: () => ({ id: 1 }),
+    on: (event, handler) => {
+      handlers[event] = handler;
+    },
+  };
+
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'index.js');
+  const mod = loadWithMocks(modulePath, {
+    '../Logger': { CreateLogger: () => createSilentLogger() },
+    electron: { screen: fakeScreen },
+  });
+
+  const originalSetTimeout = global.setTimeout;
+  const originalClearTimeout = global.clearTimeout;
+  let scheduled = null;
+  let nextId = 0;
+  global.setTimeout = (callback, ms) => {
+    const handle = { id: (nextId += 1), unref() {} };
+    scheduled = { callback, ms, handle };
+    return handle;
+  };
+  global.clearTimeout = (handle) => {
+    if (scheduled && handle && scheduled.handle.id === handle.id) scheduled = null;
+  };
+
+  try {
+    let fired = 0;
+    mod.Manager.OnDisplayChange(() => {
+      fired += 1;
+    });
+    // Seed the identity cache so the invalidation is observable.
+    mod._internal.identityCache = { at: Date.now(), value: [{ Fingerprint: 'edid:X' }] };
+
+    handlers['display-added']();
+    handlers['display-metrics-changed']();
+    handlers['display-metrics-changed']();
+
+    assert.equal(fired, 0, 'nothing is reported until the burst settles');
+    assert.equal(
+      mod._internal.identityCache.value.length,
+      0,
+      'a topology change still invalidates the identity cache immediately'
+    );
+    assert.equal(scheduled.ms, mod._constants.DISPLAY_EVENT_DEBOUNCE_MS);
+
+    scheduled.callback();
+    assert.equal(fired, 1, 'three events produce one report, not three');
+
+    // A later, separate change is still reported promptly.
+    handlers['display-removed']();
+    scheduled.callback();
+    assert.equal(fired, 2);
+  } finally {
+    global.setTimeout = originalSetTimeout;
+    global.clearTimeout = originalClearTimeout;
+  }
+});
+
 test('Logger writes file lines and supports all log levels', async () => {
   const logRoot = tempDir('showtrak-client-logger-');
   const appended = [];

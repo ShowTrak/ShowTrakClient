@@ -133,9 +133,73 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
   }
 });
 
-test('ProcessMonitor emits snapshots, no-change markers, and permission status errors', async () => {
+test('NetworkMonitor resends the full list periodically even when nothing changed', async () => {
   const originalSetInterval = global.setInterval;
   const originalClearInterval = global.clearInterval;
+  const originalNow = Date.now;
+
+  let intervalHandle = null;
+  global.setInterval = (callback, ms) => {
+    intervalHandle = { callback, ms };
+    return intervalHandle;
+  };
+  global.clearInterval = () => {
+    intervalHandle = null;
+  };
+  let now = 5_000_000;
+  Date.now = () => now;
+
+  const emissions = [];
+  const socket = { connected: true, emit: (event, payload) => emissions.push([event, payload]) };
+  const iface = [{ name: 'en0', addresses: [] }];
+
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
+  const { Manager } = loadWithMocks(modulePath, {
+    '../Logger': { CreateLogger: () => createSilentLogger() },
+    '../OS': { Manager: { GetNetworkInterfaces: async () => [null, iface] } },
+  });
+
+  try {
+    await Manager.Start(socket);
+    assert.equal(emissions.length, 1);
+    // os.networkInterfaces() measures at 0.03ms, which is what makes a
+    // one-second poll the cheapest real-time signal the client has.
+    assert.equal(intervalHandle.ms, 1000);
+
+    now += 30_000;
+    intervalHandle.callback();
+    await waitTick();
+    assert.equal(emissions.length, 1, 'an unchanged list is not resent early');
+
+    // A rig whose NICs never change would otherwise never speak again, leaving a
+    // restarted server with nothing.
+    now += 31_000;
+    intervalHandle.callback();
+    await waitTick();
+    assert.equal(emissions.length, 2, 'the full list is resent once the resync is due');
+    assert.equal(emissions[1][0], 'NetworkInterfaces');
+    assert.equal(emissions[1][1][0].name, 'en0');
+
+    await Manager.Stop();
+  } finally {
+    Date.now = originalNow;
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+});
+
+// ProcessMonitor's cadence rules, exercised through a stubbed sampler.
+//
+// The platform samplers live in ./samplers.js and are stubbed here on purpose:
+// what this test is about is WHEN the monitor emits, and that must not depend on
+// which OS the suite happens to run on. Driving it through the real samplers
+// would make the assertions mean something different on each CI platform — the
+// macOS path shells out to lsappinfo, Windows to a PowerShell host, Linux to ps.
+// Sampler behaviour is covered separately in process-monitor-samplers.test.js.
+test('ProcessMonitor emits on change, stays quiet otherwise, and reports errors', async () => {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const originalNow = Date.now;
 
   let intervalHandle = null;
   global.setInterval = (callback) => {
@@ -146,6 +210,11 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     if (handle === intervalHandle) intervalHandle = null;
   };
 
+  // Simulated clock, so the keepalive and resync deadlines can be crossed
+  // deliberately rather than by making the test wait a real minute.
+  let now = 1_000_000;
+  Date.now = () => now;
+
   const statusEvents = [];
   const socketEmits = [];
   const socket = {
@@ -153,22 +222,15 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     emit: (event, payload) => socketEmits.push([event, payload]),
   };
 
-  const responses = [
-    [null, 'Safari\nCode\n'],
-    [null, 'Safari\nCode\n'],
-    [new Error('Not authorized -1743'), ''],
-  ];
+  // What the stubbed sampler returns next. Reassigned by the test to simulate an
+  // application starting, or the collection failing outright.
+  let sample = [null, ['Safari', 'Code']];
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProcessMonitor', 'index.js');
-  const { Manager } = loadWithMocks(modulePath, {
-    child_process: {
-      execFile: (_command, _args, _opts, callback) => {
-        const next = responses.shift() || [null, ''];
-        callback(next[0], next[1]);
-      },
-    },
-    os: {
-      userInfo: () => ({ username: 'tester' }),
+  const { Manager, _constants } = loadWithMocks(modulePath, {
+    './samplers': {
+      collectRunningApplications: async () => sample,
+      disposeSamplers: () => {},
     },
     '../Logger': {
       CreateLogger: () => createSilentLogger(),
@@ -182,18 +244,56 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     },
   });
 
+  // Deadlines are read from the module so this test cannot drift out of step
+  // with the cadence it is asserting.
+  const KEEPALIVE_MS = _constants.KEEPALIVE_INTERVAL_MS;
+  const FULL_RESYNC_MS = _constants.FULL_RESYNC_INTERVAL_MS;
+
+  const tick = async () => {
+    intervalHandle.callback();
+    await waitTick();
+  };
+
   try {
     await Manager.Start(socket);
     assert.equal(socketEmits[0][0], 'RunningApplications');
     assert.equal(socketEmits[0][1].Items.length > 0, true);
 
-    intervalHandle.callback();
-    await waitTick();
-    const noChangesEmit = socketEmits.find((entry) => entry[1] && entry[1].NoChanges === true);
-    assert.equal(Boolean(noChangesEmit), true);
+    // Unchanged, and no deadline due: the monitor says nothing. This is the
+    // whole point of sampling every 3 seconds instead of every 20 — the sample
+    // is cheap, but the traffic would not be.
+    now += 3000;
+    await tick();
+    assert.equal(socketEmits.length, 1, 'an unchanged sample must not emit');
 
-    intervalHandle.callback();
-    await waitTick();
+    // Past the keepalive deadline: report in without item payload, so the
+    // server keeps appending monitoring-history points.
+    now += KEEPALIVE_MS;
+    await tick();
+    assert.equal(socketEmits.length, 2);
+    assert.equal(socketEmits[1][1].NoChanges, true);
+    assert.deepEqual(socketEmits[1][1].Items, []);
+
+    // A change is reported immediately, with the full list.
+    sample = [null, ['Safari', 'Code', 'Notion']];
+    now += 3000;
+    await tick();
+    assert.equal(socketEmits.length, 3);
+    assert.equal(socketEmits[2][1].NoChanges, undefined);
+    assert.equal(socketEmits[2][1].Items.length, 3);
+
+    // Nothing changes for a full minute: the resync sends the whole list again
+    // so a server that missed an emit converges.
+    now += FULL_RESYNC_MS;
+    await tick();
+    assert.equal(socketEmits.length, 4);
+    assert.equal(socketEmits[3][1].NoChanges, undefined);
+    assert.equal(socketEmits[3][1].Items.length, 3, 'a resync carries the full list');
+
+    // A collection failure is always reported, and classified.
+    sample = [new Error('Not authorized -1743'), null];
+    now += 3000;
+    await tick();
     const status = Manager.GetStatus();
     assert.equal(status.State, 'permission_denied');
     assert.equal(
@@ -205,6 +305,7 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
     assert.equal(intervalHandle, null);
     assert.equal(Manager.GetStatus().State, 'unknown');
   } finally {
+    Date.now = originalNow;
     global.setInterval = originalSetInterval;
     global.clearInterval = originalClearInterval;
   }

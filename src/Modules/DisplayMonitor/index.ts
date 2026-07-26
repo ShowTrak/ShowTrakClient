@@ -37,6 +37,17 @@ interface ResolvedDisplayIdentity {
 // monitor is identified promptly.
 const IDENTITY_CACHE_TTL_MS = 30000;
 
+// Electron's screen events arrive in bursts: plugging a monitor in fires
+// display-added followed by several display-metrics-changed as the OS settles
+// the layout, and metrics-changed also fires for things as minor as the dock
+// auto-hiding (it moves every display's workArea). Each one invalidates the
+// identity cache, and the resulting lookup costs ~250ms on macOS
+// (system_profiler) and more on Windows (a PowerShell WMI query) — so an
+// undebounced burst is the most expensive thing this module can do. Coalescing
+// a burst into one callback keeps a genuine hotplug near-instant while making a
+// noisy one cheap.
+const DISPLAY_EVENT_DEBOUNCE_MS = 300;
+
 const Internal = {
   identityCache: { at: 0, value: [] as DisplayIdentity[] },
 
@@ -209,14 +220,21 @@ export const Manager = {
 
   OnDisplayChange(callback: () => void): void {
     if (!screen || typeof screen.on !== 'function') return;
+    let debounceTimer: NodeJS.Timeout | null = null;
     const handler = () => {
       // Topology changed — force a fresh hardware-identity lookup next poll.
       Internal.InvalidateIdentityCache();
-      try {
-        callback();
-      } catch (error) {
-        Logger.error('Display change handler error:', error);
-      }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        try {
+          callback();
+        } catch (error) {
+          Logger.error('Display change handler error:', error);
+        }
+      }, DISPLAY_EVENT_DEBOUNCE_MS);
+      // Never hold the process open waiting to report a display change.
+      if (typeof debounceTimer.unref === 'function') debounceTimer.unref();
     };
     screen.on('display-added', handler);
     screen.on('display-removed', handler);
@@ -225,3 +243,4 @@ export const Manager = {
 };
 
 export const _internal = Internal;
+export const _constants = { DISPLAY_EVENT_DEBOUNCE_MS, IDENTITY_CACHE_TTL_MS };
