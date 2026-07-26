@@ -14,11 +14,13 @@
 import type { ClientProfile, ProcessMonitorStatus } from '../../../types/client';
 import type { AppUpdateStatus, ServerRecoveryStatus } from '../../../types/preload';
 import {
+  ADOPTION_BADGE_CLASSES,
   DEFAULT_SERVER_PORT,
   GetAdoptionBadgeModel,
   GetAppUpdateStatusText,
   GetManualServerModel,
   GetProcessMonitorWarningModel,
+  GetProfileServerModel,
   GetServerRecoveryBannerModel,
 } from './lib/status-models';
 
@@ -31,37 +33,27 @@ let ProcessMonitorStatusState: ProcessMonitorStatus = {
 };
 let ServerRecoveryStatusState: ServerRecoveryStatus = { State: 'idle', Message: '' };
 
+// Paint the profile panel.
+//
+// Text is set with .text() against the static structure in index.html rather than
+// interpolated into .html(): the UUID and endpoint come from a server payload, and
+// building markup out of them made this an injection sink inside a
+// context-isolated window for no benefit.
 function ApplyProfile(NewProfile: ClientProfile | null | undefined): void {
   Profile = NewProfile || {};
-  console.log('Profile set:', NewProfile);
+
   const AdoptionBadge = GetAdoptionBadgeModel(Profile, ServerRecoveryStatusState);
-  RenderManualServer();
-  if (Profile.Adopted && Profile.Server) {
-    $('#PROFILE').html(`
-            <div class="text-center text-white mb-2">
-                <span class="badge ${AdoptionBadge.className}">${AdoptionBadge.label}</span>
-            </div>
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-ghost">${Profile.Server.IP || 'Unknown IP'}</span>
-                <span class="badge bg-ghost">${Profile.Server.Port || 'Unknown Port'}</span>
-            </div>
-            <div class="text-center text-white">
-                <span class="badge bg-ghost">${Profile.UUID}</span>
-            </div>
-        `);
-  } else {
-    $('#PROFILE').html(`
-            <div class="text-center text-white mb-2">
-          <span class="badge ${AdoptionBadge.className}">${AdoptionBadge.label}</span>
-            </div>
-            <div class="text-center text-white mb-2">
-                <span class="badge bg-ghost">No Server Set</span>
-            </div>
-            <div class="text-center text-white">
-                <span class="badge bg-ghost">${Profile.UUID}</span>
-            </div>
-        `);
-  }
+  $('#PROFILE_ADOPTION_BADGE')
+    .removeClass(ADOPTION_BADGE_CLASSES)
+    .addClass(AdoptionBadge.className)
+    .text(AdoptionBadge.label);
+
+  const ServerModel = GetProfileServerModel(Profile);
+  $('#PROFILE_SERVER_IP').toggleClass('d-none', !ServerModel.hasServer).text(ServerModel.ip);
+  $('#PROFILE_SERVER_PORT').toggleClass('d-none', !ServerModel.hasServer).text(ServerModel.port);
+  $('#PROFILE_SERVER_NONE').toggleClass('d-none', ServerModel.hasServer);
+  $('#PROFILE_UUID').text(ServerModel.uuid);
+
   RenderManualServer();
 }
 
@@ -142,6 +134,14 @@ async function Main(): Promise<void> {
     ServerRecoveryStatusState = status || { State: 'idle', Message: '' };
     RenderServerRecoveryStatus();
     ApplyProfile(Profile);
+  });
+  // Pushed by the main process on every ProfileUpdated broadcast — adoption,
+  // unadoption, a recovered endpoint, a manual server change. Registered here with
+  // the other subscriptions rather than at module top level, so all renderer wiring
+  // happens in one place.
+  window.API.SetProfile(async (NewProfile) => {
+    Version = await window.API.GetVersion();
+    ApplyProfile(NewProfile);
   });
 
   const [LoadedErr, LoadedSnapshot] = (await window.API.Loaded()) || [];
@@ -237,31 +237,33 @@ async function Main(): Promise<void> {
         console.error('Failed to clear manual server:', error);
       }
     });
+
+  $('#BTN_MINIMIZE')
+    .off('click')
+    .on('click', async () => {
+      window.API.Minimise();
+    });
+
+  $('#BTN_SHUTDOWN')
+    .off('click')
+    .on('click', async () => {
+      window.API.Shutdown();
+    });
+
+  $('#BTN_FACTORY_RESET')
+    .off('click')
+    .on('click', async () => {
+      const confirmed = window.confirm(
+        'Factory reset ShowTrak Client? This clears adoption status and local client configuration.'
+      );
+      if (!confirmed) return;
+
+      try {
+        await window.API.ResetClientFactoryDefaults();
+      } catch (error) {
+        console.error('Factory reset failed:', error);
+      }
+    });
 }
+
 Main();
-
-window.API.SetProfile(async (NewProfile) => {
-  Version = await window.API.GetVersion();
-  ApplyProfile(NewProfile);
-});
-
-$('#BTN_MINIMIZE').on('click', async () => {
-  window.API.Minimise();
-});
-
-$('#BTN_SHUTDOWN').on('click', async () => {
-  window.API.Shutdown();
-});
-
-$('#BTN_FACTORY_RESET').on('click', async () => {
-  const confirmed = window.confirm(
-    'Factory reset ShowTrak Client? This clears adoption status and local client configuration.'
-  );
-  if (!confirmed) return;
-
-  try {
-    await window.API.ResetClientFactoryDefaults();
-  } catch (error) {
-    console.error('Factory reset failed:', error);
-  }
-});

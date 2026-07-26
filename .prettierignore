@@ -6,3 +6,11 @@ shared/
 build/
 logs/
 **/*.lock
+
+# Vendored browser libraries (jQuery, Bootstrap), shipped byte-for-byte as
+# published upstream. ESLint has always ignored these; Prettier was still
+# checking them, which only stayed quiet because 3.6 happened to agree with
+# their upstream formatting. Prettier 3.9 does not, and reformatting ~40k lines
+# of vendor code to satisfy a linter would be pure churn — and would make the
+# shipped copies diverge from upstream for no reason.
+src/UI/vendors/

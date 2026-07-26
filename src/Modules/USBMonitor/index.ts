@@ -10,13 +10,48 @@ const WebUSBInstance = new WebUSB({
   allowAllDevices: true,
 });
 
-/** A device as handed to us by the `usb` package's WebUSB implementation. */
-type WebUSBDevice = Awaited<ReturnType<typeof WebUSBInstance.getDevices>>[number];
+/**
+ * The subset of a USB device this module reads.
+ *
+ * Structural rather than derived from the `usb` package's own types, because the
+ * package hands us TWO different device shapes: `getDevices()` returns its own
+ * device class, while the connect/disconnect events carry a WebUSB `USBDevice`.
+ * Which is which changed between usb 2.x and 3.x — 2.x returns WebUSB devices from
+ * both, 3.x returns its native `UsbDevice` from getDevices() — and typing against
+ * either concrete class breaks on the other.
+ *
+ * All five fields exist on both, so reading them structurally is stable across that
+ * churn and states exactly what this module depends on.
+ *
+ * ---
+ * DO NOT upgrade to usb 3.x without re-testing hotplug. 3.0.1 emits the 'connect'
+ * event TWICE for a single physical plug-in (measured: both versions watching the
+ * same replug of a Brother PT-P950NW, v2.18.0 gave 1 connect / 1 disconnect, v3.0.1
+ * gave 2 connects / 1 disconnect, both duplicates in the same tick). MainClient
+ * forwards every connect to the server as 'USBDeviceConnected', which reaches
+ * AlertsManager.HandleUSBDeviceConnected — and there is no idempotency key, cooldown
+ * or throttle anywhere in that path, so one plug-in raises two alerts and fires the
+ * rule's actions twice.
+ *
+ * usb 3.x is otherwise attractive: it drops libusb for nusb (IOKit on macOS,
+ * cfgmgr32 on Windows) and reads manufacturer/product/serial WITHOUT opening the
+ * device, which should surface Windows class-driver devices that libusb cannot name
+ * today. The five-field payload is byte-identical on macOS. Retry when the duplicate
+ * is fixed upstream, or with a dedupe here — and verify on a real replug, because
+ * `node --test` cannot see this.
+ */
+interface ReadableUSBDevice {
+  readonly vendorId: number;
+  readonly productId: number;
+  readonly manufacturerName?: string | null;
+  readonly productName?: string | null;
+  readonly serialNumber?: string | null;
+}
 
 type USBDeviceListener = (device: USBDevicePayload) => void;
 
 const Internal = {
-  FormatDevice(Device: WebUSBDevice): USBDevicePayload {
+  FormatDevice(Device: ReadableUSBDevice): USBDevicePayload {
     return {
       VendorID: Device.vendorId,
       ProductID: Device.productId,

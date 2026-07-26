@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
 
 // Exercises the server-recovery state machine in src/main.ts.
 //
@@ -170,12 +176,7 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
     },
     'electron-squirrel-startup': false,
     './Modules/Logger': {
-      CreateLogger: () => ({
-        log: () => {},
-        warn: () => {},
-        error: () => {},
-        success: () => {},
-      }),
+      CreateLogger: () => createSilentLogger(),
     },
     './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
     './Modules/Broadcast': { Manager: broadcast },
@@ -193,7 +194,7 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
           currentProfile = { ...currentProfile, Server: { ...currentProfile.Server, IP, Port } };
           profileUpdates.push([IP, Port]);
         },
-        ResetAdopption: async () => {
+        ResetAdoption: async () => {
           currentProfile = { UUID: currentProfile.UUID, Adopted: false };
         },
       },
@@ -241,7 +242,7 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
     },
     './Modules/ProcessMonitor': { Manager: { GetStatus: () => ({ State: 'ok' }) } },
     './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
-    './Modules/Utils': { Wait: async () => {} },
+    './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
     'node:dns': { promises: { lookup: async () => ({ address: '10.0.0.99' }) } },
   });
 

@@ -50,7 +50,7 @@ const Internal = {
     ) {
       return Internal.identityCache.value;
     }
-    let identities: DisplayIdentity[] = [];
+    let identities: DisplayIdentity[];
     try {
       identities = await Internal.GetDisplayIdentities();
     } catch (error) {

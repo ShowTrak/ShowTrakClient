@@ -13,6 +13,7 @@ import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
+import { ReadIdentityToken } from '../Utils';
 
 const Logger = CreateLogger('ProfileManager');
 
@@ -60,8 +61,8 @@ function ReadManualServerFromDisk(): ManualServer | null {
   try {
     const Stored = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
     return Stored ? NormalizeManualServer(Stored.Host, Stored.Port) : null;
-  } catch (Error) {
-    Logger.error('Failed to read ManualServer.json', Error);
+  } catch (Err) {
+    Logger.error('Failed to read ManualServer.json', Err);
     return null;
   }
 }
@@ -73,8 +74,8 @@ function WriteManualServerToDisk(ManualServer: ManualServer): void {
 function DeleteManualServerFromDisk(): void {
   try {
     if (fs.existsSync(ManualServerPath)) fs.unlinkSync(ManualServerPath);
-  } catch (Error) {
-    Logger.error('Failed to remove ManualServer.json', Error);
+  } catch (Err) {
+    Logger.error('Failed to remove ManualServer.json', Err);
   }
 }
 
@@ -217,10 +218,10 @@ export const Manager = {
     let Profile: ClientProfile | null;
     try {
       Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'));
-    } catch (Error) {
+    } catch (Err) {
       // A truncated/corrupt profile used to throw straight out of GetProfile and
       // take the app down with it.
-      Logger.error('Profile.json is unreadable; resetting it.', Error);
+      Logger.error('Profile.json is unreadable; resetting it.', Err);
       Profile = null;
     }
 
@@ -257,10 +258,7 @@ export const Manager = {
     Options: { ServerIdentity?: string | null } = {}
   ): Promise<void> {
     const Profile = await Manager.GetProfile();
-    const ServerIdentity =
-      Options && typeof Options.ServerIdentity === 'string' && Options.ServerIdentity.trim()
-        ? Options.ServerIdentity.trim()
-        : null;
+    const ServerIdentity = ReadIdentityToken(Options) || null;
 
     const NewProfile: ClientProfile = {
       UUID: Profile.UUID,
@@ -310,7 +308,7 @@ export const Manager = {
     BroadcastManager.emit('ProfileUpdated', AttachManualServer(Written));
   },
 
-  async ResetAdopption(): Promise<void> {
+  async ResetAdoption(): Promise<void> {
     const Profile = await Manager.GetProfile();
     const ExistingServerIdentity =
       Profile &&

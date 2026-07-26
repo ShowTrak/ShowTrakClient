@@ -16,7 +16,26 @@
       <div class="d-flex justify-content-center">
         <img id="LOGO" src="../images/ui-icon.png" alt="ShowTrak Logo" />
       </div>
-      <div id="PROFILE"></div>
+      <!--
+        Static structure, painted by ApplyProfile() in js/app/main.ts via .text().
+        This used to be assembled with jQuery .html() and template interpolation of
+        Profile.UUID / Server.IP / Server.Port — values that arrive in a server
+        payload — which made it an injection sink inside a context-isolated window
+        for no benefit.
+      -->
+      <div id="PROFILE">
+        <div class="text-center text-white mb-2">
+          <span id="PROFILE_ADOPTION_BADGE" class="badge bg-primary">Pending Adoption</span>
+        </div>
+        <div class="text-center text-white mb-2">
+          <span id="PROFILE_SERVER_IP" class="badge bg-ghost d-none"></span>
+          <span id="PROFILE_SERVER_PORT" class="badge bg-ghost d-none"></span>
+          <span id="PROFILE_SERVER_NONE" class="badge bg-ghost">No Server Set</span>
+        </div>
+        <div class="text-center text-white">
+          <span id="PROFILE_UUID" class="badge bg-ghost"></span>
+        </div>
+      </div>
       <div id="PROCESS_MONITOR_WARNING" class="alert alert-warning d-none mb-0" role="alert"></div>
       <div id="SERVER_RECOVERY_STATUS" class="alert alert-success mb-0" role="status"></div>
 

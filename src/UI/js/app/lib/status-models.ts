@@ -20,6 +20,15 @@ export interface BadgeModel {
 }
 
 /**
+ * Every className GetAdoptionBadgeModel can return.
+ *
+ * The painter has to clear the previous state class before adding the new one, and
+ * hard-coding that list at the call site would silently rot the moment a new
+ * severity is added here — leaving two colours stacked on one badge.
+ */
+export const ADOPTION_BADGE_CLASSES = 'bg-primary bg-success bg-danger';
+
+/**
  * Read a recovery status into (normalised state, trimmed message).
  *
  * Shared by the badge and the banner so the two can never disagree about
@@ -55,6 +64,41 @@ export function GetAdoptionBadgeModel(
   return isConnected
     ? { label: 'Adopted, Connected', className: 'bg-success' }
     : { label: 'Adopted, Disconnected', className: 'bg-danger' };
+}
+
+export interface ProfileServerModel {
+  /** Whether an adopted server endpoint should be shown at all. */
+  hasServer: boolean;
+  /** Display text for the endpoint badges; empty when hasServer is false. */
+  ip: string;
+  port: string;
+  uuid: string;
+}
+
+/**
+ * The server endpoint + UUID badges beneath the adoption badge.
+ *
+ * "Adopted" and "has an endpoint to show" are not the same thing: a profile can
+ * be marked adopted with a missing or half-written Server block (a torn write, or
+ * a reset mid-flight). Showing a blank endpoint badge in that case reads as
+ * "connected to nothing" rather than "no server set", so both conditions are
+ * required here. The per-field 'Unknown IP'/'Unknown Port' fallbacks are what the
+ * operator sees when the endpoint is present but incomplete.
+ */
+export function GetProfileServerModel(
+  Profile: ClientProfile | null | undefined
+): ProfileServerModel {
+  const Server = Profile && Profile.Adopted && Profile.Server ? Profile.Server : null;
+  const uuid = Profile && Profile.UUID ? String(Profile.UUID) : '';
+  if (!Server) {
+    return { hasServer: false, ip: '', port: '', uuid };
+  }
+  return {
+    hasServer: true,
+    ip: Server.IP ? String(Server.IP) : 'Unknown IP',
+    port: Server.Port ? String(Server.Port) : 'Unknown Port',
+    uuid,
+  };
 }
 
 export interface RecoveryBannerModel {

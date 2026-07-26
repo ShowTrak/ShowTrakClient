@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 const fingerprintPath = path.join(
   __dirname,
@@ -214,7 +214,7 @@ function loadResolver(mocks) {
     path.join(__dirname, '..', 'dist', 'Modules', 'HardwareIdentity', 'index.js'),
     {
       '../Logger': {
-        CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+        CreateLogger: () => createSilentLogger(),
       },
       ...mocks,
     }

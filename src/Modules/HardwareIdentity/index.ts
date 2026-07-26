@@ -82,8 +82,8 @@ async function ResolveGuarded(TimeoutMs: number = RESOLVE_TIMEOUT_MS): Promise<R
     });
 
     Identity = await Promise.race([ResolveOnce(), Timeout]);
-  } catch (Error) {
-    Logger.error('Hardware identity resolution failed unexpectedly', Error);
+  } catch (Err) {
+    Logger.error('Hardware identity resolution failed unexpectedly', Err);
     Identity = FallbackIdentity();
   } finally {
     if (Timer) clearTimeout(Timer);

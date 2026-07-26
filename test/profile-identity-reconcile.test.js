@@ -11,7 +11,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 const profileManagerPath = path.join(
   __dirname,
@@ -31,7 +31,7 @@ function tempDir(prefix) {
 function loadProfileManager(profileRoot, identity) {
   return loadWithMocks(profileManagerPath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: { Initialize: () => {}, GetProfileDirectory: () => profileRoot },
@@ -244,7 +244,7 @@ test('firmware becoming unreadable keeps the cached UUID rather than dropping to
   assert.equal(profile.UUID, 'uuid-source');
 });
 
-test('Identity survives Adopt, UpdateServerEndpoint and ResetAdopption', async () => {
+test('Identity survives Adopt, UpdateServerEndpoint and ResetAdoption', async () => {
   const profileRoot = tempDir('showtrak-identity-persist-');
   const { Manager } = loadProfileManager(profileRoot, SOURCE_MACHINE);
 
@@ -256,7 +256,7 @@ test('Identity survives Adopt, UpdateServerEndpoint and ResetAdopption', async (
   await Manager.UpdateServerEndpoint('127.0.0.2', 9000);
   assert.equal(readProfile(profileRoot).Identity.Witness, 'firmware-source');
 
-  await Manager.ResetAdopption();
+  await Manager.ResetAdoption();
   const afterReset = readProfile(profileRoot);
   assert.equal(afterReset.Identity.Witness, 'firmware-source');
   assert.equal(afterReset.UUID, 'uuid-source');

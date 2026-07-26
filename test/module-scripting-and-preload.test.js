@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { loadWithMocks, withMocks } = require('./test-helpers');
+const { loadWithMocks, withMocks, createSilentLogger } = require('./test-helpers');
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -54,7 +54,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': {
       Manager: {
@@ -161,7 +161,7 @@ test('ScriptManager ConsoleFilter surfaces only matching lines as the status tai
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': { Manager: { emit: () => {} } },
     '../AppData': {
@@ -235,7 +235,7 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: {
@@ -298,7 +298,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: {

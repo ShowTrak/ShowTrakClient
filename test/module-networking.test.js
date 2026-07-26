@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 function waitTick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -101,7 +101,7 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, error: () => {}, debug: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../OS': {
       Manager: {
@@ -171,7 +171,7 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
       userInfo: () => ({ username: 'tester' }),
     },
     '../Logger': {
-      CreateLogger: () => ({ warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': {
       Manager: {
@@ -250,7 +250,7 @@ test('Bonjour manager discovers service and can stop/terminate', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     bonjour: bonjourFactory,
     os: {
@@ -337,7 +337,7 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     bonjour: bonjourFactory,
     os: {
@@ -360,13 +360,12 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
       }
     }
 
-    assert.equal(fallbackFinds.length, 2);
+    // One external IPv4 interface (lo0 is internal and skipped) x one service type.
+    // This was 2 until support for servers at or below 3.1.5 — which advertised a
+    // capitalised service type — was dropped.
+    assert.equal(fallbackFinds.length, 1);
     assert.equal(
-      fallbackFinds.some((entry) => entry.type === 'showtrak'),
-      true
-    );
-    assert.equal(
-      fallbackFinds.some((entry) => entry.type === 'ShowTrak'),
+      fallbackFinds.every((entry) => entry.type === 'showtrak'),
       true
     );
 

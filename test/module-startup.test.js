@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 test('Startup manager enables autostart when packaged and disabled', async () => {
   const autoLaunchCalls = [];
@@ -22,7 +22,7 @@ test('Startup manager enables autostart when packaged and disabled', async () =>
       };
     },
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Config': {
       Config: {
@@ -61,7 +61,7 @@ test('Startup manager skips autostart while unpackaged', async () => {
       };
     },
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Config': {
       Config: {
@@ -95,7 +95,7 @@ test('Startup manager leaves an existing autostart entry alone', async () => {
       };
     },
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Config': {
       Config: {

@@ -2,7 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
 
 function createSocket() {
   const handlers = new Map();
@@ -74,7 +80,7 @@ test('MainClient handles command events and reconnect lifecycle branches', async
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': {
       Manager: {
@@ -161,7 +167,7 @@ test('MainClient handles command events and reconnect lifecycle branches', async
         },
       },
     },
-    '../Utils': { Wait: async () => {} },
+    '../Utils': { ...REAL_UTILS, Wait: async () => {} },
     '../ProfileManager': {
       Manager: {
         GetProfile: async () => ({
@@ -271,7 +277,7 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': { Manager: { emit: () => {} } },
     'socket.io-client': {
@@ -343,7 +349,7 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
     },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
-    '../Utils': { Wait: async () => {} },
+    '../Utils': { ...REAL_UTILS, Wait: async () => {} },
   });
 
   try {

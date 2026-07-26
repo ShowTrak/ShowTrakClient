@@ -3,7 +3,7 @@ const { mock } = test;
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Exercises the normalisation and change-detection in
 // src/Modules/NetworkMonitor/index.ts.
@@ -23,16 +23,7 @@ const { loadWithMocks } = require('./test-helpers');
 const MODULE_PATH = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
 
 const loggerStub = {
-  CreateLogger: () => ({
-    log: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    success: () => {},
-    database: () => {},
-    databaseError: () => {},
-  }),
+  CreateLogger: () => createSilentLogger(),
 };
 
 /** Load NetworkMonitor with a scripted OS and a recording socket. */

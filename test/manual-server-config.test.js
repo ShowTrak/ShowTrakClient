@@ -3,7 +3,13 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
 
 function waitForTick(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -94,7 +100,7 @@ test('manual server bypasses Bonjour for adoption across VLANs', async () => {
     electron: baseElectronMocks(fakeWindow),
     'electron-squirrel-startup': false,
     './Modules/Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
     './Modules/Broadcast': { Manager: broadcast },
@@ -109,7 +115,7 @@ test('manual server bypasses Bonjour for adoption across VLANs', async () => {
       Manager: {
         GetProfile: async () => currentProfile,
         UpdateServerEndpoint: async () => {},
-        ResetAdopption: async () => {},
+        ResetAdoption: async () => {},
       },
     },
     './Modules/Bonjour': {
@@ -134,7 +140,7 @@ test('manual server bypasses Bonjour for adoption across VLANs', async () => {
     './Modules/ProcessMonitor': { Manager: { GetStatus: () => ({ State: 'ok' }) } },
     './Modules/ScriptManager': { Manager: { DeleteScripts: async () => {} } },
     './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
-    './Modules/Utils': { Wait: async () => {} },
+    './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
     'node:dns': { promises: { lookup: async () => ({ address: '10.50.0.5' }) } },
   });
 
@@ -169,7 +175,7 @@ test('manual server recovery reconnects to the configured endpoint without Bonjo
     electron: baseElectronMocks(fakeWindow),
     'electron-squirrel-startup': false,
     './Modules/Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
     './Modules/Broadcast': { Manager: broadcast },
@@ -186,7 +192,7 @@ test('manual server recovery reconnects to the configured endpoint without Bonjo
         UpdateServerEndpoint: async (IP, Port) => {
           endpointUpdates.push([IP, Port]);
         },
-        ResetAdopption: async () => {},
+        ResetAdoption: async () => {},
       },
     },
     './Modules/Bonjour': {
@@ -220,7 +226,7 @@ test('manual server recovery reconnects to the configured endpoint without Bonjo
     './Modules/ProcessMonitor': { Manager: { GetStatus: () => ({ State: 'ok' }) } },
     './Modules/ScriptManager': { Manager: { DeleteScripts: async () => {} } },
     './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
-    './Modules/Utils': { Wait: async () => {} },
+    './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
     'node:dns': { promises: { lookup: async () => ({ address: '10.50.0.5' }) } },
   });
 

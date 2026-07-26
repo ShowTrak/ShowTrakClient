@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 const path = require('node:path');
+const { createSilentLogger } = require('./test-helpers');
 
 function loadWithMocks(modulePath, mocks) {
   const resolved = require.resolve(modulePath);
@@ -66,7 +67,7 @@ test('AdoptionClient reinit/terminate clears adoption heartbeat intervals', asyn
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'AdoptionClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     'socket.io-client': {
       io: () => {

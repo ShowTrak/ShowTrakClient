@@ -51,3 +51,15 @@ jobs:
       # pretest runs the full build, so this also covers `npm run build`.
       - name: Test
         run: npm test
+
+      # Reported, never enforced. There is deliberately no coverage threshold
+      # here — the number is published so a drop is visible in the PR, not used
+      # as a gate, so `continue-on-error` keeps a c8 hiccup from failing a run
+      # whose tests already passed above.
+      #
+      # --ignore-scripts skips pretest:coverage, which would otherwise `clean`
+      # and rebuild everything a second time; the Test step above already built
+      # dist/ and dist-test/ in this same job.
+      - name: Coverage (reported, non-gating)
+        run: npm run test:coverage --ignore-scripts
+        continue-on-error: true

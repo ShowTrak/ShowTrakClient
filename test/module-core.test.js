@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { loadWithMocks, withMocks } = require('./test-helpers');
+const { loadWithMocks, withMocks, createSilentLogger } = require('./test-helpers');
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -112,7 +112,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProfileManager', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: {
@@ -170,7 +170,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const adoptedManual = await Manager.GetProfile();
   assert.deepEqual(adoptedManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
 
-  await Manager.ResetAdopption();
+  await Manager.ResetAdoption();
   const resetWithManual = await Manager.GetProfile();
   assert.equal(resetWithManual.Adopted, false);
   assert.deepEqual(resetWithManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
@@ -185,7 +185,7 @@ test('ProfileManager creates and updates profile states', async () => {
   assert.equal(await Manager.GetManualServer(), null);
   assert.equal(fs.existsSync(manualServerPath), false);
 
-  await Manager.ResetAdopption();
+  await Manager.ResetAdoption();
   const reset = await Manager.GetProfile();
   assert.equal(reset.Adopted, false);
 
@@ -225,7 +225,7 @@ test('ProfileManager migrates legacy manual server storage from Profile.json', a
 
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: {
@@ -302,7 +302,7 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'USBMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     usb: {
       WebUSB: FakeWebUSB,
@@ -370,7 +370,7 @@ test('DisplayMonitor formats displays and registers change listeners', async () 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'index.js');
   const mod = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     electron: { screen: fakeScreen },
   });

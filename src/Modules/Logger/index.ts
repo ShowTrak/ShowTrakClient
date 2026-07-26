@@ -35,7 +35,7 @@ const Types = {
 type LogType = keyof typeof Types;
 
 function Tag(Text: string, Type: LogType): string {
-  return `[${colors.cyan('ShowTrakServer')}] [${colors.cyan(Pad(Text))}] [${Object.prototype.hasOwnProperty.call(Types, Type) ? Types[Type] : Types['Info']}]`;
+  return `[${colors.cyan('ShowTrakClient')}] [${colors.cyan(Pad(Text))}] [${Object.prototype.hasOwnProperty.call(Types, Type) ? Types[Type] : Types['Info']}]`;
 }
 
 // --- Log level gating -------------------------------------------------------
