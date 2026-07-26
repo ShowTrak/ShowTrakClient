@@ -20,7 +20,7 @@
     "pretest": "npm run build && npm run build:test-renderer",
     "test": "node --test",
     "pretest:coverage": "npm run build && npm run build:test-renderer",
-    "test:coverage": "c8 --all --include=dist/Modules/**/*.js --include=dist/*.js --include=dist-test/UI/js/app/**/*.js --reporter=text --reporter=text-summary --reporter=lcov node --test",
+    "test:coverage": "c8 --all --include=dist/Modules/**/*.js --include=dist/*.js --include=dist/main/**/*.js --include=dist-test/UI/js/app/**/*.js --reporter=text --reporter=text-summary --reporter=lcov node --test",
     "lint:fix": "eslint . --fix",
     "format": "prettier \"**/*.{js,mjs,cjs,ts,css,md,json,html}\" --write",
     "format:check": "prettier \"**/*.{js,mjs,cjs,ts,css,md,json,html}\" --check",
