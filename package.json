@@ -1,6 +1,7 @@
 {
   "name": "showtrak-client",
   "productName": "ShowTrak Client",
+  "private": true,
   "version": "3.16.1",
   "description": "Simple, Free LAN PC Monitoring for arcade style environments.",
   "main": "dist/main.js",
@@ -15,7 +16,7 @@
     "make": "electron-forge make",
     "prepackage": "npm run build",
     "package": "electron-forge package",
-    "publish": "electron-forge publish",
+    "publish": "node scripts/publish-release.js",
     "lint": "eslint",
     "pretest": "npm run build && npm run build:test-renderer",
     "test": "node --test",
