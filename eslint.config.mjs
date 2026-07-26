@@ -6,6 +6,26 @@ import tseslint from 'typescript-eslint';
 
 import { defineConfig } from 'eslint/config';
 
+// A catch binding named after a built-in error constructor shadows that
+// constructor for the whole block, so a `throw new Error(...)` inside the
+// handler fails in a way that reads as impossible. The tree had seven of these
+// (all named `Error`); none constructed an error, so none had actually broken
+// yet. `no-shadow-restricted-names` does not cover this — it only guards
+// undefined/NaN/Infinity/eval/arguments — and `no-shadow` with
+// builtinGlobals:true is far too broad here, so this is targeted at the exact
+// shape. `Err` is the convention used everywhere else in the codebase.
+const NoShadowedErrorCatch = {
+  'no-restricted-syntax': [
+    'error',
+    {
+      selector:
+        'CatchClause > Identifier[name=/^(Error|TypeError|RangeError|SyntaxError|EvalError|ReferenceError|URIError|AggregateError)$/]',
+      message:
+        'Do not name a catch binding after a built-in error constructor — it shadows the global for the whole block. Use `Err`.',
+    },
+  ],
+};
+
 export default defineConfig([
   {
     ignores: [
@@ -42,6 +62,7 @@ export default defineConfig([
           caughtErrorsIgnorePattern: '^_[^_].*$|^_$',
         },
       ],
+      ...NoShadowedErrorCatch,
     },
   },
   {
@@ -69,6 +90,7 @@ export default defineConfig([
       // the package.json version read in src/Modules/Config, which sits outside
       // rootDir and cannot be a plain import.
       '@typescript-eslint/no-require-imports': 'off',
+      ...NoShadowedErrorCatch,
     },
   },
   {

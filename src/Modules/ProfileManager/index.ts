@@ -60,8 +60,8 @@ function ReadManualServerFromDisk(): ManualServer | null {
   try {
     const Stored = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
     return Stored ? NormalizeManualServer(Stored.Host, Stored.Port) : null;
-  } catch (Error) {
-    Logger.error('Failed to read ManualServer.json', Error);
+  } catch (Err) {
+    Logger.error('Failed to read ManualServer.json', Err);
     return null;
   }
 }
@@ -73,8 +73,8 @@ function WriteManualServerToDisk(ManualServer: ManualServer): void {
 function DeleteManualServerFromDisk(): void {
   try {
     if (fs.existsSync(ManualServerPath)) fs.unlinkSync(ManualServerPath);
-  } catch (Error) {
-    Logger.error('Failed to remove ManualServer.json', Error);
+  } catch (Err) {
+    Logger.error('Failed to remove ManualServer.json', Err);
   }
 }
 
@@ -217,10 +217,10 @@ export const Manager = {
     let Profile: ClientProfile | null;
     try {
       Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'));
-    } catch (Error) {
+    } catch (Err) {
       // A truncated/corrupt profile used to throw straight out of GetProfile and
       // take the app down with it.
-      Logger.error('Profile.json is unreadable; resetting it.', Error);
+      Logger.error('Profile.json is unreadable; resetting it.', Err);
       Profile = null;
     }
 

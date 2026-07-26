@@ -429,12 +429,12 @@ function scheduleRecoveryRetry(waitMs: number, Info: ServerConnectFailedInfo) {
     if (!pendingInfo) return;
     try {
       await recoverFromPrimaryFailure(pendingInfo);
-    } catch (Error) {
+    } catch (Err) {
       recoveryMetrics.LastFailureAt = Date.now();
-      recoveryMetrics.LastFailureReason = (Error as { message?: unknown })?.message
-        ? String((Error as { message?: unknown }).message)
+      recoveryMetrics.LastFailureReason = (Err as { message?: unknown })?.message
+        ? String((Err as { message?: unknown }).message)
         : 'unknown_error';
-      Logger.error('Scheduled recovery flow failed', Error);
+      Logger.error('Scheduled recovery flow failed', Err);
       sendRecoveryStatus({
         State: 'RecoveryFailed',
         Message: 'Unable to recover server connection automatically.',
@@ -1003,12 +1003,12 @@ BroadcastManager.on('ServerConnectFailed', async (Info) => {
 
   try {
     await recoverFromPrimaryFailure(Info);
-  } catch (Error) {
+  } catch (Err) {
     recoveryMetrics.LastFailureAt = Date.now();
-    recoveryMetrics.LastFailureReason = (Error as { message?: unknown })?.message
-      ? String((Error as { message?: unknown }).message)
+    recoveryMetrics.LastFailureReason = (Err as { message?: unknown })?.message
+      ? String((Err as { message?: unknown }).message)
       : 'unknown_error';
-    Logger.error('Recovery flow failed', Error);
+    Logger.error('Recovery flow failed', Err);
     sendRecoveryStatus({
       State: 'RecoveryFailed',
       Message: 'Unable to recover server connection automatically.',
@@ -1599,9 +1599,9 @@ async function discoverSingleServer(
           Port: Server.port,
           ServerIdentity: ServerIdentity || null,
         });
-      } catch (Error) {
+      } catch (Err) {
         clearTimeout(timer);
-        Logger.error('Failed to process Bonjour discovery record', Error);
+        Logger.error('Failed to process Bonjour discovery record', Err);
         await finish(null);
       }
     });
