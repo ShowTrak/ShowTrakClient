@@ -1,7 +1,7 @@
 {
   "name": "showtrak-client",
   "productName": "ShowTrak Client",
-  "version": "3.14.0",
+  "version": "3.15.0",
   "description": "Simple, Free LAN PC Monitoring for arcade style environments.",
   "main": "dist/main.js",
   "scripts": {
