@@ -13,6 +13,54 @@ updates:
           - minor
           - patch
 
+    # Majors held back for a specific, recorded reason. Minor and patch updates
+    # to each of these still open as normal — only the major is suppressed, so
+    # security fixes on the current line are unaffected.
+    #
+    # Every entry here names the condition that lifts it. Delete the entry when
+    # that condition is met; don't let these ossify into a permanent pin.
+    ignore:
+      # 3.0.1 emits the 'connect' event TWICE for one physical plug-in (measured
+      # against 2.18.0 on the same replug). AlertsManager has no idempotency key
+      # or cooldown, so one plug-in would raise two alerts. Note the test suite
+      # CANNOT catch this — `node --test` cannot plug in a device.
+      # Lift when the duplicate is fixed upstream, or once USBMonitor dedupes.
+      # Full rationale in src/Modules/USBMonitor/index.ts.
+      - dependency-name: usb
+        update-types:
+          - version-update:semver-major
+
+      # @electron-forge/plugin-fuses@7.11.2 (latest stable) declares
+      # `peer @electron/fuses: ^1.0.0`, so 2.x fails `npm ci` with ERESOLVE. The
+      # range only widens to ^2.0.0 in the forge 8.0.0-alpha line, and the
+      # packaging toolchain does not go on a prerelease for this.
+      # Lift when @electron-forge/plugin-fuses 8.0.0 ships stable.
+      - dependency-name: '@electron/fuses'
+        update-types:
+          - version-update:semver-major
+
+      # typescript-eslint@8.65.0 caps TypeScript at `<6.1.0`, so 7.x fails
+      # `npm ci`. Beyond the peer range, TS 7 is the native port — a new compiler
+      # implementation that wants adopting deliberately, with the diagnostics
+      # diff reviewed, and in step with the Server since both share the
+      # @showtrak/protocol submodule and would otherwise drift on the wire types.
+      # Lift when typescript-eslint supports TS 7 and the Server moves too.
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
+
+      # uuid is ESM-only from 12 onwards (11.1.0 still ships a CJS build). The
+      # main process compiles to CommonJS, so `require('uuid')` no longer emits
+      # — TS1479. `module: nodenext` does not help on TS 5.7.
+      # The real fix is to DROP this dependency rather than bump it: v4() is
+      # crypto.randomUUID(), and v5() is ~15 lines of SHA-1 namespace UUID. That
+      # needs a fixed-vector equivalence test first, because v5 derives the
+      # stable client UUID and a one-byte difference re-adopts the whole fleet.
+      # Lift when uuid is removed, or if the main process ever becomes ESM.
+      - dependency-name: uuid
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
