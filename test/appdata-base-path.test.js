@@ -62,7 +62,9 @@ function loadAppData({ platform, appData, homedir = '/home/tester', unsetHome = 
   }
 }
 
-test('macOS resolves under the home directory, not a concatenated env var', () => {
+test('macOS resolves under Application Support, not Library/Preferences', () => {
+  // ~/Library/Preferences is reserved by Apple for defaults/plist storage; app data
+  // belongs in Application Support, which is where the Server has always put its own.
   const { Manager } = loadAppData({
     platform: 'darwin',
     appData: undefined,
@@ -70,7 +72,7 @@ test('macOS resolves under the home directory, not a concatenated env var', () =
   });
   assert.equal(
     Manager.GetProfileDirectory(),
-    path.join('/Users/tester', 'Library', 'Preferences', 'ShowTrakClient', 'Profile')
+    path.join('/Users/tester', 'Library', 'Application Support', 'ShowTrakClient', 'Profile')
   );
 });
 

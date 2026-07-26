@@ -18,6 +18,24 @@ function normalizeRequest(request) {
   return request.replace(/^(?:\.\.?\/)+/, '');
 }
 
+// Whether two normalised specifiers name the same module.
+//
+// Stripping the relative prefix is not enough on its own, because how a module is
+// reached depends on where the requiring file sits: main.ts says './Modules/Logger'
+// while ProfileManager says '../Logger' for the very same file. Those normalise to
+// 'Modules/Logger' and 'Logger', so an equality check silently stopped intercepting
+// — four test files believed they had stubbed the Logger while the real one loaded
+// and wrote to the developer's home directory.
+//
+// One is treated as matching the other when it is a segment-boundary suffix, so
+// 'Logger' matches 'Modules/Logger' but 'Broadcast' never matches 'Bonjour'.
+function specifiersMatch(mockKey, request) {
+  if (mockKey === request) return true;
+  const longer = mockKey.length >= request.length ? mockKey : request;
+  const shorter = mockKey.length >= request.length ? request : mockKey;
+  return longer.endsWith(`/${shorter}`);
+}
+
 function withMocks(mocks = {}, run) {
   // Precompute the normalised lookup once per withMocks call. Exact matches take
   // precedence so a test can still target one specific spelling if it needs to.
@@ -37,6 +55,11 @@ function withMocks(mocks = {}, run) {
     const normalizedRequest = normalizeRequest(request);
     if (normalized.has(normalizedRequest)) {
       return normalized.get(normalizedRequest);
+    }
+    // Fall back to a segment-boundary suffix match, so a mock registered with one
+    // caller's relative depth still intercepts another's.
+    for (const [key, value] of normalized) {
+      if (specifiersMatch(key, normalizedRequest)) return value;
     }
     return originalLoad.call(this, request, parent, isMain);
   };

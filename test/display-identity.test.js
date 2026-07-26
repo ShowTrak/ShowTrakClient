@@ -13,9 +13,17 @@ const displayMonitorPath = path.join(
   'index.js'
 );
 
-const { parseEdid, fingerprintFromEdid } = require(edidPath);
-const { matchDisplaysToIdentities } = require(identityPath);
-const { _internal: DisplayMonitorInternal } = require(displayMonitorPath);
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+
+// Loaded through the mock loader with the Logger stubbed. Requiring these directly
+// pulled in the REAL Logger, which resolves its log directory and creates it at
+// import time — so simply running this file created a ShowTrakClient directory in
+// the developer's home.
+const LOGGER_MOCK = { '../Logger': { CreateLogger: () => createSilentLogger() } };
+
+const { parseEdid, fingerprintFromEdid } = loadWithMocks(edidPath, LOGGER_MOCK);
+const { matchDisplaysToIdentities } = loadWithMocks(identityPath, LOGGER_MOCK);
+const { _internal: DisplayMonitorInternal } = loadWithMocks(displayMonitorPath, LOGGER_MOCK);
 
 // Build a valid 128-byte EDID base block for tests.
 function buildEdid({ manufacturerBytes, productCode, serial, nameText, serialText }) {
