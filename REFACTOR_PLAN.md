@@ -19,6 +19,79 @@ by this plan:
 
 ---
 
+## Status — all work packages closed 2026-07-26
+
+Everything below was implemented on `refactor/tech-debt-2026-07`. Baseline moved
+from 334 tests / 78.6% statements to **411 tests / 84.6% statements**, with lint,
+format, typecheck and a 32-check Electron API probe green throughout.
+
+| WP  | Outcome                                                                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1a  | **Done.** Path traversal closed; verified exploitable before the fix.                                                                       |
+| 1b  | **Done.** Uptime no longer wraps at 24h.                                                                                                    |
+| 1c  | **Done.** 7 shadowed `catch (Error)` renamed + lint guard added.                                                                            |
+| 1e  | **Done.** Safe-mode comment corrected.                                                                                                      |
+| 1d  | **Partly done.** The real bug (concatenated `HOME` → literal `undefined/…`) is fixed. The macOS directory move is **deferred** — see below. |
+| 2a  | **Done.** 4 unused deps removed (11 packages), safe minor/patch batch taken.                                                                |
+| 2b  | **Done.** Electron 37.2.2 → 43.2.0.                                                                                                         |
+| 2c  | **Partly done.** ESLint 10 taken. `usb` 3.x and `@electron/fuses` 2.x **held back** — see below.                                            |
+| 3   | **Done.** main.ts 1,652 → 160 lines across 13 modules.                                                                                      |
+| 3b  | **Done.** 46 cases on the newly-reachable modules.                                                                                          |
+| 4   | **Mostly done.** Quality pass complete; the `bonjour-service` swap **deferred** — see below.                                                |
+| 5   | **Done.** `ReadIdentityToken` + `ErrorMessage` extracted.                                                                                   |
+| 6   | **Done.** Profile panel painted with `.text()`; selector-existence test added.                                                              |
+| 7   | **Done.** Husky hook made real, dependabot added, non-gating coverage step.                                                                 |
+| 8   | **Done.** Log identity, adoption spelling, stray `console.log`s.                                                                            |
+
+### Three items deliberately left open
+
+Each needs something this environment could not provide. They are not oversights.
+
+**1. `usb` 2.18 → 3.x.** Not a version bump but a napi-rs rewrite: `getDevices()`
+returns node-usb's `UsbDevice` rather than a WebUSB `USBDevice`, `open()`/`close()`
+became async, `bus` changed from number to string. All five fields USBMonitor reads
+do still exist on the new type, so it is probably fine — but this machine has zero
+accessible USB devices, so end-to-end device reporting could not be verified, and
+the failure mode is silent (devices reported with null names). **Needs: a run on
+hardware with real USB devices attached.**
+
+**2. `@electron/fuses` 1.8 → 2.x.** The six `FuseV1Options` this app sets are
+byte-identical in 2.x and `forge.config.js` loads fine, but
+`@electron-forge/plugin-fuses@7.11.2` (latest) declares `@electron/fuses: ^1.0.0`,
+so 2.x leaves an invalid peer dependency and `npm ls` exits non-zero. **Needs:
+electron-forge to widen its peer range.**
+
+**3. `bonjour` → `bonjour-service`.** The quality problems in the Bonjour module
+(42 silent catches, triplicated teardown) are fixed. The library swap is not: the
+existing tests mock the `bonjour` package itself, so replacing it means rewriting
+those mocks, and the suite would then verify new code against new mocks rather
+than against real mDNS behaviour. **Needs: a real multi-NIC LAN with a live
+ShowTrak server to validate against.**
+
+**Also open: moving the macOS state directory to `Application Support`.** Blocked
+on a constraint the original plan missed — `AppData` is imported by `Logger`, and
+`Logger` documents that it avoids an `electron` dependency so it stays loadable
+outside an Electron main process (the whole test suite relies on this), which rules
+out `app.getPath('userData')`. `getPath('userData')` also resolves to `…/Electron`
+unpackaged. And every macOS client in the field has its `Profile.json` in the
+current location, so relocating without a migration makes it forget its identity
+and re-adopt. **Needs: a decision about fleets in service, plus a migration.**
+
+### Still needing a human on real hardware
+
+The Electron 43 jump is verified by 411 tests and a 32-check API probe
+(`npm run probe:electron`), but the probe deliberately does not boot `dist/main.js`
+— that would touch the real profile and advertise the machine for adoption on the
+LAN. Not yet exercised: **tray behaviour on Windows**, and the **Squirrel and
+electron-updater install-and-restart paths**, which need a signed packaged build.
+
+---
+
+## Original plan
+
+The analysis below is kept as the record of what was found and why each change was
+made. Line numbers refer to the pre-refactor tree.
+
 ## Priority summary
 
 | WP  | Title                                     | Size | Risk of not doing it                             |
