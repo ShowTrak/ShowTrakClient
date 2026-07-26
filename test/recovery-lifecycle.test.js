@@ -201,6 +201,8 @@ test('main process recovery re-discovers server and updates saved endpoint', asy
       },
     },
     './Modules/Utils': {
+      // Real Utils spread in (it is pure); only Wait is overridden to skip delays.
+      ...require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js')),
       Wait: async () => {},
     },
     'node:dns': {

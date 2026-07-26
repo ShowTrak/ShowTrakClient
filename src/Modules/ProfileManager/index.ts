@@ -13,6 +13,7 @@ import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
+import { ReadIdentityToken } from '../Utils';
 
 const Logger = CreateLogger('ProfileManager');
 
@@ -257,10 +258,7 @@ export const Manager = {
     Options: { ServerIdentity?: string | null } = {}
   ): Promise<void> {
     const Profile = await Manager.GetProfile();
-    const ServerIdentity =
-      Options && typeof Options.ServerIdentity === 'string' && Options.ServerIdentity.trim()
-        ? Options.ServerIdentity.trim()
-        : null;
+    const ServerIdentity = ReadIdentityToken(Options) || null;
 
     const NewProfile: ClientProfile = {
       UUID: Profile.UUID,

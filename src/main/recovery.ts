@@ -30,7 +30,7 @@ import { CreateLogger } from '../Modules/Logger';
 import { Manager as BroadcastManager } from '../Modules/Broadcast';
 import { Manager as MainClientManager } from '../Modules/MainClient';
 import { Manager as ProfileManager } from '../Modules/ProfileManager';
-import { Wait } from '../Modules/Utils';
+import { ErrorMessage, ReadIdentityToken, Wait } from '../Modules/Utils';
 import { discoverSingleServer, type ServerCandidate } from './discovery';
 import { RECOVERY_COOLDOWN_MS, recoveryMetrics, sendRecoveryStatus } from './recovery-status';
 import { isServiceReinitializing, restartService } from './service-lifecycle';
@@ -70,9 +70,7 @@ function clearRecoveryRetryTimer(): void {
 // Record why an attempt failed, for the status panel.
 function recordRecoveryFailure(Err: unknown): void {
   recoveryMetrics.LastFailureAt = Date.now();
-  recoveryMetrics.LastFailureReason = (Err as { message?: unknown })?.message
-    ? String((Err as { message?: unknown }).message)
-    : 'unknown_error';
+  recoveryMetrics.LastFailureReason = ErrorMessage(Err, 'unknown_error');
 }
 
 function scheduleRecoveryRetry(waitMs: number, Info: ServerConnectFailedInfo): void {
@@ -168,10 +166,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
     });
 
     const Profile = await ProfileManager.GetProfile();
-    const ExpectedServerIdentity =
-      Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
-        ? Profile.Server.ServerIdentity.trim()
-        : '';
+    const ExpectedServerIdentity = ReadIdentityToken(Profile && Profile.Server);
 
     // When an operator-defined endpoint is configured, recover against it
     // directly instead of relying on mDNS discovery (which cannot cross VLANs).

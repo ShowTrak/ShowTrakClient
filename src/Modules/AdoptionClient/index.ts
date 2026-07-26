@@ -6,6 +6,7 @@ import { Config } from '../Config';
 import { Manager as OSManager } from '../OS';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as ProfileManager } from '../ProfileManager';
+import { ReadIdentityToken } from '../Utils';
 
 const Logger = CreateLogger('AdoptionClient');
 
@@ -47,10 +48,7 @@ export const Manager = {
     Options: { ServerIdentity?: string | null } = {}
   ): Promise<void> {
     const BootTime = Date.now();
-    const ServerIdentity =
-      Options && typeof Options.ServerIdentity === 'string' && Options.ServerIdentity.trim()
-        ? Options.ServerIdentity.trim()
-        : null;
+    const ServerIdentity = ReadIdentityToken(Options) || null;
     clearHeartbeatInterval();
 
     if (Socket) Socket.disconnect();

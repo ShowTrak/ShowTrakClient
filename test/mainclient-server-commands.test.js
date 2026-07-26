@@ -4,6 +4,12 @@ const path = require('node:path');
 
 const { loadWithMocks } = require('./test-helpers');
 
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
+
 // Exercises the server-command handlers in src/Modules/MainClient/index.ts that
 // the existing lifecycle and command tests do not reach.
 //
@@ -112,7 +118,7 @@ async function boot({ socket = createSocket(), execute } = {}) {
       },
       '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
       '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
-      '../Utils': { Wait: async () => {} },
+      '../Utils': { ...REAL_UTILS, Wait: async () => {} },
       '../ProfileManager': {
         Manager: { GetProfile: async () => ({ Server: { ServerIdentity: 'token' } }) },
       },

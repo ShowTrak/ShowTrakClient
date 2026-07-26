@@ -5,6 +5,12 @@ const { EventEmitter } = require('node:events');
 
 const { loadWithMocks } = require('./test-helpers');
 
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
+
 function waitForTick(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -138,7 +144,7 @@ test('tray menu exposes run script submenu and refreshes on ScriptsUpdated', asy
       },
     },
     './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
-    './Modules/Utils': { Wait: async () => {} },
+    './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
   });
 
   await waitForTick(50);

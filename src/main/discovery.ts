@@ -8,6 +8,7 @@ import { promises as dns } from 'node:dns';
 
 import { CreateLogger } from '../Modules/Logger';
 import { Manager as BonjourManager } from '../Modules/Bonjour';
+import { ReadIdentityToken } from '../Modules/Utils';
 import type { DiscoveredService } from '../Modules/Bonjour';
 
 const Logger = CreateLogger('Discovery');
@@ -20,12 +21,7 @@ interface ServerCandidate {
 }
 
 function extractServerIdentityToken(Service: DiscoveredService | null | undefined): string {
-  const txt = Service && Service.txt ? Service.txt : null;
-  if (!txt || typeof txt !== 'object') return '';
-  if (typeof txt.ServerIdentity === 'string' && txt.ServerIdentity.trim()) {
-    return txt.ServerIdentity.trim();
-  }
-  return '';
+  return ReadIdentityToken(Service && Service.txt ? Service.txt : null);
 }
 
 // Resolve the first Bonjour record that looks like a usable ShowTrak server.
@@ -39,10 +35,7 @@ async function discoverSingleServer(
 ): Promise<ServerCandidate | null> {
   return new Promise((resolve) => {
     let settled = false;
-    const ExpectedServerIdentity =
-      Options && typeof Options.ExpectedServerIdentity === 'string'
-        ? Options.ExpectedServerIdentity.trim()
-        : '';
+    const ExpectedServerIdentity = ReadIdentityToken(Options, 'ExpectedServerIdentity');
 
     const finish = async (Result: ServerCandidate | null) => {
       if (settled) return;

@@ -3,6 +3,12 @@ const assert = require('node:assert/strict');
 const Module = require('node:module');
 const path = require('node:path');
 
+// Utils is pure and side-effect free, so the real module is spread in and only
+// Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
+// adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
+// module under test an `undefined` function.
+const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
+
 function loadWithMocks(modulePath, mocks) {
   const resolved = require.resolve(modulePath);
   delete require.cache[resolved];
@@ -150,7 +156,7 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
         },
       },
     },
-    '../Utils': { Wait: async () => {} },
+    '../Utils': { ...REAL_UTILS, Wait: async () => {} },
   });
 
   try {

@@ -16,6 +16,7 @@ import { CreateLogger } from '../Modules/Logger';
 import { Manager as BroadcastManager } from '../Modules/Broadcast';
 import { Manager as IdentifyOverlay } from '../Modules/IdentifyOverlay';
 import { Manager as ProfileManager } from '../Modules/ProfileManager';
+import { ReadIdentityToken } from '../Modules/Utils';
 import { PushToRenderer } from './renderer-bus';
 import { refreshTrayContextMenu } from './tray';
 import { RunLaunchActions } from './launch-actions';
@@ -41,12 +42,8 @@ const Logger = CreateLogger('BroadcastBridge');
 //  3. Our own server rejected us — genuinely unadopted; reset to pending.
 async function onServerAdoptionRejected(Info: ServerAdoptionRejectedInfo): Promise<void> {
   const Profile = await ProfileManager.GetProfile();
-  const ExpectedServerIdentity =
-    Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
-      ? Profile.Server.ServerIdentity.trim()
-      : '';
-  const RejectedByIdentity =
-    Info && typeof Info.ServerIdentity === 'string' ? Info.ServerIdentity.trim() : '';
+  const ExpectedServerIdentity = ReadIdentityToken(Profile && Profile.Server);
+  const RejectedByIdentity = ReadIdentityToken(Info);
 
   if (
     ExpectedServerIdentity &&

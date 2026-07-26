@@ -13,7 +13,7 @@ import { Manager as NetworkMonitor } from '../NetworkMonitor';
 import { Manager as ProcessMonitor } from '../ProcessMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
-import { Wait } from '../Utils';
+import { ErrorMessage, ReadIdentityToken, Wait } from '../Utils';
 
 const Logger = CreateLogger('MainClient');
 
@@ -71,10 +71,7 @@ function markConnected(IP: string, Port: number): void {
 
 function markConnectionError(IP: string, Port: number, Error: unknown): void {
   consecutiveConnectErrors += 1;
-  const message =
-    Error && (Error as Error).message
-      ? String((Error as Error).message)
-      : 'Unknown connection error';
+  const message = ErrorMessage(Error, 'Unknown connection error');
   BroadcastManager.emit('MainClientConnectionStatus', {
     State: 'connect_error',
     IP,
@@ -229,10 +226,7 @@ export const Manager = {
     connectFailureReported = false;
 
     const Profile = await ProfileManager.GetProfile();
-    const ExpectedServerIdentity =
-      Profile && Profile.Server && typeof Profile.Server.ServerIdentity === 'string'
-        ? Profile.Server.ServerIdentity.trim()
-        : '';
+    const ExpectedServerIdentity = ReadIdentityToken(Profile && Profile.Server);
 
     if (Socket) {
       Socket.disconnect();
@@ -390,8 +384,7 @@ export const Manager = {
         IP,
         Port,
         Reason: Info && Info.Reason ? String(Info.Reason) : null,
-        ServerIdentity:
-          Info && typeof Info.ServerIdentity === 'string' ? Info.ServerIdentity.trim() : null,
+        ServerIdentity: ReadIdentityToken(Info) || null,
       });
     });
 
