@@ -109,7 +109,7 @@ test('manual server bypasses Bonjour for adoption across VLANs', async () => {
       Manager: {
         GetProfile: async () => currentProfile,
         UpdateServerEndpoint: async () => {},
-        ResetAdopption: async () => {},
+        ResetAdoption: async () => {},
       },
     },
     './Modules/Bonjour': {
@@ -186,7 +186,7 @@ test('manual server recovery reconnects to the configured endpoint without Bonjo
         UpdateServerEndpoint: async (IP, Port) => {
           endpointUpdates.push([IP, Port]);
         },
-        ResetAdopption: async () => {},
+        ResetAdoption: async () => {},
       },
     },
     './Modules/Bonjour': {

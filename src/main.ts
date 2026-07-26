@@ -602,8 +602,11 @@ function initSquirrelUpdater() {
 // only fires once, but the flag makes the intent explicit and future-proof).
 let LaunchActionsHandled = false;
 
-// Absence-of-file sentinel to disable ALL launch actions — the boot-loop escape
-// hatch for the headless case where the countdown overlay isn't reliably seen.
+// Presence-of-file sentinel: dropping a file named `SafeMode` into the profile
+// directory disables ALL launch actions. This is the boot-loop escape hatch for
+// the headless case where the countdown overlay isn't reliably seen — a tech can
+// create the file over the network (or from a recovery shell) and stop a
+// misbehaving run-on-launch script without uninstalling the client.
 function IsSafeModeEnabled() {
   try {
     return fs.existsSync(path.join(AppDataManager.GetProfileDirectory(), 'SafeMode'));
@@ -1052,7 +1055,7 @@ BroadcastManager.on('ServerAdoptionRejected', async (Info) => {
   }
 
   Logger.warn('Server rejected client adoption; resetting profile to pending adoption state.');
-  await ProfileManager.ResetAdopption();
+  await ProfileManager.ResetAdoption();
   await restartService('server-unadopt');
 });
 

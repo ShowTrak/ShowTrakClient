@@ -7,7 +7,7 @@ import { Manager as OSManager } from '../OS';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as ProfileManager } from '../ProfileManager';
 
-const Logger = CreateLogger('AdopptionClient');
+const Logger = CreateLogger('AdoptionClient');
 
 let Socket: ShowTrakSocket | null = null;
 let adoptionHeartbeatInterval: NodeJS.Timeout | null = null;

@@ -310,7 +310,7 @@ export const Manager = {
     BroadcastManager.emit('ProfileUpdated', AttachManualServer(Written));
   },
 
-  async ResetAdopption(): Promise<void> {
+  async ResetAdoption(): Promise<void> {
     const Profile = await Manager.GetProfile();
     const ExistingServerIdentity =
       Profile &&

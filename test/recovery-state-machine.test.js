@@ -193,7 +193,7 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
           currentProfile = { ...currentProfile, Server: { ...currentProfile.Server, IP, Port } };
           profileUpdates.push([IP, Port]);
         },
-        ResetAdopption: async () => {
+        ResetAdoption: async () => {
           currentProfile = { UUID: currentProfile.UUID, Adopted: false };
         },
       },

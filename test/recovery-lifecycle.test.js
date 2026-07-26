@@ -136,7 +136,7 @@ test('main process recovery re-discovers server and updates saved endpoint', asy
           };
           profileUpdates.push([IP, Port]);
         },
-        ResetAdopption: async () => {
+        ResetAdoption: async () => {
           currentProfile = { UUID: currentProfile.UUID, Adopted: false };
         },
       },

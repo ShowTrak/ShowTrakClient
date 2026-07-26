@@ -170,7 +170,7 @@ test('ProfileManager creates and updates profile states', async () => {
   const adoptedManual = await Manager.GetProfile();
   assert.deepEqual(adoptedManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
 
-  await Manager.ResetAdopption();
+  await Manager.ResetAdoption();
   const resetWithManual = await Manager.GetProfile();
   assert.equal(resetWithManual.Adopted, false);
   assert.deepEqual(resetWithManual.ManualServer, { Host: '10.20.30.40', Port: 3000 });
@@ -185,7 +185,7 @@ test('ProfileManager creates and updates profile states', async () => {
   assert.equal(await Manager.GetManualServer(), null);
   assert.equal(fs.existsSync(manualServerPath), false);
 
-  await Manager.ResetAdopption();
+  await Manager.ResetAdoption();
   const reset = await Manager.GetProfile();
   assert.equal(reset.Adopted, false);
 

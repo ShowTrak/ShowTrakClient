@@ -396,7 +396,7 @@ export const Manager = {
     });
 
     ActiveSocket.on('ExecuteScript', async (RequestID, ScriptID) => {
-      console.log(`Received ExecuteScript for RequestID: ${RequestID}, ScriptID: ${ScriptID}`);
+      Logger.log(`Received ExecuteScript for RequestID: ${RequestID}, ScriptID: ${ScriptID}`);
       // Relay per-stage progress back to the server so the operator's execution
       // panel can fill a progress bar / show a running spinner for this client.
       const ReportProgress = (Progress = 0, StatusText = '') => {
