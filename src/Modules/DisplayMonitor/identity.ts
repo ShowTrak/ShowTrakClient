@@ -79,7 +79,7 @@ async function getLinuxIdentities(): Promise<DisplayIdentity[]> {
     if (!entry.includes('-')) continue; // skip cardN (no connector)
     const dir = path.join(base, entry);
 
-    let status = '';
+    let status: string;
     try {
       status = fs.readFileSync(path.join(dir, 'status'), 'utf8').trim();
     } catch (_error) {
@@ -87,7 +87,7 @@ async function getLinuxIdentities(): Promise<DisplayIdentity[]> {
     }
     if (status && status !== 'connected') continue;
 
-    let edidBuffer: Buffer | null = null;
+    let edidBuffer: Buffer | null;
     try {
       edidBuffer = fs.readFileSync(path.join(dir, 'edid'));
     } catch (_error) {
