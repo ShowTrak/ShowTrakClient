@@ -17,7 +17,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 function tempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -28,7 +28,7 @@ const MODULE_PATH = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager
 function loadScriptManager({ scriptsDir, profileDir, checksum = 'different-sum' }) {
   return loadWithMocks(MODULE_PATH, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: {

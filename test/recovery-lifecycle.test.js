@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 function waitForTick(ms = 0) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,12 +99,7 @@ test('main process recovery re-discovers server and updates saved endpoint', asy
     },
     'electron-squirrel-startup': false,
     './Modules/Logger': {
-      CreateLogger: () => ({
-        log: () => {},
-        warn: () => {},
-        error: () => {},
-        success: () => {},
-      }),
+      CreateLogger: () => createSilentLogger(),
     },
     './Modules/Startup': {
       Manager: { EnsureEnabled: async () => {} },

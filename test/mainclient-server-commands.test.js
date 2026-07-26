@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Utils is pure and side-effect free, so the real module is spread in and only
 // Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
@@ -29,16 +29,7 @@ const IP = '10.0.0.10';
 const PORT = 3000;
 
 const loggerStub = {
-  CreateLogger: () => ({
-    log: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    success: () => {},
-    database: () => {},
-    databaseError: () => {},
-  }),
+  CreateLogger: () => createSilentLogger(),
 };
 
 /** A fake Socket.IO socket that records emits and replays registered handlers. */

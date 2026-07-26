@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 function waitTick() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -101,7 +101,7 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, error: () => {}, debug: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../OS': {
       Manager: {
@@ -171,7 +171,7 @@ test('ProcessMonitor emits snapshots, no-change markers, and permission status e
       userInfo: () => ({ username: 'tester' }),
     },
     '../Logger': {
-      CreateLogger: () => ({ warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': {
       Manager: {
@@ -250,7 +250,7 @@ test('Bonjour manager discovers service and can stop/terminate', async () => {
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     bonjour: bonjourFactory,
     os: {
@@ -337,7 +337,7 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     bonjour: bonjourFactory,
     os: {

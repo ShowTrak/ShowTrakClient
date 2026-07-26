@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Utils is pure and side-effect free, so the real module is spread in and only
 // Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
@@ -107,7 +107,7 @@ test('tray menu exposes run script submenu and refreshes on ScriptsUpdated', asy
     },
     'electron-squirrel-startup': false,
     './Modules/Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
     './Modules/Broadcast': { Manager: broadcast },

@@ -108,8 +108,45 @@ function findBuildRoot(entry) {
   return match ? match[1] : null;
 }
 
+// A Logger stub covering the whole logger surface — and anything added to it later.
+//
+// Stubs were previously written inline as partial object literals, so a module
+// that started calling a method the stub omitted failed with
+// "Logger.debug is not a function" from inside the code under test. That is a
+// test-harness gap masquerading as a product bug, and it is not the stub author's
+// job to track the Logger's surface. Unknown properties resolve to a no-op.
+//
+// Pass `overrides` to capture a level, e.g.
+// `createSilentLogger({ error: (...a) => errors.push(a) })`.
+function createSilentLogger(overrides = {}) {
+  const noop = () => {};
+  const base = {
+    log: noop,
+    info: noop,
+    warn: noop,
+    error: noop,
+    debug: noop,
+    trace: noop,
+    success: noop,
+    silent: noop,
+    database: noop,
+    databaseError: noop,
+    ...overrides,
+  };
+  return new Proxy(base, {
+    get(target, prop) {
+      if (prop in target) return target[prop];
+      return typeof prop === 'string' ? noop : undefined;
+    },
+    has() {
+      return true;
+    },
+  });
+}
+
 module.exports = {
   withMocks,
   loadWithMocks,
   normalizeRequest,
+  createSilentLogger,
 };

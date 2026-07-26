@@ -11,7 +11,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 const profileManagerPath = path.join(
   __dirname,
@@ -31,7 +31,7 @@ function tempDir(prefix) {
 function loadProfileManager(profileRoot, identity) {
   return loadWithMocks(profileManagerPath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../AppData': {
       Manager: { Initialize: () => {}, GetProfileDirectory: () => profileRoot },

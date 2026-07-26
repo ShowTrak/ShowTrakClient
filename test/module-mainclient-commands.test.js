@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Utils is pure and side-effect free, so the real module is spread in and only
 // Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
@@ -80,7 +80,7 @@ test('MainClient handles command events and reconnect lifecycle branches', async
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': {
       Manager: {
@@ -277,7 +277,7 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': { Manager: { emit: () => {} } },
     'socket.io-client': {

@@ -3,7 +3,7 @@ const { mock } = test;
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Exercises src/Modules/Bonjour/index.ts — how an unadopted or recovering client
 // finds its server.
@@ -30,16 +30,7 @@ const { loadWithMocks } = require('./test-helpers');
 const BONJOUR_PATH = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
 
 const loggerStub = {
-  CreateLogger: () => ({
-    log: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    debug: () => {},
-    success: () => {},
-    database: () => {},
-    databaseError: () => {},
-  }),
+  CreateLogger: () => createSilentLogger(),
 };
 
 /** A discovered ShowTrak server as bonjour hands it over. */

@@ -8,6 +8,7 @@ const path = require('node:path');
 // adding a helper to it — ReadIdentityToken, ErrorMessage — silently handed the
 // module under test an `undefined` function.
 const REAL_UTILS = require(path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js'));
+const { createSilentLogger } = require('./test-helpers');
 
 function loadWithMocks(modulePath, mocks) {
   const resolved = require.resolve(modulePath);
@@ -85,7 +86,7 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
     '../Logger': {
-      CreateLogger: () => ({ log: () => {}, warn: () => {}, error: () => {}, success: () => {} }),
+      CreateLogger: () => createSilentLogger(),
     },
     '../Broadcast': { Manager: { emit: () => {} } },
     'socket.io-client': {
