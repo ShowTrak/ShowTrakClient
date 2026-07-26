@@ -316,22 +316,30 @@ test('nothing found within 10s launches a browse bound to each external IPv4 NIC
   await advance(10_000);
 
   const Bound = Bonjour.instances.slice(1).map((I) => I.opts.interface);
-  // Two service-type spellings are tried per interface.
-  assert.deepEqual(Bound, ['10.0.0.50', '10.0.0.50', '192.168.1.50', '192.168.1.50']);
+  // Exactly one browse per external interface. It was two until support for servers
+  // at or below 3.1.5 (which advertised a capitalised service type) was dropped.
+  assert.deepEqual(Bound, ['10.0.0.50', '192.168.1.50']);
   assert.ok(!Bound.includes('127.0.0.1'), 'bound to the loopback interface');
   assert.ok(!Bound.includes('fe80::1'), 'bound to an IPv6 address');
 });
 
-test('the fallback tries the legacy capitalised service type too', async () => {
-  // Older servers advertised "ShowTrak"; mDNS type matching is case-sensitive in
-  // some stacks, so a mixed-version rig needs both.
+test('the fallback browses only the lowercase service type', async () => {
+  // The Server advertised 'ShowTrak' up to v3.1.5 (2025-08-17) and lowercase after,
+  // so the fallback used to try both spellings — doubling the multicast sockets it
+  // opened per NIC. Support for servers at or below 3.1.5 is dropped.
+  //
+  // Asserting the exact SET (not just "contains showtrak") is the point: it is what
+  // fails if a second spelling creeps back in and quietly doubles the socket count
+  // again.
   const { Manager, Bonjour } = load();
   Manager.OnFind(() => {});
   await advance(10_000);
 
-  const Types = Bonjour.browsers.slice(1).map((B) => B.query.type);
-  assert.deepEqual(new Set(Types), new Set(['showtrak', 'ShowTrak']));
-  for (const Browser of Bonjour.browsers.slice(1)) {
+  const Fallbacks = Bonjour.browsers.slice(1);
+  const Types = Fallbacks.map((B) => B.query.type);
+  assert.deepEqual(new Set(Types), new Set(['showtrak']));
+  assert.equal(Types.length, Fallbacks.length, 'no duplicate browses per interface');
+  for (const Browser of Fallbacks) {
     assert.equal(Browser.query.protocol, 'tcp');
   }
 });
@@ -409,7 +417,8 @@ test('an interface that cannot be bound does not stop the others being tried', a
 
   Mod.Manager.OnFind(() => {});
   await assert.doesNotReject(() => advance(10_000));
-  assert.equal(Real.instances.length, 4, 'the remaining interfaces were abandoned');
+  // 1 default instance + 1 for the surviving interface; the first NIC's bind threw.
+  assert.equal(Real.instances.length, 2, 'the remaining interfaces were abandoned');
 });
 
 test('an unreadable interface list does not throw out of the timer', async () => {
@@ -495,7 +504,8 @@ test('a diagnostic browse that cannot start does not stop the fallback launching
   Mod.Manager.OnFind(() => {});
   await advance(10_000);
 
-  assert.equal(Bonjour.instances.length, 5, 'the fallback was abandoned when diagnostics threw');
+  // 1 default instance + 1 per external interface.
+  assert.equal(Bonjour.instances.length, 3, 'the fallback was abandoned when diagnostics threw');
 });
 
 // --- Stop and Terminate -----------------------------------------------------

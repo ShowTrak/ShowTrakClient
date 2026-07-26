@@ -42,12 +42,16 @@ const SERVICE_TYPE = 'showtrak';
 /**
  * Service types the per-interface fallback tries.
  *
- * The capitalised spelling is for servers predating the lowercase rename. Dropping
- * it would halve the sockets the fallback opens on a multi-NIC machine, but only
- * once no server old enough to advertise it can still be in the field — that is a
- * deployment decision, not a code cleanup.
+ * One entry, deliberately. The Server advertised `type: 'ShowTrak'` from v3.0.0
+ * (2025-07-13) and switched to lowercase in v3.1.5 (2025-08-17), so the fallback
+ * used to try both spellings — which doubled the Bonjour instances it opened, i.e.
+ * `interfaces x 2` multicast sockets on a multi-NIC show machine. Support for
+ * servers at or below 3.1.5 is dropped, so the capitalised spelling is gone.
+ *
+ * Kept as an array rather than collapsed into the loop: if a future rename needs a
+ * transition window, this is the one place to widen.
  */
-const FALLBACK_SERVICE_TYPES = [SERVICE_TYPE, 'ShowTrak'];
+const FALLBACK_SERVICE_TYPES = [SERVICE_TYPE];
 
 /** How long the default browse gets before the per-interface fallback starts. */
 const DISCOVERY_TIMEOUT_MS = 10000;
