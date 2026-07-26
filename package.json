@@ -85,5 +85,9 @@
     "socket.io-client": "^4.8.3",
     "usb": "^2.18.0",
     "uuid": "^11.1.0"
+  },
+  "overridesComment": "node-addon-api: usb's binding.gyp compiles its N-API bindings with a hard '-std=c++14'. node-addon-api 8.8.0 added unguarded std::string_view overloads, so its headers now require C++17 and the Linux (g++) rebuild of usb fails with \"'std::string_view' has not been declared\". Apple clang and MSVC tolerate it, so only the ubuntu make job breaks. 8.7.0 is the last release that compiles under C++14 - lift this pin once usb raises its own C++ standard.",
+  "overrides": {
+    "node-addon-api": "8.7.0"
   }
 }
