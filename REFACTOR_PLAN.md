@@ -43,17 +43,39 @@ format, typecheck and a 32-check Electron API probe green throughout.
 | 7   | **Done.** Husky hook made real, dependabot added, non-gating coverage step.                                    |
 | 8   | **Done.** Log identity, adoption spelling, stray `console.log`s.                                               |
 
-### Three items deliberately left open
+### Items left open
 
-Each needs something this environment could not provide. They are not oversights.
+Each needs something this environment could not provide, or was tried and turned
+down. They are not oversights.
 
-**1. `usb` 2.18 → 3.x.** Not a version bump but a napi-rs rewrite: `getDevices()`
-returns node-usb's `UsbDevice` rather than a WebUSB `USBDevice`, `open()`/`close()`
-became async, `bus` changed from number to string. All five fields USBMonitor reads
-do still exist on the new type, so it is probably fine — but this machine has zero
-accessible USB devices, so end-to-end device reporting could not be verified, and
-the failure mode is silent (devices reported with null names). **Needs: a run on
-hardware with real USB devices attached.**
+**1. `usb` 2.18 → 3.x — TESTED AND REJECTED.** Not deferred any more; measured on
+real hardware and turned down.
+
+Both versions watched the same physical replug of a USB printer concurrently, each
+driving the real USBMonitor, with a device-list poll as an independent control that
+the unplug happened:
+
+| version | disconnect | connect |
+| ------- | ---------- | ------- |
+| 2.18.0  | 1          | 1       |
+| 3.0.1   | 1          | **2**   |
+
+3.0.1 double-fires `connect` for one plug-in. MainClient forwards every connect to
+the server as `USBDeviceConnected`, which reaches
+`AlertsManager.HandleUSBDeviceConnected` — and that path has no idempotency key,
+cooldown or throttle, so one plug-in would raise two alerts and fire the rule's
+actions twice.
+
+Worth revisiting when that is fixed upstream, because the rest is genuinely better:
+v3 drops libusb for nusb (IOKit on macOS, cfgmgr32 on Windows) and read the serial
+with `opened=false`, where v2 needed a successful `open()`. That should surface
+Windows class-driver devices (HID, mass storage, arcade IO) that libusb cannot name
+today. On macOS the five-field payload is byte-identical, so there was no local gain
+to offset the duplicate. The structural `ReadableUSBDevice` type from the attempt was
+kept, which reduces a future retry to a dependency bump.
+
+Related observation, not acted on: `AlertsManager` has no throttle of any kind, so
+client-side event fidelity is load-bearing for alert volume.
 
 **2. `@electron/fuses` 1.8 → 2.x.** The six `FuseV1Options` this app sets are
 byte-identical in 2.x and `forge.config.js` loads fine, but
