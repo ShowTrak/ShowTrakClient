@@ -145,6 +145,56 @@ const Internal = {
     return p.trim();
   },
 
+  // True when a server-supplied relative segment is safe to join onto a
+  // directory we own.
+  //
+  // Rejected: absolute paths, UNC paths, drive letters, NUL bytes, and any `..`
+  // component under EITHER separator. Both spellings matter: a Windows-style
+  // `..\evil` is an ordinary filename to POSIX `path.resolve`, but
+  // NormalizeRelativePath rewrites backslashes to forward slashes, which turns
+  // it into a real traversal on every platform.
+  IsSafeRelativeSegment(value: unknown): boolean {
+    if (typeof value !== 'string') return false;
+    const Raw = value.trim();
+    if (!Raw || Raw.includes('\0')) return false;
+    const Unified = Raw.replace(/\\/g, '/');
+    // Leading '/' covers both POSIX absolute paths and UNC ('\\host\share').
+    if (Unified.startsWith('/')) return false;
+    if (/^[a-zA-Z]:/.test(Unified)) return false;
+    return !Unified.split('/').includes('..');
+  },
+
+  // Contain a server-supplied path segment inside a directory we own.
+  //
+  // Both `Script.ID` and `ScriptFile.Path` arrive from the server over the wire
+  // and are joined onto the scripts directory. Unchecked, a segment containing
+  // `..` — or an absolute path, which `path.join`/`path.resolve` let win
+  // outright — escapes the sandbox, and DownloadScripts will then write to it,
+  // chmod 0755 it and ultimately execute it. Adoption pins ServerIdentity, so
+  // this is not reachable by an unauthenticated peer, but the blast radius of a
+  // spoofed or compromised server should stop at the scripts directory.
+  //
+  // Returns the resolved absolute path, or null when the segment would escape.
+  ResolveContained(Base: string, ...Segments: string[]): string | null {
+    if (typeof Base !== 'string' || !Base) return null;
+    for (const Segment of Segments) {
+      if (!Internal.IsSafeRelativeSegment(Segment)) return null;
+    }
+    let Resolved: string;
+    let Root: string;
+    try {
+      Root = path.resolve(Base);
+      Resolved = path.resolve(Root, ...Segments.map((Segment) => Segment.trim()));
+    } catch {
+      return null;
+    }
+    // Defence in depth: the segment checks above should already have caught
+    // anything that escapes, so this prefix test is a second, independent gate.
+    // Equality is a rejection too — a target must be strictly inside the base.
+    if (Resolved === Root) return null;
+    return Resolved.startsWith(Root + path.sep) ? Resolved : null;
+  },
+
   // Resolve the relative script file to run for the current platform. Falls back
   // to a legacy top-level "Path" for scripts authored before the cross-platform
   // schema. Returns the relative path string, or null if nothing is defined.
@@ -198,12 +248,21 @@ const Internal = {
       };
     }
 
-    const ScriptPath = path.join(AppDataManager.GetScriptsDirectory(), ScriptID);
+    const ScriptPath = Internal.ResolveContained(AppDataManager.GetScriptsDirectory(), ScriptID);
+    if (!ScriptPath) {
+      return { Enabled: false, DisabledReason: 'Script ID is not a valid directory name' };
+    }
     if (!fs.existsSync(ScriptPath)) {
       return { Enabled: false, DisabledReason: 'Script path does not exist' };
     }
 
-    const TargetFile = path.join(ScriptPath, RelativePath);
+    const TargetFile = Internal.ResolveContained(ScriptPath, RelativePath);
+    if (!TargetFile) {
+      return {
+        Enabled: false,
+        DisabledReason: 'Script path for this operating system escapes the scripts directory',
+      };
+    }
     if (!fs.existsSync(TargetFile)) {
       return {
         Enabled: false,
@@ -645,7 +704,11 @@ export const Manager = {
         continue;
       }
 
-      const ScriptPath = path.join(ScriptsDirectory, Script.ID);
+      const ScriptPath = Internal.ResolveContained(ScriptsDirectory, Script.ID);
+      if (!ScriptPath) {
+        Failures.push(`Refusing to deploy ${Script.ID}: script ID escapes the scripts directory`);
+        continue;
+      }
       Logger.log(`Downloading SCRIPT: ${Script.ID}`);
 
       if (!fs.existsSync(ScriptPath)) {
@@ -656,7 +719,13 @@ export const Manager = {
       for (const File of ScriptFiles) {
         const { Path, Type } = File;
 
-        const FilePath = path.join(ScriptPath, Path);
+        const FilePath = Internal.ResolveContained(ScriptPath, Path);
+        if (!FilePath) {
+          const Message = `Refusing to deploy ${Script.ID}/${Path}: path escapes the script directory`;
+          Logger.error(Message);
+          Failures.push(Message);
+          continue;
+        }
 
         if (Type === 'directory') {
           try {
@@ -716,3 +785,5 @@ export const Manager = {
     BroadcastManager.emit('ScriptsUpdated', Manager.GetScripts());
   },
 };
+
+export const _internal = Internal;
