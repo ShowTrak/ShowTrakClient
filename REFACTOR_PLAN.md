@@ -25,23 +25,23 @@ Everything below was implemented on `refactor/tech-debt-2026-07`. Baseline moved
 from 334 tests / 78.6% statements to **411 tests / 84.6% statements**, with lint,
 format, typecheck and a 32-check Electron API probe green throughout.
 
-| WP  | Outcome                                                                                                                                     |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1a  | **Done.** Path traversal closed; verified exploitable before the fix.                                                                       |
-| 1b  | **Done.** Uptime no longer wraps at 24h.                                                                                                    |
-| 1c  | **Done.** 7 shadowed `catch (Error)` renamed + lint guard added.                                                                            |
-| 1e  | **Done.** Safe-mode comment corrected.                                                                                                      |
-| 1d  | **Partly done.** The real bug (concatenated `HOME` → literal `undefined/…`) is fixed. The macOS directory move is **deferred** — see below. |
-| 2a  | **Done.** 4 unused deps removed (11 packages), safe minor/patch batch taken.                                                                |
-| 2b  | **Done.** Electron 37.2.2 → 43.2.0.                                                                                                         |
-| 2c  | **Partly done.** ESLint 10 taken. `usb` 3.x and `@electron/fuses` 2.x **held back** — see below.                                            |
-| 3   | **Done.** main.ts 1,652 → 160 lines across 13 modules.                                                                                      |
-| 3b  | **Done.** 46 cases on the newly-reachable modules.                                                                                          |
-| 4   | **Mostly done.** Quality pass complete; the `bonjour-service` swap **deferred** — see below.                                                |
-| 5   | **Done.** `ReadIdentityToken` + `ErrorMessage` extracted.                                                                                   |
-| 6   | **Done.** Profile panel painted with `.text()`; selector-existence test added.                                                              |
-| 7   | **Done.** Husky hook made real, dependabot added, non-gating coverage step.                                                                 |
-| 8   | **Done.** Log identity, adoption spelling, stray `console.log`s.                                                                            |
+| WP  | Outcome                                                                                                        |
+| --- | -------------------------------------------------------------------------------------------------------------- |
+| 1a  | **Done.** Path traversal closed; verified exploitable before the fix.                                          |
+| 1b  | **Done.** Uptime no longer wraps at 24h.                                                                       |
+| 1c  | **Done.** 7 shadowed `catch (Error)` renamed + lint guard added.                                               |
+| 1e  | **Done.** Safe-mode comment corrected.                                                                         |
+| 1d  | **Done.** Concatenated-`HOME` bug fixed, and macOS state moved to Application Support with a tested migration. |
+| 2a  | **Done.** 4 unused deps removed (11 packages), safe minor/patch batch taken.                                   |
+| 2b  | **Done.** Electron 37.2.2 → 43.2.0.                                                                            |
+| 2c  | **Partly done.** ESLint 10 taken. `usb` 3.x and `@electron/fuses` 2.x **held back** — see below.               |
+| 3   | **Done.** main.ts 1,652 → 160 lines across 13 modules.                                                         |
+| 3b  | **Done.** 46 cases on the newly-reachable modules.                                                             |
+| 4   | **Mostly done.** Quality pass complete; the `bonjour-service` swap **deferred** — see below.                   |
+| 5   | **Done.** `ReadIdentityToken` + `ErrorMessage` extracted.                                                      |
+| 6   | **Done.** Profile panel painted with `.text()`; selector-existence test added.                                 |
+| 7   | **Done.** Husky hook made real, dependabot added, non-gating coverage step.                                    |
+| 8   | **Done.** Log identity, adoption spelling, stray `console.log`s.                                               |
 
 ### Three items deliberately left open
 
@@ -64,18 +64,29 @@ electron-forge to widen its peer range.**
 **3. `bonjour` → `bonjour-service`.** The quality problems in the Bonjour module
 (42 silent catches, triplicated teardown) are fixed. The library swap is not: the
 existing tests mock the `bonjour` package itself, so replacing it means rewriting
-those mocks, and the suite would then verify new code against new mocks rather
-than against real mDNS behaviour. **Needs: a real multi-NIC LAN with a live
-ShowTrak server to validate against.**
+those mocks, and the suite would then verify new code against new mocks rather than
+against real mDNS behaviour.
 
-**Also open: moving the macOS state directory to `Application Support`.** Blocked
-on a constraint the original plan missed — `AppData` is imported by `Logger`, and
-`Logger` documents that it avoids an `electron` dependency so it stays loadable
-outside an Electron main process (the whole test suite relies on this), which rules
-out `app.getPath('userData')`. `getPath('userData')` also resolves to `…/Electron`
-unpackaged. And every macOS client in the field has its `Profile.json` in the
-current location, so relocating without a migration makes it forget its identity
-and re-adopt. **Needs: a decision about fleets in service, plus a migration.**
+Lower risk than first assessed, though: **the Server already runs
+`bonjour-service` ^1.4.3**, and `ShowTrakServer/src/Modules/Bonjour/index.ts`
+carries hand-written structural types for it that the client could mirror. So the
+API shape is already proven inside this codebase — what is missing is only
+end-to-end validation. **Needs: a real multi-NIC LAN with a live ShowTrak server.**
+
+**Resolved: the macOS state directory has moved** to
+`~/Library/Application Support/ShowTrakClient`, with a per-subfolder migration from
+`~/Library/Preferences`. The `AppData`-cannot-import-`electron` constraint is real
+but only ruled out `app.getPath('userData')`, not the destination — computing the
+path directly keeps the module electron-free. The old tree is left in place as a
+rollback and can be deleted once a client is confirmed healthy.
+
+**Open decision: drop the legacy capitalised `'ShowTrak'` mDNS service type?**
+The Server published `type: 'ShowTrak'` from v3.0.0 (2025-07-13) and switched to
+lowercase `'showtrak'` in **v3.1.5 (2025-08-17)**. The client's per-interface
+fallback still tries both, which doubles the Bonjour instances it opens — on a
+multi-NIC show machine that is `interfaces x 2` multicast sockets. It can be
+dropped iff no ShowTrak Server older than v3.1.5 is still in service.
+**Needs: confirmation that nothing pre-3.1.5 is deployed.**
 
 ### Still needing a human on real hardware
 
