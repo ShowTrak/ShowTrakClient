@@ -41,11 +41,36 @@ function withMocks(mocks = {}, run) {
     return originalLoad.call(this, request, parent, isMain);
   };
 
-  try {
-    return run();
-  } finally {
+  const restore = () => {
     Module._load = originalLoad;
+  };
+
+  // An ASYNC body has to keep the mocks installed until it settles, not until it
+  // returns its promise. Restoring in a plain `finally` unpatched Module._load the
+  // moment the async function hit its first await, so any LAZY `require()` later
+  // in the body — e.g. app-updater's deliberate `require('electron-updater')`
+  // inside ensureAutoUpdater — resolved to the real module and threw.
+  let result;
+  try {
+    result = run();
+  } catch (err) {
+    restore();
+    throw err;
   }
+  if (result && typeof result.then === 'function') {
+    return result.then(
+      (value) => {
+        restore();
+        return value;
+      },
+      (err) => {
+        restore();
+        throw err;
+      }
+    );
+  }
+  restore();
+  return result;
 }
 
 // Load a module fresh (bypassing require.cache) with `mocks` intercepting its
