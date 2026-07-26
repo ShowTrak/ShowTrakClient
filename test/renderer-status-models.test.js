@@ -27,7 +27,9 @@ const {
   GetProcessMonitorWarningModel,
   GetAppUpdateStatusText,
   GetManualServerModel,
+  GetProfileServerModel,
   DEFAULT_SERVER_PORT,
+  ADOPTION_BADGE_CLASSES,
 } = require(MODELS_PATH);
 
 const adopted = (O = {}) => ({ Adopted: true, Server: { IP: '10.0.0.10', Port: 3000 }, ...O });
@@ -330,5 +332,100 @@ test('the classes added and removed are always opposites', () => {
   for (const Profile of [{ ManualServer: { Host: 'h' } }, {}]) {
     const Model = GetManualServerModel(Profile);
     assert.notEqual(Model.addClass, Model.removeClass);
+  }
+});
+
+// --- GetProfileServerModel ------------------------------------------------
+//
+// Extracted alongside the change that stopped ApplyProfile building the profile
+// panel with jQuery .html() and template interpolation of server-supplied values.
+// The decision "is there an endpoint worth showing" now lives here so it is
+// covered, leaving main.ts as thin .text() calls.
+
+test('an adopted profile with a complete endpoint shows it', () => {
+  const Model = GetProfileServerModel({
+    Adopted: true,
+    UUID: 'uuid-1',
+    Server: { IP: '10.0.0.5', Port: 3000 },
+  });
+  assert.equal(Model.hasServer, true);
+  assert.equal(Model.ip, '10.0.0.5');
+  assert.equal(Model.port, '3000');
+  assert.equal(Model.uuid, 'uuid-1');
+});
+
+test('an unadopted profile shows no endpoint, but still shows its UUID', () => {
+  // The UUID is how an operator matches this machine to a pending-adoption row on
+  // the server, so it must survive the unadopted state.
+  const Model = GetProfileServerModel({ Adopted: false, UUID: 'uuid-2' });
+  assert.equal(Model.hasServer, false);
+  assert.equal(Model.ip, '');
+  assert.equal(Model.port, '');
+  assert.equal(Model.uuid, 'uuid-2');
+});
+
+test('adopted but with no Server block reads as no server, not as a blank endpoint', () => {
+  // A torn write or a reset mid-flight can leave Adopted true with Server missing.
+  // Painting empty badges there would read as "connected to nothing".
+  for (const Profile of [
+    { Adopted: true, UUID: 'u' },
+    { Adopted: true, UUID: 'u', Server: null },
+  ]) {
+    const Model = GetProfileServerModel(Profile);
+    assert.equal(Model.hasServer, false, JSON.stringify(Profile));
+    assert.equal(Model.ip, '');
+  }
+});
+
+test('a partially written endpoint is labelled rather than shown blank', () => {
+  const noIp = GetProfileServerModel({ Adopted: true, UUID: 'u', Server: { Port: 3000 } });
+  assert.equal(noIp.hasServer, true);
+  assert.equal(noIp.ip, 'Unknown IP');
+  assert.equal(noIp.port, '3000');
+
+  const noPort = GetProfileServerModel({ Adopted: true, UUID: 'u', Server: { IP: '10.0.0.5' } });
+  assert.equal(noPort.ip, '10.0.0.5');
+  assert.equal(noPort.port, 'Unknown Port');
+});
+
+test('GetProfileServerModel survives a missing profile', () => {
+  for (const Profile of [null, undefined, {}]) {
+    const Model = GetProfileServerModel(Profile);
+    assert.equal(Model.hasServer, false);
+    assert.equal(Model.uuid, '');
+  }
+});
+
+test('GetProfileServerModel always returns strings, never raw numbers', () => {
+  // The painter passes these straight to .text(); a number would render fine but
+  // the type contract keeps the boundary honest.
+  const Model = GetProfileServerModel({
+    Adopted: true,
+    UUID: 12345,
+    Server: { IP: 167772165, Port: 3000 },
+  });
+  assert.equal(typeof Model.ip, 'string');
+  assert.equal(typeof Model.port, 'string');
+  assert.equal(typeof Model.uuid, 'string');
+});
+
+test('ADOPTION_BADGE_CLASSES covers every class the badge model can return', () => {
+  // The painter clears this list before adding the new class. If a severity is
+  // added to GetAdoptionBadgeModel and not to this list, two colours end up
+  // stacked on one badge.
+  const listed = ADOPTION_BADGE_CLASSES.split(' ');
+  const produced = new Set([
+    GetAdoptionBadgeModel(null, null).className,
+    GetAdoptionBadgeModel({ Adopted: true, Server: {} }, { State: 'idle', Message: '' }).className,
+    GetAdoptionBadgeModel(
+      { Adopted: true, Server: {} },
+      { State: 'PrimaryFailed', Message: 'gone' }
+    ).className,
+  ]);
+  for (const className of produced) {
+    assert.ok(
+      listed.includes(className),
+      `${className} is produced by GetAdoptionBadgeModel but missing from ADOPTION_BADGE_CLASSES`
+    );
   }
 });
