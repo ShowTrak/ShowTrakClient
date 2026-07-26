@@ -54,6 +54,27 @@ function sampleCPU(): void {
 __prevCpuTimes = snapshotCpuTimes();
 setInterval(sampleCPU, 1000);
 
+// Format an uptime in seconds as HH:mm:ss, with an UNBOUNDED hours field.
+//
+// This used to go via `new Date(Uptime * 1000).toISOString().substr(11, 8)`,
+// which is a time-of-day formatter, not a duration formatter: it wraps at 24h,
+// so a machine up 25h01m30s reported "01:01:30". For an app whose whole job is
+// monitoring long-lived show and arcade machines, that made the headline number
+// silently wrong — and wrong in a way that looks entirely plausible, so nobody
+// would ever report it as a bug.
+//
+// The server stores this as an opaque display string capped at 32 characters
+// (see SocketValidation), so hours running past two digits is wire-safe.
+export function FormatUptime(TotalSeconds: unknown): string {
+  const Numeric = Number(TotalSeconds);
+  const Safe = Number.isFinite(Numeric) && Numeric > 0 ? Math.floor(Numeric) : 0;
+  const Hours = Math.floor(Safe / 3600);
+  const Minutes = Math.floor((Safe % 3600) / 60);
+  const Seconds = Safe % 60;
+  const Pad = (Value: number) => String(Value).padStart(2, '0');
+  return `${Pad(Hours)}:${Pad(Minutes)}:${Pad(Seconds)}`;
+}
+
 export const Manager = {
   Hostname: os.hostname(),
 
@@ -89,7 +110,7 @@ export const Manager = {
         UsagePercentage: (((TotalMemory - FreeMemory) / TotalMemory) * 100).toFixed(2),
       },
       Uptime: {
-        Formatted: new Date(Uptime * 1000).toISOString().substr(11, 8), // HH:mm:ss
+        Formatted: FormatUptime(Uptime),
       },
     };
   },
