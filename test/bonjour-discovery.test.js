@@ -47,37 +47,54 @@ function service(Overrides = {}) {
   };
 }
 
+/** The service type the diagnostic sweep browses, as opposed to a discovery browse. */
+const DIAGNOSTIC_TYPE = '_services._dns-sd._udp';
+
 /**
- * A `bonjour` factory stub. Every instance and browser it produces is recorded,
+ * A `bonjour-service` stub. Every instance and browser it produces is recorded,
  * with its stop/destroy counts, so a test can assert that discovery released
  * what it opened.
+ *
+ * Shaped as a plain function even though the module calls it with `new`: a
+ * function invoked as a constructor returns its explicit object return value,
+ * so the same stub serves both, and the tests that wrap it by plain-calling it
+ * keep working.
+ *
+ * Discovery and diagnostics both go through `find()` (the module deliberately
+ * avoids bonjour-service's `findOne`, which fires its callback with null on
+ * timeout), so they are told apart here by the service type being browsed.
  */
 function makeBonjour(Options = {}) {
   const {
     createThrows = false,
-    findOneThrows = false,
+    findThrows = false,
     startThrows = false,
     stopThrows = false,
     destroyThrows = false,
   } = Options;
 
-  const factory = (opts) => {
+  // A function declaration, not an arrow: the module calls this with `new`, and
+  // arrows are not constructible.
+  function factory(opts, errorCallback) {
     if (createThrows) throw new Error('EADDRINUSE: mdns socket');
 
     const Instance = {
       opts,
+      // The module must always supply this: bonjour-service's default error
+      // callback rethrows, which would kill an unattended client on a NIC drop.
+      errorCallback,
       destroyed: 0,
       browsers: [],
-      findOne(query, cb) {
-        if (findOneThrows) throw new Error('cannot browse');
-        const Browser = makeBrowser(query, cb);
+      find(query) {
+        if (query && query.type === DIAGNOSTIC_TYPE) {
+          const Diagnostic = makeBrowser(query);
+          factory.diagnosticBrowsers.push(Diagnostic);
+          return Diagnostic;
+        }
+        if (findThrows) throw new Error('cannot browse');
+        const Browser = makeBrowser(query);
         Instance.browsers.push(Browser);
         factory.browsers.push(Browser);
-        return Browser;
-      },
-      find(query) {
-        const Browser = makeBrowser(query, null);
-        factory.diagnosticBrowsers.push(Browser);
         return Browser;
       },
       destroy() {
@@ -87,9 +104,9 @@ function makeBonjour(Options = {}) {
     };
     factory.instances.push(Instance);
     return Instance;
-  };
+  }
 
-  function makeBrowser(query, cb) {
+  function makeBrowser(query) {
     const Browser = {
       query,
       services: [],
@@ -98,8 +115,12 @@ function makeBonjour(Options = {}) {
       updates: 0,
       removedListeners: 0,
       handlers: {},
-      /** Hand this browser a matching service, as the real one would. */
-      match: (svc) => cb && cb(svc),
+      /**
+       * Hand this browser a matching service, as the real one would. The module
+       * subscribes with `.on('up', …)` rather than passing a callback into the
+       * browse call, so a match is delivered through the registered handler.
+       */
+      match: (svc) => Browser.handlers.up && Browser.handlers.up(svc),
       start() {
         if (startThrows) throw new Error('socket not ready');
         Browser.starts += 1;
@@ -140,7 +161,7 @@ const INTERFACES = {
 function load({ bonjourMock, interfaces = INTERFACES } = {}) {
   const Bonjour = bonjourMock || makeBonjour();
   const Mod = loadWithMocks(BONJOUR_PATH, {
-    bonjour: Bonjour,
+    'bonjour-service': Bonjour,
     os: { networkInterfaces: () => interfaces },
     '../Logger': loggerStub,
   });
@@ -206,7 +227,7 @@ test('an instance that cannot be created leaves discovery inert, not crashed', (
 });
 
 test('a browser that cannot be created leaves discovery inert', () => {
-  const { Manager } = load({ bonjourMock: makeBonjour({ findOneThrows: true }) });
+  const { Manager } = load({ bonjourMock: makeBonjour({ findThrows: true }) });
   assert.doesNotThrow(() => Manager.OnFind(() => {}));
 });
 
@@ -400,17 +421,18 @@ test('an interface that cannot be bound does not stop the others being tried', a
   const Bonjour = makeBonjour();
   const Real = Bonjour;
   let Calls = 0;
-  const Flaky = (opts) => {
+  // Not an arrow — the module constructs it with `new`.
+  function Flaky(opts, errorCallback) {
     Calls += 1;
     if (Calls === 2) throw new Error('EADDRNOTAVAIL');
-    return Real(opts);
-  };
+    return Real(opts, errorCallback);
+  }
   Flaky.instances = Real.instances;
   Flaky.browsers = Real.browsers;
   Flaky.diagnosticBrowsers = Real.diagnosticBrowsers;
 
   const Mod = loadWithMocks(BONJOUR_PATH, {
-    bonjour: Flaky,
+    'bonjour-service': Flaky,
     os: { networkInterfaces: () => INTERFACES },
     '../Logger': loggerStub,
   });
@@ -423,7 +445,7 @@ test('an interface that cannot be bound does not stop the others being tried', a
 
 test('an unreadable interface list does not throw out of the timer', async () => {
   const Mod = loadWithMocks(BONJOUR_PATH, {
-    bonjour: makeBonjour(),
+    'bonjour-service': makeBonjour(),
     os: {
       networkInterfaces: () => {
         throw new Error('sysctl failed');
@@ -482,21 +504,29 @@ test('the socket listeners tolerate whatever the library hands them', async () =
 test('a diagnostic browse that cannot start does not stop the fallback launching', async () => {
   const Bonjour = makeBonjour();
   const Instances = Bonjour.instances;
-  const Wrapped = (opts) => {
-    const Instance = Bonjour(opts);
+  // Not an arrow — the module constructs it with `new`.
+  function Wrapped(opts, errorCallback) {
+    const Instance = Bonjour(opts, errorCallback);
     if (Instances.length === 1) {
-      Instance.find = () => {
-        throw new Error('cannot browse service types');
+      // Only the diagnostic sweep is broken. Discovery browses through the same
+      // find() now, so this has to fail by service type rather than by method,
+      // or it would take the thing under test down with it.
+      const RealFind = Instance.find;
+      Instance.find = (query) => {
+        if (query && query.type === DIAGNOSTIC_TYPE) {
+          throw new Error('cannot browse service types');
+        }
+        return RealFind(query);
       };
     }
     return Instance;
-  };
+  }
   Wrapped.instances = Bonjour.instances;
   Wrapped.browsers = Bonjour.browsers;
   Wrapped.diagnosticBrowsers = Bonjour.diagnosticBrowsers;
 
   const Mod = loadWithMocks(BONJOUR_PATH, {
-    bonjour: Wrapped,
+    'bonjour-service': Wrapped,
     os: { networkInterfaces: () => INTERFACES },
     '../Logger': loggerStub,
   });
@@ -624,4 +654,42 @@ test('teardown completes even when every release step throws', async () => {
   Manager.OnFind((S) => Found.push(S));
   Bonjour.browsers[Bonjour.browsers.length - 1].match(service());
   assert.equal(Found.length, 1);
+});
+
+// --- mDNS error handling ----------------------------------------------------
+
+test('every Bonjour instance is created with an mDNS error handler', async () => {
+  // bonjour-service's second constructor argument defaults to
+  // `function (err) { throw err }`, and it is invoked from inside a dgram send
+  // callback — so an ordinary interface drop (send EADDRNOTAVAIL 224.0.0.251)
+  // would surface as an uncaught exception and take down an unattended client.
+  // Nothing in this module can catch that, because there is no call of ours on
+  // the stack; supplying the handler is the only defence, and it has to be on
+  // the per-interface fallback instances too, not just the shared one.
+  const { Manager, Bonjour } = load();
+  Manager.OnFind(() => {});
+  await advance(10_000);
+
+  assert.ok(Bonjour.instances.length > 1, 'expected the per-interface fallback to have run');
+  for (const Instance of Bonjour.instances) {
+    assert.equal(
+      typeof Instance.errorCallback,
+      'function',
+      `an instance bound to ${JSON.stringify(Instance.opts)} would rethrow mDNS send errors`
+    );
+  }
+});
+
+test('a transient mDNS send error is logged, not rethrown', async () => {
+  const { Manager, Bonjour } = load();
+  Manager.OnFind(() => {});
+
+  const { errorCallback } = Bonjour.instances[0];
+  const Transient = Object.assign(new Error('send EADDRNOTAVAIL 224.0.0.251:5353'), {
+    code: 'EADDRNOTAVAIL',
+  });
+  assert.doesNotThrow(() => errorCallback(Transient));
+
+  // An unrecognised error must not escape either — logging it is fine, dying is not.
+  assert.doesNotThrow(() => errorCallback(new Error('something else entirely')));
 });

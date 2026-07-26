@@ -4,7 +4,13 @@ const path = require('node:path');
 
 const { loadWithMocks } = require('./test-helpers');
 
-// Exercises src/Modules/NetworkErrors and src/Modules/ProcessGuards.
+// Exercises the shared network-error classifier and src/Modules/ProcessGuards.
+//
+// The classifier now lives in the shared submodule (@showtrak/protocol/runtime)
+// rather than in each app: it was duplicated in the Server and the Client, and
+// the copies drifted. It is required here by package name, which also proves the
+// `file:./shared` symlink and the package's exports map resolve from a test
+// process.
 //
 // Both were added on 2026-07-25 during the TypeScript migration and were, until
 // now, verified only by live reproduction (unplugging Ethernet, piping stdout to
@@ -21,14 +27,6 @@ const { loadWithMocks } = require('./test-helpers');
 //   - too narrow -> a routine NIC flap kills the agent;
 //   - too wide  -> a real bug is silently swallowed as "transient".
 
-const NETWORK_ERRORS_PATH = path.join(
-  __dirname,
-  '..',
-  'dist',
-  'Modules',
-  'NetworkErrors',
-  'index.js'
-);
 const PROCESS_GUARDS_PATH = path.join(
   __dirname,
   '..',
@@ -38,7 +36,7 @@ const PROCESS_GUARDS_PATH = path.join(
   'index.js'
 );
 
-const NetworkErrors = require(NETWORK_ERRORS_PATH);
+const NetworkErrors = require('@showtrak/protocol/runtime');
 const { IsTransientNetworkError, DescribeError, TRANSIENT_NETWORK_ERROR_CODES } = NetworkErrors;
 
 /** A Node-style system error. */

@@ -9,7 +9,10 @@
 //   2. Physical MAC addresses          - survives imaging, lives in the NIC.
 //   3. Random                          - last resort so we never crash-loop.
 
-import { v4 as uuidv4 } from 'uuid';
+// randomUUID is Node's own RFC 4122 v4 generator — the `uuid` package is still
+// a dependency here, but only for v5 (namespaced, deterministic), which node:crypto
+// has no equivalent for. See ./fingerprint.
+import { randomUUID } from 'crypto';
 
 import type { ResolvedIdentity } from '../../types/client';
 import { CreateLogger } from '../Logger';
@@ -50,7 +53,7 @@ async function ResolveOnce(): Promise<ResolvedIdentity> {
   }
 
   return {
-    UUID: uuidv4(),
+    UUID: randomUUID(),
     Source: 'random',
     Witness: null,
   };
@@ -63,7 +66,7 @@ function FallbackIdentity(): ResolvedIdentity {
     const Witness = MacWitness(Macs);
     return { UUID: DeriveUUID('mac', Witness), Source: 'mac', Witness };
   }
-  return { UUID: uuidv4(), Source: 'random', Witness: null };
+  return { UUID: randomUUID(), Source: 'random', Witness: null };
 }
 
 async function ResolveGuarded(TimeoutMs: number = RESOLVE_TIMEOUT_MS): Promise<ResolvedIdentity> {

@@ -33,7 +33,6 @@ function loadOS({ uptime = 0 } = {}) {
         cpus: () => [{ times: { user: 1, nice: 1, sys: 1, idle: 7, irq: 0 } }],
         networkInterfaces: () => ({}),
       },
-      macaddress: { all: () => Promise.resolve({}) },
     });
   } finally {
     global.setInterval = originalSetInterval;

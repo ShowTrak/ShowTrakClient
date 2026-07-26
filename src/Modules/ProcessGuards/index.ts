@@ -21,7 +21,7 @@
 //
 // Mirrors ShowTrakServer's src/main/process-guards.ts.
 import { CreateLogger } from '../Logger';
-import { IsTransientNetworkError, DescribeError } from '../NetworkErrors';
+import { IsTransientNetworkError, DescribeError } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ProcessGuard');
 

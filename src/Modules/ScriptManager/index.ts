@@ -12,7 +12,7 @@ import type {
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
-import { Manager as ChecksumManager } from '../ChecksumManager';
+import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ScriptManager');
 
@@ -740,7 +740,7 @@ export const Manager = {
           const { Checksum } = File;
           let ShouldDownload = true;
           if (fs.existsSync(FilePath)) {
-            const OldChecksum = await ChecksumManager.Checksum(FilePath);
+            const OldChecksum = await ChecksumFile(FilePath, (m) => Logger.debug(m));
             if (OldChecksum === Checksum) {
               ShouldDownload = false;
               Logger.success(`Checksum for file ${FilePath} matches, skipping`);
@@ -760,9 +760,35 @@ export const Manager = {
                 Failures.push(Message);
                 continue;
               }
+              const Contents = Buffer.from(await response.arrayBuffer());
+
+              // Verify what actually arrived before it lands on disk, because
+              // everything under the scripts directory is later handed to
+              // spawn(). The checksum above only decides whether a file already
+              // on disk is stale; without this check the downloaded bytes were
+              // never compared to anything, so a truncated transfer or a
+              // response from the wrong server was executed as-is.
+              //
+              // A manifest entry with no checksum is not treated as a failure:
+              // the Server writes null when it could not hash the file, and
+              // refusing those would turn a Server-side read error into a
+              // client that cannot deploy at all. It is logged instead.
+              if (Checksum) {
+                const Actual = ChecksumBuffer(Contents);
+                if (Actual !== Checksum) {
+                  const Message = `Refusing to deploy ${Script.ID}/${Path}: checksum mismatch (expected ${Checksum}, got ${Actual})`;
+                  Logger.error(Message);
+                  Failures.push(Message);
+                  continue;
+                }
+              } else {
+                Logger.warn(
+                  `No checksum published for ${Script.ID}/${Path}; writing unverified contents`
+                );
+              }
+
+              fs.writeFileSync(FilePath, Contents);
               Logger.success(`Downloaded ${FilePath}`);
-              const buffer = await response.arrayBuffer();
-              fs.writeFileSync(FilePath, Buffer.from(buffer));
             } catch (Err) {
               const Message = `Failed to deploy ${Script.ID}/${Path}: ${(Err as Error).message}`;
               Logger.error(Message);

@@ -1,9 +1,25 @@
 // Host telemetry: hostname, OS label, CPU/RAM/uptime vitals, network interfaces.
 import os from 'os';
-import macaddress from 'macaddress';
 
 import type { MacAddressMap, NetworkInterface, Vitals } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
+
+// A MAC of all zeroes is what the OS reports for interfaces that have no
+// hardware address at all (VPN/tunnel adapters such as utun*, and loopback).
+const ZERO_MAC = '00:00:00:00:00:00';
+
+// One interface's entry in the map GetMacAddresses returns.
+//
+// NOTE: @showtrak/protocol declares `MacAddressMap = Record<string, string>`,
+// which does not match what is actually sent — the value is this object, not a
+// bare MAC string, and the Server's ClientManager.SystemInfo reads `.ipv4` and
+// `.mac` off it. The accurate shape is declared here and cast at the boundary;
+// correcting MacAddressMap belongs in the protocol submodule.
+interface MacAddressEntry {
+  ipv4?: string;
+  ipv6?: string;
+  mac?: string;
+}
 
 interface CpuTimesSnapshot {
   idle: number;
@@ -81,17 +97,60 @@ export const Manager = {
   OperatingSystem:
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux',
 
+  // Per-interface { ipv4, ipv6, mac } map, as consumed by the Server's
+  // ClientManager.SystemInfo (it derives the Wake-on-LAN target set from the MAC
+  // belonging to the client's active IPv4).
+  //
+  // Previously the `macaddress` package (last published 2020). Node's own
+  // os.networkInterfaces() has reported `mac` reliably for years, and the loop
+  // below is a faithful port of that package's networkinterfaces.js — the rules
+  // are subtler than they look, and each one was verified against it:
+  //
+  //   - the filter is PER ADDRESS, not per interface. An interface is emitted
+  //     if it has at least one non-internal address; its internal addresses are
+  //     simply skipped. (Loopback has only internal ones, so it never appears.)
+  //   - LAST WRITE WINS per family. An interface with both a link-local and a
+  //     global IPv6 reports the last one listed, not the first — picking the
+  //     first here produced fe80:: where the package reported the global
+  //     address.
+  //   - a MAC of all zeroes is omitted rather than reported, so tunnel adapters
+  //     appear with their addresses but no `mac` key.
+  //
+  // Async purely to keep the call signature its callers already await.
   async GetMacAddresses(): Promise<Result<MacAddressMap>> {
-    return new Promise((resolve, _reject) => {
-      macaddress
-        .all()
-        .then((macs) => {
-          return resolve([null, macs as MacAddressMap]);
-        })
-        .catch((err) => {
-          return resolve([err, null]);
-        });
-    });
+    try {
+      const nics = os.networkInterfaces();
+      const results: Record<string, MacAddressEntry> = {};
+
+      for (const [name, addrs] of Object.entries(nics)) {
+        if (!Array.isArray(addrs)) continue;
+
+        const entry: MacAddressEntry = {};
+        let hasAddresses = false;
+
+        for (const addr of addrs) {
+          if (!addr || addr.internal) continue;
+          hasAddresses = true;
+          // Node <18 reports family as 'IPv4'/'IPv6'; Node >=18 may report 4/6.
+          // @types/node declares it as the string union only, so the numeric
+          // case has to be reached through `unknown` rather than narrowed away.
+          const rawFamily = addr.family as unknown;
+          const family =
+            typeof rawFamily === 'number'
+              ? `ipv${rawFamily}`
+              : String(rawFamily || '').toLowerCase();
+          if (family === 'ipv4') entry.ipv4 = addr.address;
+          else if (family === 'ipv6') entry.ipv6 = addr.address;
+          if (addr.mac && addr.mac !== ZERO_MAC) entry.mac = addr.mac;
+        }
+
+        if (hasAddresses) results[name] = entry;
+      }
+
+      return [null, results as unknown as MacAddressMap];
+    } catch (err) {
+      return [err, null];
+    }
   },
 
   async GetVitals(): Promise<Vitals> {

@@ -69,10 +69,9 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
         GetProfileDirectory: () => profileDir,
       },
     },
-    '../ChecksumManager': {
-      Manager: {
-        Checksum: async () => 'sum',
-      },
+    '@showtrak/protocol/runtime': {
+      ChecksumFile: async () => 'sum',
+      ChecksumBuffer: () => 'sum',
     },
   });
 
@@ -170,7 +169,7 @@ test('ScriptManager ConsoleFilter surfaces only matching lines as the status tai
         GetProfileDirectory: () => profileDir,
       },
     },
-    '../ChecksumManager': { Manager: { Checksum: async () => 'sum' } },
+    '@showtrak/protocol/runtime': { ChecksumFile: async () => 'sum', ChecksumBuffer: () => 'sum' },
   });
 
   // A child that emits a chunk whose LAST line does not match the filter, then
@@ -243,10 +242,12 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
         GetProfileDirectory: () => profileDir,
       },
     },
-    '../ChecksumManager': {
-      Manager: {
-        Checksum: async () => 'different-sum',
-      },
+    '@showtrak/protocol/runtime': {
+      // Reports the manifest's declared checksum for the downloaded bytes, so
+      // post-download verification passes and this test stays about the
+      // download/fingerprint/delete flow.
+      ChecksumFile: async () => 'different-sum',
+      ChecksumBuffer: () => 'expected',
     },
   });
 
@@ -306,10 +307,9 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
         GetProfileDirectory: () => profileDir,
       },
     },
-    '../ChecksumManager': {
-      Manager: {
-        Checksum: async () => 'same-sum',
-      },
+    '@showtrak/protocol/runtime': {
+      ChecksumFile: async () => 'same-sum',
+      ChecksumBuffer: () => 'expected',
     },
   });
 

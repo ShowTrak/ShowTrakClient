@@ -74,16 +74,46 @@ test('Broadcast manager emits and handles events', async () => {
   assert.deepEqual(payload, { ok: true });
 });
 
-test('ChecksumManager.Checksum resolves file checksum value', async () => {
-  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ChecksumManager', 'index.js');
-  const { Manager } = loadWithMocks(modulePath, {
-    checksum: {
-      file: (_filePath, callback) => callback(null, 'abc123'),
-    },
-  });
+test('the shared checksum helpers hash files and buffers as SHA-1, identically', async () => {
+  // Asserted against a known digest rather than a stub, because the VALUE is the
+  // contract: the Server hashes script files with SHA-1 and ships the result in
+  // the manifest, and the client compares against it both to detect staleness
+  // and to verify downloaded bytes before writing them. A change of algorithm
+  // would break deployment silently, so the digest is pinned here.
+  //
+  // Lives in the shared submodule (@showtrak/protocol/runtime) precisely because
+  // both sides must agree; requiring it by name also proves the `file:./shared`
+  // symlink resolves from a test process.
+  const { ChecksumFile, ChecksumBuffer } = require('@showtrak/protocol/runtime');
 
-  const result = await Manager.Checksum('/tmp/anything');
-  assert.equal(result, 'abc123');
+  const fs = require('node:fs');
+  const dir = tempDir('showtrak-client-checksum-');
+  const filePath = path.join(dir, 'script.sh');
+  const contents = 'hello showtrak\n';
+  fs.writeFileSync(filePath, contents);
+
+  // sha1('hello showtrak\n')
+  const expected = 'e11dda1619bace97f119a425eb2e076933bd08a4';
+
+  assert.equal(await ChecksumFile(filePath), expected);
+  assert.equal(
+    ChecksumBuffer(Buffer.from(contents)),
+    expected,
+    'the buffer and file paths must agree, or a verified download would be rejected'
+  );
+});
+
+test('ChecksumFile resolves null for an unreadable file and reports why', async () => {
+  // Callers treat "no checksum" as "assume stale and re-download", so this must
+  // resolve rather than reject.
+  const { ChecksumFile } = require('@showtrak/protocol/runtime');
+
+  const reported = [];
+  assert.equal(
+    await ChecksumFile('/definitely/not/a/real/path/xyz', (m) => reported.push(m)),
+    null
+  );
+  assert.equal(reported.length, 1, 'the read failure should still be reportable');
 });
 
 test('Config exposes app and shared versions', async () => {
@@ -508,12 +538,11 @@ test('Logger writes file lines and supports all log levels', async () => {
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Logger', 'index.js');
   const { CreateLogger } = loadWithMocks(modulePath, {
-    colors: {
+    picocolors: {
       cyan: (value) => String(value),
       magenta: (value) => String(value),
-      rainbow: (value) => String(value),
       red: (value) => String(value),
-      grey: (value) => String(value),
+      gray: (value) => String(value),
       green: (value) => String(value),
     },
     fs: {

@@ -1,9 +1,24 @@
-import colors from 'colors';
+// Console + file logger with coloured tags.
+//
+// Level ranking, default-level derivation and the formatting helpers come from
+// @showtrak/protocol/runtime, shared with ShowTrakServer. The SINK below does
+// not: this app appends SYNCHRONOUSLY, because an unattended agent that crashes
+// must not lose the lines that explain why — the Server queues asynchronous
+// appends instead. That difference is deliberate, which is why only the pure
+// half is shared.
+import pc from 'picocolors';
 import fs from 'fs';
 import path from 'path';
 
 import IsInInstallation from 'electron-squirrel-startup';
 
+import {
+  GetDatestampLabel,
+  GetDateTimeStamp,
+  IsLevelEnabled as IsLevelEnabledFor,
+  Pad,
+  ResolveDefaultLevel,
+} from '@showtrak/protocol/runtime';
 import { Manager as AppDataManager } from '../AppData';
 
 const LogDirectory = AppDataManager.GetLogsDirectory();
@@ -17,56 +32,44 @@ if (!fs.existsSync(LogFilePath)) {
   fs.writeFileSync(LogFilePath, '', 'utf8');
 }
 
-function Pad(Text: string, Length = 17): string {
-  return Text.padEnd(Length, ' ').toUpperCase();
-}
-
 const Types = {
-  Info: colors.cyan(Pad('INFO')),
-  Warn: colors.magenta(Pad('WARN')),
-  Gay: colors.rainbow(Pad('GAY')),
-  Error: colors.red(Pad('ERROR')),
-  Trace: colors.magenta(Pad('TRACE')),
-  Debug: colors.grey(Pad('DEBUG')),
-  Success: colors.green(Pad('SUCCESS')),
-  Database: colors.grey(Pad('DATABASE')),
+  Info: pc.cyan(Pad('INFO')),
+  Warn: pc.magenta(Pad('WARN')),
+  Error: pc.red(Pad('ERROR')),
+  Trace: pc.magenta(Pad('TRACE')),
+  Debug: pc.gray(Pad('DEBUG')),
+  Success: pc.green(Pad('SUCCESS')),
+  Database: pc.gray(Pad('DATABASE')),
 };
 
 type LogType = keyof typeof Types;
 
 function Tag(Text: string, Type: LogType): string {
-  return `[${colors.cyan('ShowTrakClient')}] [${colors.cyan(Pad(Text))}] [${Object.prototype.hasOwnProperty.call(Types, Type) ? Types[Type] : Types['Info']}]`;
+  return `[${pc.cyan('ShowTrakClient')}] [${pc.cyan(Pad(Text))}] [${Object.prototype.hasOwnProperty.call(Types, Type) ? Types[Type] : Types['Info']}]`;
 }
 
 // --- Log level gating -------------------------------------------------------
 //
-// Mirrors the Server's model (src/Modules/Logger/index.ts there) so both apps
-// behave the same and one mental model covers the pair.
+// The rule itself lives in ResolveDefaultLevel (shared with the Server, so the
+// two cannot drift apart again — they had). `process.defaultApp` is passed in
+// rather than read there because Logger is the lowest module in the tree:
+// everything imports it, and an `electron` dependency would stop it loading
+// outside an Electron main process, including in the test suite.
 //
-// Detecting a shipped build: a packaged Electron app has no NODE_ENV, so that
-// alone would leave every client in the field at 'debug'. Electron sets
-// `process.defaultApp` only when the app was launched from a checkout
-// (`electron .`), so its absence is the "this is a shipped build" signal — the
-// same test `app.isPackaged` performs. It is used here in preference to
-// importing `app` because Logger is the lowest module in the tree: everything
-// imports it, and giving it an `electron` dependency would mean it could no
-// longer be loaded anywhere outside an Electron main process.
-//
-// LOG_LEVEL overrides both, which is the point: a client that is misbehaving on
-// site can be relaunched with LOG_LEVEL=debug and the extra detail lands in the
-// log file the operator sends back.
-const LevelRank: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3, trace: 4 };
-const IsPackagedBuild = !process.defaultApp;
-const DefaultLevel = process.env.NODE_ENV === 'production' || IsPackagedBuild ? 'info' : 'debug';
+// LOG_LEVEL overrides the derived default, which is the point: a client
+// misbehaving on site can be relaunched with LOG_LEVEL=debug and the extra
+// detail lands in the log file the operator sends back.
+const DefaultLevel = ResolveDefaultLevel({
+  nodeEnv: process.env.NODE_ENV,
+  isPackagedBuild: !process.defaultApp,
+});
 
 const Settings = {
   level: (process.env.LOG_LEVEL || DefaultLevel).toLowerCase(),
 };
 
 function IsLevelEnabled(Level: string): boolean {
-  const Want = LevelRank[Settings.level] ?? LevelRank[DefaultLevel] ?? 0;
-  const Have = LevelRank[Level] ?? LevelRank.info ?? 0;
-  return Have <= Want;
+  return IsLevelEnabledFor(Level, Settings.level, DefaultLevel);
 }
 
 interface LoggerConfigureOptions {
@@ -76,16 +79,6 @@ interface LoggerConfigureOptions {
 /** Change the active level at runtime (e.g. from a setting). */
 export function configure(options: LoggerConfigureOptions = {}): void {
   if (options.level) Settings.level = String(options.level).toLowerCase();
-}
-
-function GetDatestampLabel(): string {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function GetDateTimeStamp(): string {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
 }
 
 // Console and file writes are both fail-safe. A ShowTrak Client launched with a
@@ -183,7 +176,7 @@ class Logger {
   // chatter, it is the reason the client will misbehave next.
   databaseError(...args: unknown[]): void {
     if (!IsLevelEnabled('error')) return;
-    args.forEach((arg) => WriteToConsole(Tag(this.Alias, 'Database'), colors.red(String(arg))));
+    args.forEach((arg) => WriteToConsole(Tag(this.Alias, 'Database'), pc.red(String(arg))));
     args.forEach(WriteToFile);
   }
 }

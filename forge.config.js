@@ -23,11 +23,19 @@ module.exports = {
     // match paths inside node_modules.
     ignore: [
       // Source & build inputs — the renderer, images and icons are served from
-      // dist/ (copied there by scripts/copy-assets.js); shared/ is the
-      // TypeScript-only protocol submodule; the app icon is read from disk at
-      // package time, not from the asar.
+      // dist/ (copied there by scripts/copy-assets.js); the app icon is read
+      // from disk at package time, not from the asar.
       /^\/src($|\/)/,
-      /^\/shared($|\/)/,
+      // shared/ is the @showtrak/protocol submodule. It is NOT types-only any
+      // more: node_modules/@showtrak/protocol is a `file:` symlink to this
+      // directory, and asar records it as a link rather than dereferencing it,
+      // so the target has to exist inside the package or every
+      // `require('@showtrak/protocol/runtime')` throws at boot.
+      //
+      // Ship exactly what Node needs to resolve that subpath — package.json for
+      // the exports map, and the compiled dist/ — and keep excluding the .d.ts
+      // sources, tsconfigs and the submodule's own node_modules.
+      /^\/shared\/(?!dist(\/|$)|package\.json$)/,
       /^\/scripts($|\/)/,
       /^\/build($|\/)/,
       // Tests. dist-test/ is the test-only per-file compile of the renderer

@@ -25,7 +25,17 @@ function tempDir(prefix) {
 
 const MODULE_PATH = path.join(__dirname, '..', 'dist', 'Modules', 'ScriptManager', 'index.js');
 
-function loadScriptManager({ scriptsDir, profileDir, checksum = 'different-sum' }) {
+// `bufferChecksum` is what the mocked checksum helper reports for downloaded
+// bytes. It defaults to 'x' — the value every manifest in this file declares —
+// so post-download verification passes and these tests keep exercising path
+// containment rather than tripping over integrity. The verification behaviour
+// itself is covered in script-download-integrity.test.js.
+function loadScriptManager({
+  scriptsDir,
+  profileDir,
+  checksum = 'different-sum',
+  bufferChecksum = 'x',
+}) {
   return loadWithMocks(MODULE_PATH, {
     '../Logger': {
       CreateLogger: () => createSilentLogger(),
@@ -36,7 +46,10 @@ function loadScriptManager({ scriptsDir, profileDir, checksum = 'different-sum' 
         GetProfileDirectory: () => profileDir,
       },
     },
-    '../ChecksumManager': { Manager: { Checksum: async () => checksum } },
+    '@showtrak/protocol/runtime': {
+      ChecksumFile: async () => checksum,
+      ChecksumBuffer: () => bufferChecksum,
+    },
     '../Broadcast': { Manager: { emit: () => {}, on: () => {} } },
   });
 }

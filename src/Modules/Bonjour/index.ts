@@ -22,19 +22,49 @@
 // Teardown used to be written out three times (Stop, Terminate, finalizeFound) in
 // near-identical ~45-line blocks, so a leaked timer or browser fixed in one path
 // stayed leaked in the other two. There is now one Teardown().
-import bonjour from 'bonjour';
+// bonjour-service uses `export =` with a merged namespace, so `Browser` and
+// `Service` arrive as VALUES (constructors), not types — hence InstanceType<>
+// below. The default import is the class itself, which doubles as its own
+// instance type.
+import BonjourClass, { Browser as BrowserCtor, Service as ServiceCtor } from 'bonjour-service';
 import os from 'os';
 
 import { CreateLogger } from '../Logger';
+import { CreateBonjourErrorHandler } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('Bonjour');
 
-type BonjourInstance = bonjour.Bonjour;
-type BonjourBrowser = bonjour.Browser;
+type BonjourInstance = BonjourClass;
+type BonjourBrowser = InstanceType<typeof BrowserCtor>;
 /** A discovered ShowTrak server advertisement. */
-export type DiscoveredService = bonjour.RemoteService;
+export type DiscoveredService = InstanceType<typeof ServiceCtor>;
 
 type FindCallback = (service: DiscoveredService) => void;
+
+// Options accepted by the underlying multicast-dns socket. bonjour-service types
+// its constructor as Partial<ServiceConfig>, which does not describe the socket
+// options it forwards verbatim to multicast-dns — `interface` in particular is
+// what binds the per-interface fallback below to one NIC. Declared here and cast
+// at the single construction site rather than loosening the whole module.
+interface BonjourSocketOptions {
+  reuseAddr?: boolean;
+  loopback?: boolean;
+  interface?: string;
+}
+
+// bonjour-service's second constructor argument is the mDNS error callback, and
+// its default is `function (err) { throw err }` — raised from inside a dgram
+// send callback, where no try/catch of ours can reach it. On an unattended
+// client that turns an ordinary interface drop into a process exit, so every
+// instance created here supplies the logging handler instead.
+const OnBonjourError = CreateBonjourErrorHandler(Logger);
+
+function createBonjour(options: BonjourSocketOptions): BonjourInstance {
+  // The constructor is declared as Partial<ServiceConfig>, which shares no
+  // properties with the socket options above — so this needs an explicit cast
+  // rather than an assignment. They are forwarded straight to multicast-dns.
+  return new BonjourClass(options as ConstructorParameters<typeof BonjourClass>[0], OnBonjourError);
+}
 
 /** The service type the server advertises. */
 const SERVICE_TYPE = 'showtrak';
@@ -160,11 +190,11 @@ async function diagnoseServiceTypes(): Promise<void> {
     diag.on('up', (svc) => {
       Logger.log('Bonjour diagnostics up:', svc && svc.name ? svc.name : svc);
     });
-    // @types/bonjour narrows Browser.on to 'up' | 'down', which hides the
-    // inherited EventEmitter overload — but the library really does emit
-    // 'error' (forwarded from the multicast-dns socket). Browser extends
-    // EventEmitter, so widening to the base interface is sound.
-    (diag as NodeJS.EventEmitter).on('error', (e: unknown) =>
+    // bonjour-service types Browser's events as up/down/txt-update/srv-update,
+    // which hides the inherited EventEmitter overload — but the socket really
+    // does forward 'error'. Browser extends EventEmitter, so widening to the
+    // base interface is sound.
+    (diag as unknown as NodeJS.EventEmitter).on('error', (e: unknown) =>
       Logger.error('Bonjour diagnostics error:', e)
     );
     attempt('Starting the diagnostic browse', () => diag.start());
@@ -181,7 +211,7 @@ export const Manager = {
     Logger.log('Bonjour.OnFind invoked');
     if (!instance) {
       try {
-        instance = bonjour({ reuseAddr: true, loopback: true });
+        instance = createBonjour({ reuseAddr: true, loopback: true });
         Logger.log('Bonjour instance created');
       } catch (Err) {
         Logger.error('Failed to create Bonjour instance:', Err);
@@ -201,10 +231,20 @@ export const Manager = {
       });
     }
 
+    // find() rather than findOne(): bonjour-service's findOne takes a timeout
+    // (default 10s) and, on expiry, BOTH stops the browser and invokes the
+    // callback with null. Either half would break discovery here — a null would
+    // latch finalizeFound() into reporting a server that does not exist, and the
+    // auto-stop would silently kill the periodic re-query that catches a server
+    // announcing late. The old `bonjour` package's findOne had neither
+    // behaviour. Timing is owned by this module's own timers, so a plain browser
+    // plus the first-match latch below reproduces the previous semantics exactly.
     try {
-      browser = instance.findOne({ type: SERVICE_TYPE }, (svc) => {
+      browser = instance.find({ type: SERVICE_TYPE });
+      browser.on('up', (svc) => {
+        if (!svc) return;
         Logger.log(
-          `Bonjour findOne matched: ${JSON.stringify({
+          `Bonjour browse matched: ${JSON.stringify({
             name: svc.name,
             fqdn: svc.fqdn,
             host: svc.host,
@@ -323,15 +363,18 @@ function launchPerInterfaceFallback(callback: FindCallback): void {
     for (const ip of ipv4s) {
       for (const type of FALLBACK_SERVICE_TYPES) {
         try {
-          const inst = bonjour({ interface: ip, reuseAddr: true, loopback: true });
-          const fallbackBrowser = inst.findOne({ type, protocol: 'tcp' }, (svc) => {
+          const inst = createBonjour({ interface: ip, reuseAddr: true, loopback: true });
+          // find(), not findOne() — see the note at the default browser above.
+          const fallbackBrowser = inst.find({ type, protocol: 'tcp' });
+          fallbackBrowser.on('up', (svc) => {
+            if (!svc) return;
             Logger.log(
-              `Bonjour fallback matched on ${ip} for type ${type}: ${svc && svc.host}:${svc && svc.port}`
+              `Bonjour fallback matched on ${ip} for type ${type}: ${svc.host}:${svc.port}`
             );
             finalizeFound(callback, svc);
           });
           // See the note in diagnoseServiceTypes: 'error' is real but untyped.
-          (fallbackBrowser as NodeJS.EventEmitter).on('error', (e: unknown) =>
+          (fallbackBrowser as unknown as NodeJS.EventEmitter).on('error', (e: unknown) =>
             Logger.error('Bonjour fallback browser error:', e)
           );
           attempt(`Starting the fallback browser on ${ip}`, () => {

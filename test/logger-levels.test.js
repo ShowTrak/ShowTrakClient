@@ -24,7 +24,7 @@ const { loadWithMocks } = require('./test-helpers');
 
 const LOGGER_PATH = path.join(__dirname, '..', 'dist', 'Modules', 'Logger', 'index.js');
 
-// Every `colors.x()` becomes a pass-through, so assertions read plain text.
+// Every `pc.x()` becomes a pass-through, so assertions read plain text.
 // `__esModule` must answer undefined: TypeScript's __importDefault helper checks
 // it, and a Proxy that returns a function for EVERY key makes the helper treat
 // this stub as an ES module and hand back the Proxy itself as `.default`.
@@ -67,7 +67,7 @@ function loadLogger({ level, nodeEnv, packaged = false } = {}) {
   let Mod;
   try {
     Mod = loadWithMocks(LOGGER_PATH, {
-      colors: IDENTITY_COLORS,
+      picocolors: IDENTITY_COLORS,
       'electron-squirrel-startup': false,
       '../AppData': { Manager: { GetLogsDirectory: () => LogRoot } },
       fs: {

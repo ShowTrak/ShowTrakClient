@@ -27,14 +27,47 @@ test('OS manager returns vitals, mac addresses, and interfaces', async () => {
             address: '127.0.0.1',
             netmask: '255.0.0.0',
             cidr: '127.0.0.1/8',
-            mac: '00',
+            mac: '00:00:00:00:00:00',
             internal: true,
           },
         ],
+        en0: [
+          // Link-local first, then global: the map must report the LAST address
+          // of each family, which is what the `macaddress` package did.
+          {
+            family: 'IPv6',
+            address: 'fe80::1',
+            netmask: 'ffff:ffff:ffff:ffff::',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            internal: false,
+          },
+          {
+            family: 'IPv6',
+            address: 'fd00::5',
+            netmask: 'ffff:ffff:ffff:ffff::',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            internal: false,
+          },
+          {
+            family: 'IPv4',
+            address: '10.0.0.20',
+            netmask: '255.255.255.0',
+            cidr: '10.0.0.20/24',
+            mac: 'aa:bb:cc:dd:ee:ff',
+            internal: false,
+          },
+        ],
+        // A tunnel adapter: real addresses, but no hardware address.
+        utun0: [
+          {
+            family: 'IPv6',
+            address: 'fe80::abcd',
+            netmask: 'ffff:ffff:ffff:ffff::',
+            mac: '00:00:00:00:00:00',
+            internal: false,
+          },
+        ],
       }),
-    },
-    macaddress: {
-      all: () => Promise.resolve({ en0: 'aa:bb:cc:dd:ee:ff' }),
     },
   });
 
@@ -44,9 +77,20 @@ test('OS manager returns vitals, mac addresses, and interfaces', async () => {
     assert.equal(vitals.Ram.Used, 70);
     assert.equal(vitals.Uptime.Formatted, '01:01:01');
 
+    // The Server derives its Wake-on-LAN target set from this map, reading
+    // `.ipv4` and `.mac` per interface — so the shape matters as much as the
+    // values. (Note @showtrak/protocol's MacAddressMap still declares a bare
+    // string per interface, which is not what is sent.)
     const [macErr, macs] = await Manager.GetMacAddresses();
     assert.equal(macErr, null);
-    assert.equal(macs.en0, 'aa:bb:cc:dd:ee:ff');
+    assert.deepEqual(
+      macs,
+      {
+        en0: { ipv6: 'fd00::5', mac: 'aa:bb:cc:dd:ee:ff', ipv4: '10.0.0.20' },
+        utun0: { ipv6: 'fe80::abcd' },
+      },
+      'loopback must be dropped, the last address per family wins, and an all-zero MAC is omitted'
+    );
 
     const [ifaceErr, interfaces] = await Manager.GetNetworkInterfaces();
     assert.equal(ifaceErr, null);
@@ -311,173 +355,9 @@ test('ProcessMonitor emits on change, stays quiet otherwise, and reports errors'
   }
 });
 
-test('Bonjour manager discovers service and can stop/terminate', async () => {
-  const originalSetInterval = global.setInterval;
-  const originalSetTimeout = global.setTimeout;
-  const originalClearInterval = global.clearInterval;
-  const originalClearTimeout = global.clearTimeout;
-
-  global.setInterval = (_cb) => ({ id: 'interval' });
-  global.setTimeout = (_cb) => ({ id: 'timeout' });
-  global.clearInterval = () => {};
-  global.clearTimeout = () => {};
-
-  let findOneCallback = null;
-  let destroyed = 0;
-
-  function createBrowser() {
-    const listeners = new Map();
-    return {
-      services: [],
-      on: (event, handler) => listeners.set(event, handler),
-      start: () => {},
-      update: () => {},
-      stop: () => {},
-      removeAllListeners: () => listeners.clear(),
-    };
-  }
-
-  const bonjourFactory = () => ({
-    find: () => createBrowser(),
-    findOne: (_opts, callback) => {
-      findOneCallback = callback;
-      return createBrowser();
-    },
-    destroy: () => {
-      destroyed += 1;
-    },
-  });
-
-  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
-  const { Manager } = loadWithMocks(modulePath, {
-    '../Logger': {
-      CreateLogger: () => createSilentLogger(),
-    },
-    bonjour: bonjourFactory,
-    os: {
-      networkInterfaces: () => ({
-        en0: [{ family: 'IPv4', address: '10.0.0.2', internal: false }],
-      }),
-    },
-  });
-
-  let discovered = null;
-  try {
-    Manager.OnFind((service) => {
-      discovered = service;
-    });
-
-    const service = { host: 'server.local', port: 3000 };
-    findOneCallback(service);
-    assert.deepEqual(discovered, service);
-
-    await Manager.Stop();
-    await Manager.Terminate();
-    assert.equal(destroyed >= 1, true);
-  } finally {
-    global.setInterval = originalSetInterval;
-    global.setTimeout = originalSetTimeout;
-    global.clearInterval = originalClearInterval;
-    global.clearTimeout = originalClearTimeout;
-  }
-});
-
-test('Bonjour manager launches per-interface fallback after timeout', async () => {
-  const originalSetInterval = global.setInterval;
-  const originalSetTimeout = global.setTimeout;
-  const originalClearInterval = global.clearInterval;
-  const originalClearTimeout = global.clearTimeout;
-
-  let timeoutId = 0;
-  const scheduledTimeouts = new Map();
-  global.setInterval = () => ({ id: 'interval' });
-  global.setTimeout = (callback, delay) => {
-    timeoutId += 1;
-    scheduledTimeouts.set(timeoutId, { callback, delay });
-    return timeoutId;
-  };
-  global.clearInterval = () => {};
-  global.clearTimeout = (id) => {
-    scheduledTimeouts.delete(id);
-  };
-
-  const fallbackFinds = [];
-  const fallbackCallbacks = [];
-
-  function createBrowser() {
-    const listeners = new Map();
-    return {
-      services: [{ name: 'other' }],
-      on: (event, handler) => listeners.set(event, handler),
-      start: () => {},
-      update: () => {},
-      stop: () => {},
-      removeAllListeners: () => listeners.clear(),
-    };
-  }
-
-  const bonjourFactory = (opts = {}) => {
-    const isFallback = Boolean(opts.interface);
-    return {
-      find: () => createBrowser(),
-      findOne: (findOpts, callback) => {
-        if (isFallback) {
-          fallbackFinds.push({
-            interface: opts.interface,
-            type: findOpts.type,
-            protocol: findOpts.protocol,
-          });
-          fallbackCallbacks.push(callback);
-        }
-        return createBrowser();
-      },
-      destroy: () => {},
-    };
-  };
-
-  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'Bonjour', 'index.js');
-  const { Manager } = loadWithMocks(modulePath, {
-    '../Logger': {
-      CreateLogger: () => createSilentLogger(),
-    },
-    bonjour: bonjourFactory,
-    os: {
-      networkInterfaces: () => ({
-        lo0: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
-        en0: [{ family: 'IPv4', address: '10.1.1.5', internal: false }],
-      }),
-    },
-  });
-
-  let discovered = null;
-  try {
-    Manager.OnFind((service) => {
-      discovered = service;
-    });
-
-    for (const entry of scheduledTimeouts.values()) {
-      if (entry.delay === 10000) {
-        await entry.callback();
-      }
-    }
-
-    // One external IPv4 interface (lo0 is internal and skipped) x one service type.
-    // This was 2 until support for servers at or below 3.1.5 — which advertised a
-    // capitalised service type — was dropped.
-    assert.equal(fallbackFinds.length, 1);
-    assert.equal(
-      fallbackFinds.every((entry) => entry.type === 'showtrak'),
-      true
-    );
-
-    fallbackCallbacks[0]({ host: 'fallback.local', port: 4040 });
-    assert.deepEqual(discovered, { host: 'fallback.local', port: 4040 });
-
-    await Manager.Terminate();
-  } finally {
-    global.setInterval = originalSetInterval;
-    global.setTimeout = originalSetTimeout;
-    global.clearInterval = originalClearInterval;
-    global.clearTimeout = originalClearTimeout;
-  }
-});
+// Bonjour discovery used to be smoke-tested here with a hand-rolled stub of the
+// old `bonjour` package's factory + findOne API. Both tests were removed with
+// the move to `bonjour-service`: bonjour-discovery.test.js covers the same two
+// behaviours (a match reaching the callback, Stop/Terminate releasing the
+// instance, and the per-interface fallback launching after the 10s timeout) and
+// ~30 more, against a single maintained stub of the current API.
