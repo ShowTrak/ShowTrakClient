@@ -27,7 +27,8 @@
     "prepare": "husky",
     "typecheck:renderer": "tsc -p tsconfig.renderer.json",
     "build:renderer": "node scripts/build-renderer.js",
-    "build:test-renderer": "tsc -p tsconfig.renderer.test.json"
+    "build:test-renderer": "tsc -p tsconfig.renderer.test.json",
+    "probe:electron": "electron scripts/electron-api-probe.js"
   },
   "keywords": [],
   "author": {
@@ -63,7 +64,7 @@
     "@types/jquery": "^4.0.1",
     "@types/node": "^26.1.1",
     "c8": "^12.0.0",
-    "electron": "37.2.2",
+    "electron": "^43.2.0",
     "esbuild": "^0.28.1",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^9.1.2",
