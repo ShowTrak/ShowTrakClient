@@ -360,13 +360,12 @@ test('Bonjour manager launches per-interface fallback after timeout', async () =
       }
     }
 
-    assert.equal(fallbackFinds.length, 2);
+    // One external IPv4 interface (lo0 is internal and skipped) x one service type.
+    // This was 2 until support for servers at or below 3.1.5 — which advertised a
+    // capitalised service type — was dropped.
+    assert.equal(fallbackFinds.length, 1);
     assert.equal(
-      fallbackFinds.some((entry) => entry.type === 'showtrak'),
-      true
-    );
-    assert.equal(
-      fallbackFinds.some((entry) => entry.type === 'ShowTrak'),
+      fallbackFinds.every((entry) => entry.type === 'showtrak'),
       true
     );
 
