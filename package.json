@@ -63,7 +63,7 @@
     "@eslint/markdown": "^8.0.3",
     "@types/auto-launch": "^5.0.5",
     "@types/jquery": "^4.0.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.1.2",
     "c8": "^12.0.0",
     "electron": "^43.2.0",
     "esbuild": "^0.28.1",
