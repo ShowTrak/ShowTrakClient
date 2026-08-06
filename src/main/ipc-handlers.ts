@@ -13,6 +13,7 @@ import { Config } from '../Modules/Config';
 import { Manager as ProcessMonitor } from '../Modules/ProcessMonitor';
 import { Manager as ProfileManager } from '../Modules/ProfileManager';
 import { Manager as ScriptManager } from '../Modules/ScriptManager';
+import { Manager as VariableStore } from '../Modules/Variables';
 import { Manager as IdentifyOverlay } from '../Modules/IdentifyOverlay';
 import { Manager as LaunchCountdownOverlay } from '../Modules/LaunchCountdownOverlay';
 import { Handle, assertNoArgs } from './rpc';
@@ -83,6 +84,10 @@ function registerIpcHandlers(): void {
       assertNoArgs('Profile:FactoryReset', args);
       await ProfileManager.ResetProfileToFactoryDefaults();
       await ScriptManager.DeleteScripts();
+      // Take the show's variables with it, including anything exported to the
+      // Windows user environment — a factory-reset machine must not keep the
+      // previous show's values in its registry.
+      await VariableStore.Clear();
       await restartService('factory-reset');
       return [null, true];
     },

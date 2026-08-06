@@ -10,6 +10,7 @@ import { Config } from '../Config';
 import { Manager as USBMonitorManager } from '../USBMonitor';
 import { Manager as DisplayMonitorManager } from '../DisplayMonitor';
 import { Manager as ScriptManager } from '../ScriptManager';
+import { Manager as VariableStore } from '../Variables';
 import { Manager as NetworkMonitor } from '../NetworkMonitor';
 import { Manager as ProcessMonitor } from '../ProcessMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
@@ -257,9 +258,38 @@ async function RunLaunchSequence(
       Logger.warn(`Run-on-launch: script sync reported issues: ${(Err as Error).message}`);
     }
 
-    // 3. Hand off to the main process: countdown + execution. The config is
+    // 3. Refresh show variables BEFORE handing off. The connect handler asks for
+    // these too, but that request races this sequence, and losing the race means
+    // the auto-start script runs against whatever was cached at the last
+    // shutdown. Awaiting here makes the launch script see the same values a
+    // server-dispatched run would.
+    await new Promise<void>((resolve) => {
+      let Settled = false;
+      const Finish = () => {
+        if (Settled) return;
+        Settled = true;
+        resolve();
+      };
+      // A server too old to answer never calls back, so this must not be the
+      // thing that stops a show machine from running its launch script. The
+      // cached values (or none) are used instead.
+      const Timer = setTimeout(() => {
+        Logger.warn('Run-on-launch: variable fetch timed out; using cached values');
+        Finish();
+      }, 5000);
+      if (typeof Timer.unref === 'function') Timer.unref();
+      ActiveSocket.emit('GetVariables', async (Payload) => {
+        clearTimeout(Timer);
+        await VariableStore.Set(Payload);
+        Finish();
+      });
+    });
+
+    // 4. Hand off to the main process: countdown + execution. The config is
     // passed in the event payload — nothing is written to disk.
-    Logger.log('Run-on-launch: scripts + settings synced, handing off to launch action');
+    Logger.log(
+      'Run-on-launch: scripts + variables + settings synced, handing off to launch action'
+    );
     BroadcastManager.emit('RunLaunchAction', Normalized);
   } catch (Err) {
     Logger.error('Run-on-launch sequence failed', Err);
@@ -328,6 +358,13 @@ export const Manager = {
       ServerCapabilities.Probe(ActiveSocket);
       ActiveSocket.emit('GetScripts', async (Scripts) => {
         await ScriptManager.SetScripts(Array.isArray(Scripts) ? (Scripts as ClientScript[]) : []);
+      });
+      // Show variables. A server that predates them never acks, which leaves the
+      // cached set in place rather than clearing it — the absence of a reply is
+      // not the same as "this show has no variables", and wiping a working
+      // environment because the server was downgraded would be the worse guess.
+      ActiveSocket.emit('GetVariables', async (Payload) => {
+        await VariableStore.Set(Payload);
       });
       // Run-on-launch: on the FIRST successful connection this launch, sync
       // scripts + auto-start settings and then run (see RunLaunchSequence).
@@ -425,6 +462,10 @@ export const Manager = {
 
     ActiveSocket.on('DeleteScripts', async (RequestID) => {
       await ScriptManager.DeleteScripts();
+      // The server only sends this when tearing the client's deployment down, so
+      // the show's variables go too — otherwise an unadopted machine keeps them
+      // in its Windows environment forever.
+      await VariableStore.Clear();
       ActiveSocket.emit('ScriptExecutionResponse', RequestID, null);
     });
 
@@ -466,7 +507,12 @@ export const Manager = {
       });
     });
 
-    ActiveSocket.on('ExecuteScript', async (RequestID, ScriptID) => {
+    // Pushed whenever a variable definition or this client's overrides change.
+    ActiveSocket.on('SetVariables', async (Payload) => {
+      await VariableStore.Set(Payload);
+    });
+
+    ActiveSocket.on('ExecuteScript', async (RequestID, ScriptID, Variables) => {
       Logger.log(`Received ExecuteScript for RequestID: ${RequestID}, ScriptID: ${ScriptID}`);
       // Relay per-stage progress back to the server so the operator's execution
       // panel can fill a progress bar / show a running spinner for this client.
@@ -474,7 +520,12 @@ export const Manager = {
         if (!ActiveSocket.connected) return;
         ActiveSocket.emit('ScriptExecutionProgress', RequestID, Progress, StatusText);
       };
-      const [Err, Success] = await ScriptManager.Execute(RequestID, ScriptID, ReportProgress);
+      const [Err, Success] = await ScriptManager.Execute(
+        RequestID,
+        ScriptID,
+        ReportProgress,
+        VariableStore.Adopt(Variables)
+      );
       if (Err) {
         Logger.error(`Error executing script: ${Err}`);
         ActiveSocket.emit('ScriptExecutionResponse', RequestID, Err, null);

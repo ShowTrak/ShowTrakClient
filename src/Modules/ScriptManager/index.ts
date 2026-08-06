@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
+import type { VariableEnvironment } from '@showtrak/protocol';
 import type {
   ClientScript,
   ScriptConsoleFilter,
@@ -12,6 +13,7 @@ import type {
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
+import { Manager as VariableStore } from '../Variables';
 import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ScriptManager');
@@ -457,7 +459,8 @@ const Internal = {
     ScriptPath: string,
     ExtraArgs: string[] = [],
     OnProgress?: ProgressReporter,
-    ConsoleFilter: ScriptConsoleFilter | null = null
+    ConsoleFilter: ScriptConsoleFilter | null = null,
+    Variables: VariableEnvironment | null = null
   ): Promise<string> {
     const Report: ProgressReporter = typeof OnProgress === 'function' ? OnProgress : () => {};
     return new Promise((resolve, reject) => {
@@ -479,9 +482,21 @@ const Internal = {
         }
       }
 
+      // Show variables are injected here and ONLY here, which is what makes them
+      // reach every execution path — server dispatch, the tray menu and the
+      // run-on-launch action all arrive at this one spawn.
+      //
+      // process.env must be spread in: passing `env` at all means we own the
+      // whole block, and a script that lost PATH would fail in a way that looks
+      // nothing like a variable problem. Show variables go last so they win, but
+      // every name is prefixed SHOWTRAK_VAR_ (enforced in Modules/Variables), so
+      // in practice they cannot collide with anything the OS provides.
+      const ScriptEnvironment = { ...process.env, ...(Variables || {}) };
+
       const Child = spawn(Launcher.command, Launcher.args.concat(ExtraArgs), {
         cwd: path.dirname(ScriptPath),
         windowsHide: true,
+        env: ScriptEnvironment,
       });
 
       // The process is now live — the server treats the Running stage (progress
@@ -634,7 +649,12 @@ export const Manager = {
   async Execute(
     _RequestID: string,
     ScriptID: string,
-    OnProgress?: ProgressReporter
+    OnProgress?: ProgressReporter,
+    // Resolved by the server at dispatch time and therefore fresher than the
+    // pushed cache — a script that waited its turn in the queue runs with the
+    // values current when it actually started. Absent for tray and launch runs
+    // (and from a server too old to send them), which fall back to the cache.
+    Variables: VariableEnvironment | null = null
   ): Promise<[string | null, boolean]> {
     // OnProgress(Progress:0-100, StatusText) lets the server render a live
     // progress bar / running spinner. It is optional so other callers still work.
@@ -656,7 +676,8 @@ export const Manager = {
         LaunchState.ScriptPath,
         PlatformArgs,
         Report,
-        Script.ConsoleFilter
+        Script.ConsoleFilter,
+        Variables || VariableStore.GetEnvironment()
       );
       Logger.success(`Script ${Script.Name} executed successfully`);
       return [null, true];
