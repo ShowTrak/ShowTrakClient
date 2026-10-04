@@ -82,7 +82,7 @@
     "electron-squirrel-startup": "^1.0.1",
     "electron-updater": "^6.8.9",
     "picocolors": "^1.1.1",
-    "socket.io-client": "^4.8.3",
+    "socket.io-client": "^4.8.4",
     "usb": "^2.18.0",
     "uuid": "^11.1.1"
   },
