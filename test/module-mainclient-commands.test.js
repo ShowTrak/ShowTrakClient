@@ -151,6 +151,14 @@ test('MainClient handles command events and reconnect lifecycle branches', async
         },
       },
     },
+    '../AudioMonitor': {
+      Manager: {
+        Start: async () => {},
+        Stop: () => {},
+        RequestSample: () => {},
+        SetLevel: async () => ({ Success: true, Error: null }),
+      },
+    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {},
@@ -345,6 +353,14 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
         GetProfile: async () => ({
           Server: { ServerIdentity: 'server-token-1' },
         }),
+      },
+    },
+    '../AudioMonitor': {
+      Manager: {
+        Start: async () => {},
+        Stop: () => {},
+        RequestSample: () => {},
+        SetLevel: async () => ({ Success: true, Error: null }),
       },
     },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },

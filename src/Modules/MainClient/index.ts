@@ -13,6 +13,7 @@ import { Manager as ScriptManager } from '../ScriptManager';
 import { Manager as VariableStore } from '../Variables';
 import { Manager as NetworkMonitor } from '../NetworkMonitor';
 import { Manager as ProcessMonitor } from '../ProcessMonitor';
+import { Manager as AudioMonitor } from '../AudioMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
@@ -125,6 +126,9 @@ function registerUSBListeners(): void {
   // straight after every event as well, which meant plugging in a hub emitted
   // one complete device list per port; the periodic resync below covers drift.
   USBMonitorManager.OnUSBConnect((Device) => {
+    // Nearly every professional audio interface arrives over USB, so a hotplug
+    // is the cue to look at the audio stack now rather than at the next poll.
+    AudioMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBConnect');
       return;
@@ -133,6 +137,7 @@ function registerUSBListeners(): void {
   });
 
   USBMonitorManager.OnUSBDisconnect((Device) => {
+    AudioMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBDisconnect');
       return;
@@ -309,6 +314,11 @@ export const Manager = {
     } catch (_error) {
       Logger.warn('Failed to stop network monitor during termination');
     }
+    try {
+      AudioMonitor.Stop();
+    } catch (_error) {
+      Logger.warn('Failed to stop audio monitor during termination');
+    }
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -394,6 +404,11 @@ export const Manager = {
       } catch (_error) {
         Logger.warn('Failed to start network monitor on connect');
       }
+      // Not awaited: on Windows the first sample compiles the Core Audio shim,
+      // which can take a couple of seconds, and nothing after this waits on it.
+      AudioMonitor.Start(ActiveSocket).catch(() => {
+        Logger.warn('Failed to start audio monitor on connect');
+      });
     });
 
     ActiveSocket.on('disconnect', () => {
@@ -419,6 +434,11 @@ export const Manager = {
         NetworkMonitor.Stop();
       } catch (_error) {
         Logger.warn('Failed to stop network monitor on disconnect');
+      }
+      try {
+        AudioMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop audio monitor on disconnect');
       }
     });
 
@@ -551,6 +571,18 @@ export const Manager = {
 
     ActiveSocket.on('StopIdentify', async () => {
       BroadcastManager.emit('HideIdentifyOverlay');
+    });
+
+    // Remote level/mute control from the server. The ack is the server's only
+    // answer, so it is sent on every path — including a malformed request.
+    ActiveSocket.on('SetAudioLevel', async (Request, Callback) => {
+      let Result: { Success: boolean; Error: string | null };
+      try {
+        Result = await AudioMonitor.SetLevel(Request);
+      } catch (Err) {
+        Result = { Success: false, Error: ErrorMessage(Err, 'Audio level change failed') };
+      }
+      if (typeof Callback === 'function') Callback(Result);
     });
 
     async function Heartbeat(): Promise<void> {

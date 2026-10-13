@@ -69,7 +69,7 @@ function createFakeChild() {
 
 function loadHost({ onSpawn } = {}) {
   const spawned = [];
-  const { Manager } = loadWithMocks(HOST_PATH, {
+  const { Manager, CreatePowerShellHost } = loadWithMocks(HOST_PATH, {
     child_process: {
       spawn: (...args) => {
         const child = createFakeChild();
@@ -81,7 +81,7 @@ function loadHost({ onSpawn } = {}) {
     },
     '../Logger': loggerStub,
   });
-  return { Manager, spawned };
+  return { Manager, CreatePowerShellHost, spawned };
 }
 
 test('PowerShell host reuses one process across samples', async () => {
@@ -108,6 +108,26 @@ test('PowerShell host reuses one process across samples', async () => {
 
   Manager.Dispose();
   assert.equal(spawned[0].killed, true);
+});
+
+test('hosts from CreatePowerShellHost are independent: one busy host never blocks another', async () => {
+  // The audio sampler and the application sampler run on unrelated timers. A
+  // shared host would answer one of them "busy" whenever their samples overlapped.
+  const { Manager, CreatePowerShellHost, spawned } = loadHost();
+  const audio = CreatePowerShellHost('AudioPowerShellHost');
+
+  const apps = Manager.Run('Get-Process', 1000);
+  const sound = audio.Run('[ShowTrak.AudioEndpoints]::Query()', 1000);
+  assert.equal(spawned.length, 2, 'each host has its own process');
+  spawned[1].respond('[]');
+  spawned[0].respond('Safari\n');
+  assert.deepEqual(await sound, [null, '[]']);
+  assert.equal((await apps)[1].trim(), 'Safari');
+
+  audio.Dispose();
+  assert.equal(spawned[1].killed, true);
+  assert.equal(spawned[0].killed, false, 'disposing one host leaves the other running');
+  Manager.Dispose();
 });
 
 test('PowerShell host initialises UTF-8 output before any script', async () => {

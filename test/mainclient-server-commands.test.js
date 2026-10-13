@@ -60,8 +60,31 @@ function createSocket() {
   };
 }
 
+/** An AudioMonitor stand-in that records how MainClient drives it. */
+function AUDIO_STUB(SetLevel) {
+  const Calls = [];
+  return {
+    Calls,
+    Start: async (Socket) => {
+      Calls.push(['Start', Socket]);
+    },
+    Stop: () => {
+      Calls.push(['Stop']);
+    },
+    RequestSample: () => {
+      Calls.push(['RequestSample']);
+    },
+    SetLevel:
+      SetLevel ||
+      (async (Request) => {
+        Calls.push(['SetLevel', Request]);
+        return { Success: true, Error: null };
+      }),
+  };
+}
+
 /** Boot MainClient against a socket, capturing broadcast traffic. */
-async function boot({ socket = createSocket(), execute } = {}) {
+async function boot({ socket = createSocket(), execute, audio, usb = {} } = {}) {
   const Broadcasts = [];
   const OriginalSetInterval = global.setInterval;
   global.setInterval = () => ({});
@@ -91,8 +114,12 @@ async function boot({ socket = createSocket(), execute } = {}) {
       '../USBMonitor': {
         Manager: {
           GetUSBDevices: async () => [null, []],
-          OnUSBConnect: () => {},
-          OnUSBDisconnect: () => {},
+          OnUSBConnect: (Callback) => {
+            usb.connect = Callback;
+          },
+          OnUSBDisconnect: (Callback) => {
+            usb.disconnect = Callback;
+          },
         },
       },
       '../DisplayMonitor': {
@@ -108,6 +135,7 @@ async function boot({ socket = createSocket(), execute } = {}) {
         },
       },
       '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
+      '../AudioMonitor': { Manager: audio || AUDIO_STUB() },
       '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
       '../Utils': { ...REAL_UTILS, Wait: async () => {} },
       '../ProfileManager': {
@@ -378,4 +406,72 @@ test('every server command this client answers is registered', () => {
       assert.ok(socket.has(Event), `${Event} is not handled`);
     }
   });
+});
+
+// --- Audio ------------------------------------------------------------------
+
+test('the audio monitor starts on connect and stops on disconnect and terminate', async () => {
+  const audio = AUDIO_STUB();
+  const { Manager, socket } = await boot({ audio });
+  await socket.trigger('connect');
+  assert.deepEqual(audio.Calls[0], ['Start', socket]);
+
+  socket.trigger('disconnect');
+  assert.ok(audio.Calls.some((Call) => Call[0] === 'Stop'));
+
+  const Before = audio.Calls.filter((Call) => Call[0] === 'Stop').length;
+  await Manager.Terminate();
+  assert.equal(audio.Calls.filter((Call) => Call[0] === 'Stop').length, Before + 1);
+});
+
+test('a failing audio start or stop never breaks the connection lifecycle', async () => {
+  const audio = AUDIO_STUB();
+  audio.Start = async () => {
+    throw new Error('start failed');
+  };
+  audio.Stop = () => {
+    throw new Error('stop failed');
+  };
+  const { Manager, socket } = await boot({ audio });
+  await socket.trigger('connect');
+  socket.trigger('disconnect');
+  await Manager.Terminate();
+});
+
+test('SetAudioLevel hands the request to the monitor and acknowledges its result', async () => {
+  const audio = AUDIO_STUB();
+  const { socket } = await boot({ audio });
+  const Acks = [];
+  await socket.trigger('SetAudioLevel', { EndpointID: 'out-1', Volume: 40 }, (Result) =>
+    Acks.push(Result)
+  );
+  assert.deepEqual(audio.Calls[0], ['SetLevel', { EndpointID: 'out-1', Volume: 40 }]);
+  assert.deepEqual(Acks, [{ Success: true, Error: null }]);
+});
+
+test('SetAudioLevel still acknowledges when the monitor throws', async () => {
+  // The ack is the server's only answer; a missing one would leave the operator
+  // waiting on a timeout instead of reading the actual failure.
+  const audio = AUDIO_STUB(async () => {
+    throw new Error('backend exploded');
+  });
+  const { socket } = await boot({ audio });
+  const Acks = [];
+  await socket.trigger('SetAudioLevel', { EndpointID: 'x', Muted: true }, (Result) =>
+    Acks.push(Result)
+  );
+  assert.deepEqual(Acks, [{ Success: false, Error: 'backend exploded' }]);
+  // A request without an ack callback is applied and dropped quietly.
+  await socket.trigger('SetAudioLevel', { EndpointID: 'x', Muted: true });
+});
+
+test('a USB hotplug asks the audio monitor to re-sample, connected or not', async () => {
+  const audio = AUDIO_STUB();
+  const usb = {};
+  const { socket } = await boot({ audio, usb });
+  usb.connect({ ProductName: 'Scarlett' });
+  usb.disconnect({ ProductName: 'Scarlett' });
+  socket.connected = false;
+  usb.connect({ ProductName: 'Scarlett' });
+  assert.equal(audio.Calls.filter((Call) => Call[0] === 'RequestSample').length, 3);
 });

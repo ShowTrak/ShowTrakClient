@@ -3,8 +3,6 @@ import { spawn, type ChildProcess } from 'child_process';
 import type { Result } from '../../types/client';
 import { CreateLogger } from '../Logger';
 
-const Logger = CreateLogger('PowerShellHost');
-
 /**
  * A single long-lived `powershell.exe` that evaluates scripts fed over stdin.
  *
@@ -14,6 +12,10 @@ const Logger = CreateLogger('PowerShellHost');
  * 20-second poll and emphatically is not at the 3-second poll this module now
  * runs. Keeping one host alive moves that cost to once per session: subsequent
  * samples are a stdin write and a stdout read.
+ *
+ * Each host serves ONE request at a time (a second concurrent Run() is refused
+ * as busy), so independent samplers each take their own via
+ * CreatePowerShellHost rather than queueing behind one another.
  *
  * The host is deliberately failure-tolerant rather than clever. Every call site
  * treats a rejected Run() as "no sample this tick" and ProcessMonitor falls back
@@ -41,183 +43,197 @@ interface PendingRequest {
   timer: NodeJS.Timeout | null;
 }
 
-let child: ChildProcess | null = null;
-let buffer = '';
-let pending: PendingRequest | null = null;
-/**
- * Set when a spawn attempt fails outright (no powershell.exe on PATH, blocked by
- * policy). Once unavailable we stop retrying the spawn on every sample — the
- * caller's one-shot fallback would fail for the same reason anyway, and retrying
- * a failing spawn every 3 seconds is its own performance problem.
- */
-let unavailable = false;
-
-function settle(result: Result<string>): void {
-  const request = pending;
-  pending = null;
-  if (!request) return;
-  if (request.timer) clearTimeout(request.timer);
-  request.resolve(result);
+export interface PowerShellHost {
+  Run(script: string, timeoutMs: number): Promise<Result<string>>;
+  Dispose(): void;
+  _reset(): void;
 }
 
-/** Tear the host down, failing any in-flight request. Safe to call repeatedly. */
-function destroy(reason: string): void {
-  const dying = child;
-  child = null;
-  buffer = '';
-  if (dying) {
-    dying.removeAllListeners();
-    if (dying.stdout) dying.stdout.removeAllListeners();
-    if (dying.stderr) dying.stderr.removeAllListeners();
-    try {
-      dying.kill();
-    } catch (_error) {
-      // Already gone; nothing to do.
-    }
-  }
-  settle([new Error(reason), null]);
-}
+/** Create an independent host. Nothing is spawned until the first Run(). */
+export function CreatePowerShellHost(Name = 'PowerShellHost'): PowerShellHost {
+  const Logger = CreateLogger(Name);
 
-// Drain whole responses out of the rolling stdout buffer. Anything before a
-// BEGIN token is noise from the host itself and is discarded.
-function consumeBuffer(): void {
-  for (;;) {
-    const beginAt = buffer.indexOf(BEGIN_TOKEN);
-    if (beginAt === -1) {
-      // Keep only a token's worth of tail, so a BEGIN split across two chunks
-      // still matches while the buffer cannot grow without bound.
-      if (buffer.length > BEGIN_TOKEN.length) {
-        buffer = buffer.slice(buffer.length - BEGIN_TOKEN.length);
-      }
-      return;
-    }
-    const endAt = buffer.indexOf(END_TOKEN, beginAt);
-    if (endAt === -1) return; // Response still arriving.
-
-    const body = buffer.slice(beginAt + BEGIN_TOKEN.length, endAt);
-    buffer = buffer.slice(endAt + END_TOKEN.length);
-
-    const errorAt = body.indexOf(ERROR_PREFIX);
-    if (errorAt !== -1) {
-      const message = body.slice(errorAt + ERROR_PREFIX.length).trim();
-      settle([new Error(message || 'PowerShell script failed'), null]);
-      continue;
-    }
-    settle([null, body]);
-  }
-}
-
-function ensureChild(): ChildProcess | null {
-  if (child) return child;
-  if (unavailable) return null;
-
-  let spawned: ChildProcess;
-  try {
-    spawned = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-Command', '-'],
-      { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-  } catch (error) {
-    unavailable = true;
-    Logger.warn('Could not start the PowerShell host; falling back to one-shot samples', error);
-    return null;
-  }
-
-  if (!spawned.stdin || !spawned.stdout) {
-    unavailable = true;
-    Logger.warn('PowerShell host started without usable pipes; falling back to one-shot samples');
-    try {
-      spawned.kill();
-    } catch (_error) {
-      // Nothing useful to do.
-    }
-    return null;
-  }
-
-  spawned.stdout.setEncoding('utf8');
-  spawned.stdout.on('data', (chunk: string) => {
-    buffer += chunk;
-    consumeBuffer();
-  });
-  // stderr is drained but not surfaced: PowerShell writes non-terminating error
-  // records there, and the script's own try/catch already reports the failures
-  // that matter. Leaving it unread would eventually block the child on a full pipe.
-  if (spawned.stderr) spawned.stderr.resume();
-
-  spawned.on('error', (error: Error) => {
-    // A spawn-time ENOENT lands here rather than as a throw.
-    if (spawned === child) unavailable = true;
-    destroy(`PowerShell host error: ${error.message}`);
-  });
-  spawned.on('exit', () => {
-    // Not marked unavailable: an exit can be a one-off crash, and the next
-    // sample is allowed to try again.
-    if (spawned === child) destroy('PowerShell host exited');
-  });
-
-  child = spawned;
-  try {
-    spawned.stdin.write(`${INIT_SCRIPT}\n`);
-  } catch (error) {
-    destroy(`PowerShell host init failed: ${(error as Error).message}`);
-    return null;
-  }
-  Logger.log('PowerShell host started');
-  return spawned;
-}
-
-export const Manager = {
+  let child: ChildProcess | null = null;
+  let buffer = '';
+  let pending: PendingRequest | null = null;
   /**
-   * Evaluate `script` in the host and resolve with everything it wrote to stdout.
-   *
-   * Resolves `[error, null]` — never rejects — when the host is unavailable, the
-   * script raised, or `timeoutMs` elapsed. A timeout also tears the host down, on
-   * the assumption that a host which missed one deadline is wedged.
+   * Set when a spawn attempt fails outright (no powershell.exe on PATH, blocked by
+   * policy). Once unavailable we stop retrying the spawn on every sample — the
+   * caller's one-shot fallback would fail for the same reason anyway, and retrying
+   * a failing spawn every 3 seconds is its own performance problem.
    */
-  Run(script: string, timeoutMs: number): Promise<Result<string>> {
-    if (pending) {
-      return Promise.resolve([new Error('PowerShell host is busy'), null]);
-    }
-    const active = ensureChild();
-    if (!active || !active.stdin) {
-      return Promise.resolve([new Error('PowerShell host unavailable'), null]);
-    }
+  let unavailable = false;
 
-    return new Promise<Result<string>>((resolve) => {
-      const timer = setTimeout(() => {
-        destroy(`PowerShell host timed out after ${timeoutMs}ms`);
-      }, timeoutMs);
-      // Do not hold the event loop open on the sampler's account; the app should
-      // still be able to quit between samples.
-      if (typeof timer.unref === 'function') timer.unref();
-      pending = { resolve, timer };
+  function settle(result: Result<string>): void {
+    const request = pending;
+    pending = null;
+    if (!request) return;
+    if (request.timer) clearTimeout(request.timer);
+    request.resolve(result);
+  }
 
-      // One line, so the host evaluates it as a single statement chunk. The
-      // try/catch keeps a failing script from taking down a host we want to reuse.
-      const wrapped =
-        `Write-Output '${BEGIN_TOKEN}'; ` +
-        `try { ${script} } catch { Write-Output ('${ERROR_PREFIX}' + $_.Exception.Message) }; ` +
-        `Write-Output '${END_TOKEN}'\n`;
-
+  /** Tear the host down, failing any in-flight request. Safe to call repeatedly. */
+  function destroy(reason: string): void {
+    const dying = child;
+    child = null;
+    buffer = '';
+    if (dying) {
+      dying.removeAllListeners();
+      if (dying.stdout) dying.stdout.removeAllListeners();
+      if (dying.stderr) dying.stderr.removeAllListeners();
       try {
-        active.stdin!.write(wrapped);
-      } catch (error) {
-        destroy(`PowerShell host write failed: ${(error as Error).message}`);
+        dying.kill();
+      } catch (_error) {
+        // Already gone; nothing to do.
       }
+    }
+    settle([new Error(reason), null]);
+  }
+
+  // Drain whole responses out of the rolling stdout buffer. Anything before a
+  // BEGIN token is noise from the host itself and is discarded.
+  function consumeBuffer(): void {
+    for (;;) {
+      const beginAt = buffer.indexOf(BEGIN_TOKEN);
+      if (beginAt === -1) {
+        // Keep only a token's worth of tail, so a BEGIN split across two chunks
+        // still matches while the buffer cannot grow without bound.
+        if (buffer.length > BEGIN_TOKEN.length) {
+          buffer = buffer.slice(buffer.length - BEGIN_TOKEN.length);
+        }
+        return;
+      }
+      const endAt = buffer.indexOf(END_TOKEN, beginAt);
+      if (endAt === -1) return; // Response still arriving.
+
+      const body = buffer.slice(beginAt + BEGIN_TOKEN.length, endAt);
+      buffer = buffer.slice(endAt + END_TOKEN.length);
+
+      const errorAt = body.indexOf(ERROR_PREFIX);
+      if (errorAt !== -1) {
+        const message = body.slice(errorAt + ERROR_PREFIX.length).trim();
+        settle([new Error(message || 'PowerShell script failed'), null]);
+        continue;
+      }
+      settle([null, body]);
+    }
+  }
+
+  function ensureChild(): ChildProcess | null {
+    if (child) return child;
+    if (unavailable) return null;
+
+    let spawned: ChildProcess;
+    try {
+      spawned = spawn(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-NoLogo', '-ExecutionPolicy', 'Bypass', '-Command', '-'],
+        { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }
+      );
+    } catch (error) {
+      unavailable = true;
+      Logger.warn('Could not start the PowerShell host; falling back to one-shot samples', error);
+      return null;
+    }
+
+    if (!spawned.stdin || !spawned.stdout) {
+      unavailable = true;
+      Logger.warn('PowerShell host started without usable pipes; falling back to one-shot samples');
+      try {
+        spawned.kill();
+      } catch (_error) {
+        // Nothing useful to do.
+      }
+      return null;
+    }
+
+    spawned.stdout.setEncoding('utf8');
+    spawned.stdout.on('data', (chunk: string) => {
+      buffer += chunk;
+      consumeBuffer();
     });
-  },
+    // stderr is drained but not surfaced: PowerShell writes non-terminating error
+    // records there, and the script's own try/catch already reports the failures
+    // that matter. Leaving it unread would eventually block the child on a full pipe.
+    if (spawned.stderr) spawned.stderr.resume();
 
-  /** Stop the host. The next Run() starts a fresh one. */
-  Dispose(): void {
-    if (!child) return;
-    destroy('PowerShell host disposed');
-    Logger.log('PowerShell host stopped');
-  },
+    spawned.on('error', (error: Error) => {
+      // A spawn-time ENOENT lands here rather than as a throw.
+      if (spawned === child) unavailable = true;
+      destroy(`PowerShell host error: ${error.message}`);
+    });
+    spawned.on('exit', () => {
+      // Not marked unavailable: an exit can be a one-off crash, and the next
+      // sample is allowed to try again.
+      if (spawned === child) destroy('PowerShell host exited');
+    });
 
-  /** Test seam: forget the "spawn failed" latch. */
-  _reset(): void {
-    destroy('PowerShell host reset');
-    unavailable = false;
-  },
-};
+    child = spawned;
+    try {
+      spawned.stdin.write(`${INIT_SCRIPT}\n`);
+    } catch (error) {
+      destroy(`PowerShell host init failed: ${(error as Error).message}`);
+      return null;
+    }
+    Logger.log('PowerShell host started');
+    return spawned;
+  }
+
+  return {
+    /**
+     * Evaluate `script` in the host and resolve with everything it wrote to stdout.
+     *
+     * Resolves `[error, null]` — never rejects — when the host is unavailable, the
+     * script raised, or `timeoutMs` elapsed. A timeout also tears the host down, on
+     * the assumption that a host which missed one deadline is wedged.
+     */
+    Run(script: string, timeoutMs: number): Promise<Result<string>> {
+      if (pending) {
+        return Promise.resolve([new Error('PowerShell host is busy'), null]);
+      }
+      const active = ensureChild();
+      if (!active || !active.stdin) {
+        return Promise.resolve([new Error('PowerShell host unavailable'), null]);
+      }
+
+      return new Promise<Result<string>>((resolve) => {
+        const timer = setTimeout(() => {
+          destroy(`PowerShell host timed out after ${timeoutMs}ms`);
+        }, timeoutMs);
+        // Do not hold the event loop open on the sampler's account; the app should
+        // still be able to quit between samples.
+        if (typeof timer.unref === 'function') timer.unref();
+        pending = { resolve, timer };
+
+        // One line, so the host evaluates it as a single statement chunk. The
+        // try/catch keeps a failing script from taking down a host we want to reuse.
+        const wrapped =
+          `Write-Output '${BEGIN_TOKEN}'; ` +
+          `try { ${script} } catch { Write-Output ('${ERROR_PREFIX}' + $_.Exception.Message) }; ` +
+          `Write-Output '${END_TOKEN}'\n`;
+
+        try {
+          active.stdin!.write(wrapped);
+        } catch (error) {
+          destroy(`PowerShell host write failed: ${(error as Error).message}`);
+        }
+      });
+    },
+
+    /** Stop the host. The next Run() starts a fresh one. */
+    Dispose(): void {
+      if (!child) return;
+      destroy('PowerShell host disposed');
+      Logger.log('PowerShell host stopped');
+    },
+
+    /** Test seam: forget the "spawn failed" latch. */
+    _reset(): void {
+      destroy('PowerShell host reset');
+      unavailable = false;
+    },
+  };
+}
+
+/** The running-application sampler's host. */
+export const Manager = CreatePowerShellHost('PowerShellHost');

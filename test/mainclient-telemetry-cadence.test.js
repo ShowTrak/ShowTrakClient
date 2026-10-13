@@ -95,6 +95,14 @@ function createHarness({ displays = [], deltas = false } = {}) {
     '../ServerCapabilities': {
       Manager: { Probe: () => {}, Reset: () => {}, SupportsDeltas: () => deltas },
     },
+    '../AudioMonitor': {
+      Manager: {
+        Start: async () => {},
+        Stop: () => {},
+        RequestSample: () => {},
+        SetLevel: async () => ({ Success: true, Error: null }),
+      },
+    },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../Utils': { ...REAL_UTILS, Wait: async () => {} },
