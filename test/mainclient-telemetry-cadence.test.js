@@ -72,6 +72,9 @@ function createHarness({ displays = [], deltas = false } = {}) {
         OnUSBDisconnect: (callback) => {
           usb.disconnect = callback;
         },
+        OnUSBTopologyChange: (callback) => {
+          usb.topology = callback;
+        },
       },
     },
     '../DisplayMonitor': {
@@ -150,6 +153,33 @@ test('a USB hotplug reports the device without resending the whole list', async 
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(H.eventsNamed('USBDeviceDisconnected').length, 1);
     assert.equal(H.eventsNamed('USBDeviceList').length, listsAfterConnect);
+  } finally {
+    H.restore();
+  }
+});
+
+test('a change in what is plugged in resends the full list once, after it settles', async (t) => {
+  // Devices WebUSB cannot open (a driver that failed on plug-in) are never
+  // announced by a connect event; only the full list carries them. Plugging in a
+  // hub fires one topology change per port, and must still send one list.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const H = createHarness();
+  try {
+    await H.Manager.Init('uuid-1', '127.0.0.1', 3000);
+    await H.socket.handlers.get('connect')();
+    const before = H.eventsNamed('USBDeviceList').length;
+
+    H.usb().topology();
+    H.usb().topology();
+    t.mock.timers.tick(1000);
+    H.usb().topology();
+    t.mock.timers.tick(1999);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(H.eventsNamed('USBDeviceList').length, before, 'not before it settles');
+
+    t.mock.timers.tick(1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(H.eventsNamed('USBDeviceList').length, before + 1);
   } finally {
     H.restore();
   }

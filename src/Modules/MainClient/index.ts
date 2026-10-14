@@ -26,12 +26,20 @@ const Logger = CreateLogger('MainClient');
 // primary signal.
 const FULL_LIST_RESYNC_INTERVAL_MS = 60000;
 
+// After USB devices come or go, re-send the full list once things settle. The
+// connect/disconnect events only cover devices WebUSB can open, so this is how
+// a device whose driver failed on plug-in, or one moved to another port, reaches
+// the server promptly rather than at the next minute's resync. Debounced, so
+// plugging in a hub sends one list, not one per port.
+const USB_TOPOLOGY_RESYNC_DELAY_MS = 2000;
+
 let Socket: ShowTrakSocket | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
 let sysInfoInterval: NodeJS.Timeout | null = null;
 let deviceListInterval: NodeJS.Timeout | null = null;
 let displayListInterval: NodeJS.Timeout | null = null;
 let usbListenersRegistered = false;
+let usbTopologyTimer: NodeJS.Timeout | null = null;
 let displayListenersRegistered = false;
 let lastDisplaySignature: string | null = null;
 // Last display list actually reported, and so the baseline the next delta is
@@ -144,6 +152,18 @@ function registerUSBListeners(): void {
     }
     Socket.emit('USBDeviceDisconnected', Device);
   });
+
+  if (typeof USBMonitorManager.OnUSBTopologyChange === 'function') {
+    USBMonitorManager.OnUSBTopologyChange(() => {
+      if (usbTopologyTimer) clearTimeout(usbTopologyTimer);
+      usbTopologyTimer = setTimeout(() => {
+        usbTopologyTimer = null;
+        void UpdateDeviceList();
+      }, USB_TOPOLOGY_RESYNC_DELAY_MS);
+      // Never hold the process open waiting to resend a list.
+      if (typeof usbTopologyTimer.unref === 'function') usbTopologyTimer.unref();
+    });
+  }
 
   usbListenersRegistered = true;
 }
