@@ -41,6 +41,8 @@ function load({ snapshots = [], osError = null, osThrows = false, emitThrows = f
   };
 
   const { Manager } = loadWithMocks(MODULE_PATH, {
+    // Routes are covered by network-gateways.test.js; never shell out here.
+    './gateways': { ReadGateways: async () => [new Error('not read in tests'), null] },
     '../Logger': loggerStub,
     '../OS': {
       Manager: {

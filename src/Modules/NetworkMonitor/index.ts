@@ -4,6 +4,7 @@ import { CreateLogger } from '../Logger';
 import { Manager as OS } from '../OS';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
 import { DiffByKey, IsEmptyDiff } from '../Utils';
+import { ReadGateways, type GatewayMap } from './gateways';
 
 const Logger = CreateLogger('NetworkMonitor');
 
@@ -25,6 +26,21 @@ let _lastEmitAt = 0;
 // Last list actually reported, and so the baseline the next delta is computed
 // against. Distinct from _lastSignature, which only answers "did anything move".
 let _lastInterfaces: NetworkInterface[] = [];
+
+// Routers come from the routing table, which costs a process on macOS and
+// Windows — too much for the one-second poll. They are refreshed on their own
+// slower cadence, and at once when the interface list changes, in the
+// background: after the first, the poll never waits for one — it merges the
+// latest it has.
+const GATEWAY_REFRESH_INTERVAL_MS = 5000;
+// Null until the routing table has been read once. Until then interfaces carry
+// no `gateway` at all, which the server reads as "unknown" rather than "none";
+// after a failed refresh the last good map is kept for the same reason.
+let _gateways: GatewayMap | null = null;
+let _gatewaysReadAt = 0;
+let _gatewayRead: Promise<void> | null = null;
+let _interfacesSignature: string | null = null;
+let _gatewaysTried = false;
 
 function normalize(interfaces: NetworkInterface[] | null | undefined): NetworkInterface[] {
   try {
@@ -61,6 +77,30 @@ function normalize(interfaces: NetworkInterface[] | null | undefined): NetworkIn
   }
 }
 
+function withGateways(norm: NetworkInterface[]): NetworkInterface[] {
+  const gateways = _gateways;
+  if (!gateways) return norm;
+  return norm.map((iface) => ({ ...iface, gateway: gateways.get(iface.name) ?? null }));
+}
+
+function refreshGateways(interfaces: NetworkInterface[]): Promise<void> {
+  if (_gatewayRead) return _gatewayRead;
+  _gatewaysReadAt = Date.now();
+  _gatewayRead = ReadGateways(interfaces)
+    .then(([err, gateways]) => {
+      if (err || !gateways) {
+        Logger.debug('Reading default gateways failed', err);
+        return;
+      }
+      _gateways = gateways;
+    })
+    .catch((e) => Logger.debug('Reading default gateways failed', e))
+    .finally(() => {
+      _gatewayRead = null;
+    });
+  return _gatewayRead;
+}
+
 function signature(norm: NetworkInterface[]): string {
   try {
     return JSON.stringify(norm);
@@ -78,7 +118,22 @@ async function sampleAndMaybeEmit(): Promise<void> {
       Logger.error('GetNetworkInterfaces failed', err);
       return;
     }
-    const norm = normalize(interfaces);
+    const bare = normalize(interfaces);
+    const bareSig = signature(bare);
+    if (
+      bareSig !== _interfacesSignature ||
+      Date.now() - _gatewaysReadAt >= GATEWAY_REFRESH_INTERVAL_MS
+    ) {
+      _interfacesSignature = bareSig;
+      const read = refreshGateways(bare);
+      // The very first read is waited for, so a fresh connection's first full
+      // list carries its routers rather than following up a second later.
+      if (!_gatewaysTried) {
+        _gatewaysTried = true;
+        await read;
+      }
+    }
+    const norm = withGateways(bare);
     const sig = signature(norm);
     const changed = sig !== _lastSignature;
     const resyncDue = Date.now() - _lastEmitAt >= FULL_RESYNC_INTERVAL_MS;
@@ -151,6 +206,7 @@ export const Manager = {
     _inFlight = false;
     _lastEmitAt = 0;
     _lastInterfaces = [];
+    _interfacesSignature = null;
     Logger.log('NetworkMonitor stopped');
   },
 };

@@ -144,6 +144,8 @@ test('NetworkMonitor emits only on interface changes and stops cleanly', async (
   let idx = 0;
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
+    // Routes are covered by network-gateways.test.js; never shell out here.
+    './gateways': { ReadGateways: async () => [new Error('not read in tests'), null] },
     '../Logger': {
       CreateLogger: () => createSilentLogger(),
     },
@@ -199,6 +201,8 @@ test('NetworkMonitor resends the full list periodically even when nothing change
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
+    // Routes are covered by network-gateways.test.js; never shell out here.
+    './gateways': { ReadGateways: async () => [new Error('not read in tests'), null] },
     '../Logger': { CreateLogger: () => createSilentLogger() },
     '../OS': { Manager: { GetNetworkInterfaces: async () => [null, iface] } },
   });

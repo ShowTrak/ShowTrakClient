@@ -151,6 +151,8 @@ function loadNetworkMonitor({ deltas, snapshots }) {
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
+    // Routes are covered by network-gateways.test.js; never shell out here.
+    './gateways': { ReadGateways: async () => [new Error('not read in tests'), null] },
     '../Logger': { CreateLogger: () => createSilentLogger() },
     '../ServerCapabilities': { Manager: { SupportsDeltas: () => deltas } },
     '../OS': {
