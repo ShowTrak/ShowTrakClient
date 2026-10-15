@@ -63,17 +63,17 @@
     "@eslint/markdown": "^8.0.3",
     "@types/auto-launch": "^5.0.5",
     "@types/jquery": "^4.0.1",
-    "@types/node": "^26.1.1",
+    "@types/node": "^26.6.5",
     "c8": "^12.0.0",
     "electron": "^43.2.0",
-    "esbuild": "^0.28.1",
-    "eslint": "^10.8.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.12.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.8.0",
+    "globals": "^17.13.0",
     "husky": "^9.1.7",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.10",
     "typescript": "~5.9",
-    "typescript-eslint": "^8.65.0"
+    "typescript-eslint": "^8.71.2"
   },
   "dependencies": {
     "@showtrak/protocol": "file:./shared",
