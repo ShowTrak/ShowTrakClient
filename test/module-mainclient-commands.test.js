@@ -159,6 +159,10 @@ test('MainClient handles command events and reconnect lifecycle branches', async
         SetLevel: async () => ({ Success: true, Error: null }),
       },
     },
+    '../PowerMonitor': { Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} } },
+    '../TemperatureMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
+    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {},
@@ -362,6 +366,10 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
         RequestSample: () => {},
         SetLevel: async () => ({ Success: true, Error: null }),
       },
+    },
+    '../PowerMonitor': { Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} } },
+    '../TemperatureMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
     },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },

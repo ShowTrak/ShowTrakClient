@@ -83,8 +83,33 @@ function AUDIO_STUB(SetLevel) {
   };
 }
 
+/** A power/temperature monitor stand-in that records its lifecycle calls. */
+function MONITOR_STUB() {
+  const Calls = [];
+  return {
+    Calls,
+    Start: async (Socket) => {
+      Calls.push(['Start', Socket]);
+    },
+    Stop: () => {
+      Calls.push(['Stop']);
+    },
+    Dispose: () => {
+      Calls.push(['Dispose']);
+    },
+  };
+}
+
 /** Boot MainClient against a socket, capturing broadcast traffic. */
-async function boot({ socket = createSocket(), execute, audio, usb = {} } = {}) {
+async function boot({
+  socket = createSocket(),
+  execute,
+  audio,
+  power = MONITOR_STUB(),
+  temperature = MONITOR_STUB(),
+  display = {},
+  usb = {},
+} = {}) {
   const Broadcasts = [];
   const OriginalSetInterval = global.setInterval;
   global.setInterval = () => ({});
@@ -123,7 +148,7 @@ async function boot({ socket = createSocket(), execute, audio, usb = {} } = {}) 
         },
       },
       '../DisplayMonitor': {
-        Manager: { GetDisplays: async () => [null, []], OnDisplayChange: () => {} },
+        Manager: { GetDisplays: async () => [null, []], OnDisplayChange: () => {}, ...display },
       },
       '../ScriptManager': {
         Manager: {
@@ -136,6 +161,8 @@ async function boot({ socket = createSocket(), execute, audio, usb = {} } = {}) 
       },
       '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
       '../AudioMonitor': { Manager: audio || AUDIO_STUB() },
+      '../PowerMonitor': { Manager: power },
+      '../TemperatureMonitor': { Manager: temperature },
       '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
       '../Utils': { ...REAL_UTILS, Wait: async () => {} },
       '../ProfileManager': {
@@ -474,4 +501,56 @@ test('a USB hotplug asks the audio monitor to re-sample, connected or not', asyn
   socket.connected = false;
   usb.connect({ ProductName: 'Scarlett' });
   assert.equal(audio.Calls.filter((Call) => Call[0] === 'RequestSample').length, 3);
+});
+
+// --- Power, temperatures and display identity ------------------------------
+
+test('power and temperature monitors start on connect, stop on disconnect, and are disposed on terminate', async () => {
+  const power = MONITOR_STUB();
+  const temperature = MONITOR_STUB();
+  let identityDisposals = 0;
+  const { Manager, socket } = await boot({
+    power,
+    temperature,
+    display: {
+      Dispose: () => {
+        identityDisposals += 1;
+      },
+    },
+  });
+  await socket.trigger('connect');
+  assert.deepEqual(power.Calls, [['Start', socket]]);
+  assert.deepEqual(temperature.Calls, [['Start', socket]]);
+
+  // A disconnect only stops them: the power monitor keeps its sleep/wake
+  // listeners so the first report after reconnecting carries the timestamps.
+  socket.trigger('disconnect');
+  assert.deepEqual(power.Calls[1], ['Stop']);
+  assert.deepEqual(temperature.Calls[1], ['Stop']);
+  assert.equal(identityDisposals, 1, 'the display identity host is released on disconnect');
+
+  // A teardown (service restart) disposes, which also detaches the listeners,
+  // so the next Init can never register a second set.
+  await Manager.Terminate();
+  assert.ok(power.Calls.some((Call) => Call[0] === 'Dispose'));
+  assert.ok(temperature.Calls.some((Call) => Call[0] === 'Dispose'));
+  assert.ok(identityDisposals >= 2);
+});
+
+test('a failing power or temperature monitor never breaks the connection lifecycle', async () => {
+  const failing = () => ({
+    Start: async () => {
+      throw new Error('start failed');
+    },
+    Stop: () => {
+      throw new Error('stop failed');
+    },
+    Dispose: () => {
+      throw new Error('dispose failed');
+    },
+  });
+  const { Manager, socket } = await boot({ power: failing(), temperature: failing() });
+  await socket.trigger('connect');
+  socket.trigger('disconnect');
+  await Manager.Terminate();
 });

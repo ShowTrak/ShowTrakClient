@@ -1,25 +1,13 @@
 // Host telemetry: hostname, OS label, CPU/RAM/uptime vitals, network interfaces.
+import { execFile } from 'child_process';
 import os from 'os';
 
-import type { MacAddressMap, NetworkInterface, Vitals } from '@showtrak/protocol';
+import type { MacAddressEntry, MacAddressMap, NetworkInterface, Vitals } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
 
 // A MAC of all zeroes is what the OS reports for interfaces that have no
 // hardware address at all (VPN/tunnel adapters such as utun*, and loopback).
 const ZERO_MAC = '00:00:00:00:00:00';
-
-// One interface's entry in the map GetMacAddresses returns.
-//
-// NOTE: @showtrak/protocol declares `MacAddressMap = Record<string, string>`,
-// which does not match what is actually sent — the value is this object, not a
-// bare MAC string, and the Server's ClientManager.SystemInfo reads `.ipv4` and
-// `.mac` off it. The accurate shape is declared here and cast at the boundary;
-// correcting MacAddressMap belongs in the protocol submodule.
-interface MacAddressEntry {
-  ipv4?: string;
-  ipv6?: string;
-  mac?: string;
-}
 
 interface CpuTimesSnapshot {
   idle: number;
@@ -69,6 +57,96 @@ function sampleCPU(): void {
 // Initialize snapshot and start a 1s sampler; this aligns with Task Manager more closely on Windows
 __prevCpuTimes = snapshotCpuTimes();
 setInterval(sampleCPU, 1000);
+
+// --- macOS memory ------------------------------------------------------------
+//
+// On macOS `os.freemem()` is the kernel's free-page count, which excludes
+// everything the OS keeps as reclaimable file cache. A Mac that has been up for
+// a while has almost no truly free pages, so `total - free` read 90%+ on an idle
+// machine and the RAM figure (and any alarm on it) was meaningless there.
+//
+// Activity Monitor's "Memory Used" is app memory + wired + compressed, which
+// vm_stat exposes as page counts:
+//   (Anonymous pages - Pages purgeable) + Pages wired down + Pages occupied by compressor
+// Heartbeat reads vitals every second, so vm_stat is NOT run per call: a slow
+// background sampler keeps the last figure, and GetVitals falls back to
+// `total - free` until it has one (or whenever it fails).
+const MAC_MEMORY_SAMPLE_INTERVAL_MS = 5000;
+const MAC_MEMORY_TIMEOUT_MS = 4000;
+
+let MacUsedMemory: number | null = null;
+let MacMemorySampleInFlight = false;
+
+/**
+ * Bytes in use as Activity Monitor counts them, from `vm_stat` output, or null
+ * when the output is not recognisably vm_stat's. The page size comes from the
+ * header ("page size of 16384 bytes"): Apple silicon uses 16K pages and Intel
+ * 4K, so assuming either would be wrong by a factor of four on the other.
+ */
+export function ParseVmStat(Output: unknown): number | null {
+  const Text = String(Output ?? '');
+  const PageSizeMatch = /page size of (\d+) bytes/i.exec(Text);
+  const PageSize = PageSizeMatch ? Number(PageSizeMatch[1]) : NaN;
+  if (!Number.isFinite(PageSize) || PageSize <= 0) return null;
+
+  const Pages = (Label: string): number | null => {
+    const Match = new RegExp(`^\\s*"?${Label}"?:\\s+(\\d+)\\.?\\s*$`, 'mi').exec(Text);
+    return Match ? Number(Match[1]) : null;
+  };
+  const Anonymous = Pages('Anonymous pages');
+  const Wired = Pages('Pages wired down');
+  const Compressor = Pages('Pages occupied by compressor');
+  // Purgeable is subtracted rather than required: it is absent on some older
+  // releases, and counting it as zero only errs towards reading slightly high.
+  const Purgeable = Pages('Pages purgeable') ?? 0;
+  if (Anonymous === null || Wired === null || Compressor === null) return null;
+
+  const Used = (Math.max(0, Anonymous - Purgeable) + Wired + Compressor) * PageSize;
+  return Number.isFinite(Used) ? Used : null;
+}
+
+function sampleMacMemory(): void {
+  if (MacMemorySampleInFlight) return;
+  MacMemorySampleInFlight = true;
+  try {
+    execFile(
+      'vm_stat',
+      [],
+      { timeout: MAC_MEMORY_TIMEOUT_MS, maxBuffer: 256 * 1024 },
+      (Err, Stdout) => {
+        MacMemorySampleInFlight = false;
+        // Any failure drops back to `total - free` rather than holding on to a
+        // figure that is getting older by the second.
+        MacUsedMemory = Err ? null : ParseVmStat(Stdout);
+      }
+    );
+  } catch (_error) {
+    MacMemorySampleInFlight = false;
+    MacUsedMemory = null;
+  }
+}
+
+if (process.platform === 'darwin') {
+  sampleMacMemory();
+  const MacMemoryTimer = setInterval(sampleMacMemory, MAC_MEMORY_SAMPLE_INTERVAL_MS);
+  // Never the reason the app cannot quit.
+  if (MacMemoryTimer && typeof MacMemoryTimer.unref === 'function') MacMemoryTimer.unref();
+}
+
+/**
+ * Used physical memory in bytes, clamped to [0, total]. `MacUsed` is the
+ * vm_stat figure, honoured on macOS only; everywhere else (and on a Mac before
+ * the first sample) this is `total - free`, exactly as before.
+ */
+export function ComputeUsedMemory(
+  Total: number,
+  Free: number,
+  MacUsed: number | null,
+  Platform: string = process.platform
+): number {
+  const Used = Platform === 'darwin' && MacUsed !== null ? MacUsed : Total - Free;
+  return Math.min(Total, Math.max(0, Used));
+}
 
 // Format an uptime in seconds as HH:mm:ss, with an UNBOUNDED hours field.
 //
@@ -120,7 +198,7 @@ export const Manager = {
   async GetMacAddresses(): Promise<Result<MacAddressMap>> {
     try {
       const nics = os.networkInterfaces();
-      const results: Record<string, MacAddressEntry> = {};
+      const results: MacAddressMap = {};
 
       for (const [name, addrs] of Object.entries(nics)) {
         if (!Array.isArray(addrs)) continue;
@@ -147,7 +225,7 @@ export const Manager = {
         if (hasAddresses) results[name] = entry;
       }
 
-      return [null, results as unknown as MacAddressMap];
+      return [null, results];
     } catch (err) {
       return [err, null];
     }
@@ -155,7 +233,7 @@ export const Manager = {
 
   async GetVitals(): Promise<Vitals> {
     const TotalMemory = os.totalmem();
-    const FreeMemory = os.freemem();
+    const UsedMemory = ComputeUsedMemory(TotalMemory, os.freemem(), MacUsedMemory);
     const Uptime = os.uptime();
 
     return {
@@ -164,12 +242,15 @@ export const Manager = {
       },
       Ram: {
         Total: TotalMemory,
-        Used: TotalMemory - FreeMemory,
+        Used: UsedMemory,
         // Transmitted as a string by design — see RamVitals in @showtrak/protocol.
-        UsagePercentage: (((TotalMemory - FreeMemory) / TotalMemory) * 100).toFixed(2),
+        UsagePercentage: ((UsedMemory / TotalMemory) * 100).toFixed(2),
       },
       Uptime: {
         Formatted: FormatUptime(Uptime),
+        // Whole seconds alongside the display string, so the server can derive
+        // a boot time without parsing "HH:mm:ss" back apart.
+        Seconds: Math.max(0, Math.floor(Number(Uptime) || 0)),
       },
     };
   },

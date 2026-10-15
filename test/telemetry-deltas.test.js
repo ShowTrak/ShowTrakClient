@@ -292,7 +292,11 @@ test('the periodic resync sends the full list even with deltas enabled', async (
 function loadProcessMonitor({ deltas }) {
   const emissions = [];
   const socket = { connected: true, emit: (event, payload) => emissions.push([event, payload]) };
-  let sample = [null, ['Safari', 'Code']];
+  const names = (list) => ({
+    Processes: list.map((Name) => ({ Name })),
+    Capabilities: { Responding: false, Foreground: false },
+  });
+  let sample = [null, names(['Safari', 'Code'])];
   let intervalHandle = null;
 
   const originalSetInterval = global.setInterval;
@@ -324,6 +328,11 @@ function loadProcessMonitor({ deltas }) {
     socket,
     emissions,
     setSample: (next) => {
+      sample = [null, names(next)];
+    },
+    // A full sample: processes with their Responding verdicts, the focus, and
+    // what the platform says it can report.
+    setRichSample: (next) => {
       sample = [null, next];
     },
     setError: (error) => {
@@ -457,6 +466,216 @@ test('a collection failure is always reported in full, never as a delta', async 
     assert.equal(payload.Status.State, 'permission_denied');
     assert.equal(H.Manager.GetStatus().State, 'permission_denied');
 
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+// --- Hung applications and the focused application -------------------------
+
+const FULL_CAPABILITIES = { Responding: true, Foreground: true };
+
+function richSample(processes, foreground, capabilities = FULL_CAPABILITIES) {
+  return {
+    Processes: processes,
+    ...(capabilities.Foreground ? { Foreground: foreground } : {}),
+    Capabilities: capabilities,
+  };
+}
+
+test('an application going unresponsive is a Changed entry in a delta', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    H.setRichSample(
+      richSample(
+        [
+          { Name: 'QLab', Responding: true },
+          { Name: 'Code', Responding: true },
+        ],
+        'QLab'
+      )
+    );
+    await H.Manager.Start(H.socket);
+    const [, first] = H.emissions[0];
+    assert.deepEqual(first.Capabilities, FULL_CAPABILITIES);
+    assert.equal(first.Foreground, 'QLab');
+    assert.equal(first.Items.find((i) => i.Name === 'QLab').Responding, true);
+
+    H.setRichSample(
+      richSample(
+        [
+          { Name: 'QLab', Responding: false },
+          { Name: 'Code', Responding: true },
+        ],
+        'QLab'
+      )
+    );
+    H.advance(3000);
+    await H.tick();
+    const [event, delta] = H.emissions[1];
+    assert.equal(event, 'ApplicationDelta');
+    assert.deepEqual(delta.Changed, [{ Name: 'QLab', Count: 1, Responding: false }]);
+    assert.deepEqual(delta.Started, []);
+    assert.equal(delta.Foreground, 'QLab');
+    assert.deepEqual(delta.Capabilities, FULL_CAPABILITIES);
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('one hung instance marks the whole application as not responding', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    H.setRichSample(
+      richSample(
+        [
+          { Name: 'chrome', Responding: true },
+          { Name: 'chrome', Responding: false },
+          { Name: 'chrome', Responding: null },
+          { Name: 'mpv', Responding: true },
+          { Name: 'mpv', Responding: null },
+        ],
+        null
+      )
+    );
+    await H.Manager.Start(H.socket);
+    const items = H.emissions[0][1].Items;
+    assert.deepEqual(
+      items.find((i) => i.Name === 'chrome'),
+      {
+        Name: 'chrome',
+        Count: 3,
+        Responding: false,
+      }
+    );
+    // None hung, one unreadable: unknown, not "fine".
+    assert.equal(items.find((i) => i.Name === 'mpv').Responding, null);
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('a focus change alone is reported at once, as an empty delta carrying the new Foreground', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    const processes = [
+      { Name: 'QLab', Responding: true },
+      { Name: 'Code', Responding: true },
+    ];
+    H.setRichSample(richSample(processes, 'QLab'));
+    await H.Manager.Start(H.socket);
+
+    H.setRichSample(richSample(processes, 'code'));
+    H.advance(3000);
+    await H.tick();
+    assert.equal(H.emissions.length, 2, 'not held back until the keepalive');
+    const [event, delta] = H.emissions[1];
+    assert.equal(event, 'ApplicationDelta');
+    assert.deepEqual([delta.Started, delta.Stopped, delta.Changed], [[], [], []]);
+    // Spelled as its Items entry, so the server can match the two directly.
+    assert.equal(delta.Foreground, 'Code');
+
+    // And nothing more while nothing changes.
+    H.advance(3000);
+    await H.tick();
+    assert.equal(H.emissions.length, 2);
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('a focus change reaches an older server as a full snapshot', async () => {
+  const H = loadProcessMonitor({ deltas: false });
+  try {
+    const processes = [{ Name: 'QLab', Responding: true }];
+    H.setRichSample(richSample(processes, 'QLab'));
+    await H.Manager.Start(H.socket);
+    H.setRichSample(richSample(processes, null));
+    H.advance(3000);
+    await H.tick();
+    const [event, snapshot] = H.emissions[1];
+    assert.equal(event, 'RunningApplications');
+    assert.equal(snapshot.Foreground, null);
+    assert.equal(snapshot.Items.length, 1);
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('a filtered application in front is still named; the keepalive carries focus too', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    H.setRichSample(
+      richSample(
+        [
+          { Name: 'QLab', Responding: true },
+          { Name: 'explorer', Responding: true },
+        ],
+        'explorer'
+      )
+    );
+    await H.Manager.Start(H.socket);
+    const [, first] = H.emissions[0];
+    assert.deepEqual(
+      first.Items.map((i) => i.Name),
+      ['QLab'],
+      'explorer stays out of the application list'
+    );
+    // ...but it really does hold the focus, which is what an operator asking
+    // "is the show app in front?" needs to hear.
+    assert.equal(first.Foreground, 'explorer');
+
+    H.advance(20_000);
+    await H.tick();
+    const [, keepalive] = H.emissions[1];
+    assert.equal(keepalive.NoChanges, true);
+    assert.equal(keepalive.Foreground, 'explorer');
+    assert.deepEqual(keepalive.Capabilities, FULL_CAPABILITIES);
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('a platform without hung or focus detection sends neither field, and says so', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    await H.Manager.Start(H.socket);
+    const [, snapshot] = H.emissions[0];
+    assert.deepEqual(snapshot.Capabilities, { Responding: false, Foreground: false });
+    assert.equal('Foreground' in snapshot, false);
+    assert.equal(
+      snapshot.Items.some((i) => 'Responding' in i),
+      false
+    );
+    await H.Manager.Stop();
+  } finally {
+    H.restore();
+  }
+});
+
+test('losing focus detection mid-session is reported as a capability change', async () => {
+  const H = loadProcessMonitor({ deltas: true });
+  try {
+    const processes = [{ Name: 'QLab', Responding: true }];
+    H.setRichSample(richSample(processes, 'QLab'));
+    await H.Manager.Start(H.socket);
+    H.setRichSample(
+      richSample([{ Name: 'QLab' }], undefined, { Responding: false, Foreground: false })
+    );
+    H.advance(3000);
+    await H.tick();
+    const [event, payload] = H.emissions[1];
+    assert.equal(event, 'ApplicationDelta');
+    assert.deepEqual(payload.Capabilities, { Responding: false, Foreground: false });
+    assert.equal('Foreground' in payload, false);
+    // The item lost its Responding field, which is itself a change.
+    assert.deepEqual(payload.Changed, [{ Name: 'QLab', Count: 1 }]);
     await H.Manager.Stop();
   } finally {
     H.restore();

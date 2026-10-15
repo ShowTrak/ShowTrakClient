@@ -14,6 +14,8 @@ import { Manager as VariableStore } from '../Variables';
 import { Manager as NetworkMonitor } from '../NetworkMonitor';
 import { Manager as ProcessMonitor } from '../ProcessMonitor';
 import { Manager as AudioMonitor } from '../AudioMonitor';
+import { Manager as PowerMonitor } from '../PowerMonitor';
+import { Manager as TemperatureMonitor } from '../TemperatureMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
@@ -124,6 +126,15 @@ async function UpdateDeviceList(): Promise<void> {
     return;
   }
   Socket.emit('USBDeviceList', DeviceList);
+}
+
+/** Release the display identity lookup's resident state, where it has any. */
+function disposeDisplayIdentity(): void {
+  try {
+    if (typeof DisplayMonitorManager.Dispose === 'function') DisplayMonitorManager.Dispose();
+  } catch (_error) {
+    Logger.warn('Failed to release display identity lookup');
+  }
 }
 
 function registerUSBListeners(): void {
@@ -339,6 +350,20 @@ export const Manager = {
     } catch (_error) {
       Logger.warn('Failed to stop audio monitor during termination');
     }
+    // Dispose rather than Stop: a teardown also detaches their Electron
+    // powerMonitor listeners, which survive an ordinary disconnect (see
+    // PowerMonitor) but must not survive into the next Init and be added twice.
+    try {
+      PowerMonitor.Dispose();
+    } catch (_error) {
+      Logger.warn('Failed to stop power monitor during termination');
+    }
+    try {
+      TemperatureMonitor.Dispose();
+    } catch (_error) {
+      Logger.warn('Failed to stop temperature monitor during termination');
+    }
+    disposeDisplayIdentity();
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -429,6 +454,15 @@ export const Manager = {
       AudioMonitor.Start(ActiveSocket).catch(() => {
         Logger.warn('Failed to start audio monitor on connect');
       });
+      // Not awaited either: both answer within a moment, but on Windows the
+      // first sample starts a PowerShell host, and the WMI temperature query can
+      // take a few seconds on a machine without LibreHardwareMonitor.
+      PowerMonitor.Start(ActiveSocket).catch(() => {
+        Logger.warn('Failed to start power monitor on connect');
+      });
+      TemperatureMonitor.Start(ActiveSocket).catch(() => {
+        Logger.warn('Failed to start temperature monitor on connect');
+      });
     });
 
     ActiveSocket.on('disconnect', () => {
@@ -460,6 +494,20 @@ export const Manager = {
       } catch (_error) {
         Logger.warn('Failed to stop audio monitor on disconnect');
       }
+      // Stop, not Dispose: the power monitor keeps listening for sleep and wake
+      // while disconnected — a suspend is usually what dropped the link — so the
+      // first report after reconnecting carries the timestamps.
+      try {
+        PowerMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop power monitor on disconnect');
+      }
+      try {
+        TemperatureMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop temperature monitor on disconnect');
+      }
+      disposeDisplayIdentity();
     });
 
     ActiveSocket.on('connect_error', (Error) => {

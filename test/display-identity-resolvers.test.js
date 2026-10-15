@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // Exercises the per-platform resolvers in src/Modules/DisplayMonitor/identity.ts.
 //
@@ -37,10 +37,32 @@ const IDENTITY_PATH = path.join(
 );
 
 /** Load identity.ts with a scripted OS underneath it. */
-function load({ platform = 'darwin', files = {}, dirs = {}, command = () => null } = {}) {
+function load({
+  platform = 'darwin',
+  files = {},
+  dirs = {},
+  command = () => null,
+  host = null,
+} = {}) {
   const commands = [];
+  const hostRuns = [];
 
   const Mod = loadWithMocks(IDENTITY_PATH, {
+    '../Logger': { CreateLogger: () => createSilentLogger() },
+    // The Windows lookup runs in a persistent PowerShell host. `host` scripts its
+    // answer; without one the host reports itself unavailable, which is the
+    // path that falls back to the one-shot spawn below.
+    '../ProcessMonitor/powershell-host': {
+      CreatePowerShellHost: () => ({
+        Run: async (script, timeoutMs) => {
+          hostRuns.push({ script, timeoutMs });
+          if (!host) return [new Error('PowerShell host unavailable'), null];
+          const Result = host(script);
+          return Result instanceof Error ? [Result, null] : [null, Result];
+        },
+        Dispose: () => {},
+      }),
+    },
     'node:os': { platform: () => platform },
     'node:fs': {
       readdirSync: (dir) => {
@@ -65,7 +87,7 @@ function load({ platform = 'darwin', files = {}, dirs = {}, command = () => null
     },
   });
 
-  return { Mod, commands };
+  return { Mod, commands, hostRuns };
 }
 
 // ===========================================================================
@@ -546,4 +568,107 @@ test('an unknown size is 0, not NaN', async () => {
     assert.equal(physicalWidth(Display), 0);
     assert.equal(physicalHeight(Display), 0);
   }
+});
+
+// ===========================================================================
+// Windows
+// ===========================================================================
+
+// WmiMonitorID as the script's ConvertTo-Json prints it: one monitor is a bare
+// object, several are an array.
+const WINDOWS_TWO_MONITORS = JSON.stringify([
+  {
+    Manufacturer: 'DEL',
+    Name: 'DELL U2721DE',
+    Serial: 'ABC1234',
+    Product: 'A0F1',
+    Instance: 'DISPLAY\\DELA0F1\\5&1a2b3c&0&UID4352_0',
+  },
+  {
+    Manufacturer: 'SAM',
+    Name: 'S24R65x',
+    Serial: '',
+    Product: '7154',
+    Instance: 'DISPLAY\\SAM7154\\5&1a2b3c&0&UID4353_0',
+  },
+]);
+
+const WINDOWS_EXPECTED = [
+  {
+    Fingerprint: 'edid:DEL:A0F1:ABC1234',
+    Manufacturer: 'DEL',
+    Product: 'A0F1',
+    Name: 'DELL U2721DE',
+    Serial: 'ABC1234',
+    ConnectorKey: 'win:DISPLAY\\DELA0F1\\5&1a2b3c&0&UID4352_0',
+    Width: null,
+    Height: null,
+    Primary: false,
+  },
+  {
+    Fingerprint: 'edid:SAM:7154:',
+    Manufacturer: 'SAM',
+    Product: '7154',
+    Name: 'S24R65x',
+    Serial: null,
+    ConnectorKey: 'win:DISPLAY\\SAM7154\\5&1a2b3c&0&UID4353_0',
+    Width: null,
+    Height: null,
+    Primary: false,
+  },
+];
+
+test('Windows: identities are read through the persistent PowerShell host, not a spawn', async () => {
+  const { Mod, commands, hostRuns } = load({
+    platform: 'win32',
+    host: () => `\r\n${WINDOWS_TWO_MONITORS}\r\n`,
+  });
+  const identities = await Mod.GetDisplayIdentities();
+  assert.deepEqual(identities, WINDOWS_EXPECTED);
+  assert.equal(commands.length, 0, 'no powershell.exe is spawned while the host answers');
+  assert.equal(hostRuns.length, 1);
+  assert.match(hostRuns[0].script, /WmiMonitorID/);
+  // The host session is shared by every later lookup, so the script's
+  // ErrorActionPreference must not leak into it.
+  assert.match(hostRuns[0].script, /^& \{/);
+  assert.doesNotMatch(hostRuns[0].script, /\n/, 'the host evaluates one line per request');
+});
+
+test('Windows: an unavailable host falls back to the one-shot spawn with identical output', async () => {
+  const { Mod, commands, hostRuns } = load({
+    platform: 'win32',
+    command: (cmd) => (cmd === 'powershell.exe' ? WINDOWS_TWO_MONITORS : null),
+  });
+  const identities = await Mod.GetDisplayIdentities();
+  assert.equal(hostRuns.length, 1, 'the host is tried first');
+  assert.deepEqual(identities, WINDOWS_EXPECTED);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0].cmd, 'powershell.exe');
+  assert.deepEqual(commands[0].args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
+  assert.equal(commands[0].args[3], hostRuns[0].script, 'the same script either way');
+});
+
+test('Windows: a failing host script also falls back; one monitor and no monitors both parse', async () => {
+  const single = load({
+    platform: 'win32',
+    host: () => new Error('Get-CimInstance : Access denied'),
+    command: () =>
+      JSON.stringify({
+        Manufacturer: 'DEL',
+        Name: 'U2721DE',
+        Serial: 'X',
+        Product: 'A0F1',
+        Instance: 'I',
+      }),
+  });
+  const one = await single.Mod.GetDisplayIdentities();
+  assert.equal(one.length, 1);
+  assert.equal(one[0].Fingerprint, 'edid:DEL:A0F1:X');
+
+  const none = load({ platform: 'win32', host: () => '' });
+  assert.deepEqual(await none.Mod.GetDisplayIdentities(), []);
+  assert.equal(none.commands.length, 0, 'an empty answer is an answer, not a host failure');
+
+  const garbage = load({ platform: 'win32', host: () => 'not json' });
+  assert.deepEqual(await garbage.Mod.GetDisplayIdentities(), [], 'fail-soft');
 });

@@ -4,6 +4,7 @@ import type { ClientDisplay, DisplayIdentitySource } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
 import { CreateLogger } from '../Logger';
 import {
+  DisposeIdentityHost,
   GetDisplayIdentities,
   matchDisplaysToIdentities,
   _internal as IdentityInternal,
@@ -239,6 +240,15 @@ export const Manager = {
     screen.on('display-added', handler);
     screen.on('display-removed', handler);
     screen.on('display-metrics-changed', handler);
+  },
+
+  /**
+   * Release the Windows identity lookup's PowerShell host. Called when the
+   * connection drops: lookups only happen while reporting, and a host idling
+   * through an outage is ~40MB for nothing. The next lookup starts a fresh one.
+   */
+  Dispose(): void {
+    DisposeIdentityHost();
   },
 };
 

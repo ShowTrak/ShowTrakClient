@@ -145,6 +145,10 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
         SetLevel: async () => ({ Success: true, Error: null }),
       },
     },
+    '../PowerMonitor': { Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} } },
+    '../TemperatureMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
+    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {

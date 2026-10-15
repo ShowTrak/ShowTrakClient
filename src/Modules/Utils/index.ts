@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 export async function Wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -104,4 +106,66 @@ export function DiffByKey<T>(
 /** Whether a diff carries nothing at all, and so is not worth emitting. */
 export function IsEmptyDiff<T>(Diff: KeyedDiff<T>): boolean {
   return Diff.Added.length === 0 && Diff.Removed.length === 0 && Diff.Changed.length === 0;
+}
+
+/**
+ * The full path of an executable on PATH, or null when there is none.
+ *
+ * Optional helpers (xdotool, nvidia-smi) are looked up this way ONCE and the
+ * answer cached by the caller, rather than discovered by spawning them and
+ * catching ENOENT on every poll — a failed spawn is not free, and a monitor that
+ * polls every few seconds would pay it forever on every machine without the tool.
+ *
+ * `Exists` is injectable for tests; by default it asks the filesystem whether the
+ * candidate is an executable file (on Windows, any file: there is no execute bit,
+ * which is what PATHEXT stands in for).
+ */
+export function FindOnPath(
+  Command: string,
+  Env: NodeJS.ProcessEnv = process.env,
+  Platform: string = process.platform,
+  Exists: (Candidate: string) => boolean = DefaultExecutableExists
+): string | null {
+  if (!Command) return null;
+  const Separator = Platform === 'win32' ? ';' : ':';
+  const Slash = Platform === 'win32' ? '\\' : '/';
+  const RawPath = Env.PATH ?? Env.Path ?? '';
+  const Directories = String(RawPath)
+    .split(Separator)
+    .map((Entry) => Entry.trim().replace(/^"(.*)"$/, '$1'))
+    .filter(Boolean);
+  const Extensions =
+    Platform === 'win32'
+      ? [
+          '',
+          ...String(Env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
+            .split(';')
+            .map((Entry) => Entry.trim().toLowerCase())
+            .filter(Boolean),
+        ]
+      : [''];
+  for (const Directory of Directories) {
+    const Base = Directory.endsWith(Slash) ? Directory : `${Directory}${Slash}`;
+    for (const Extension of Extensions) {
+      const Candidate = `${Base}${Command}${Extension}`;
+      try {
+        if (Exists(Candidate)) return Candidate;
+      } catch (_error) {
+        // An unreadable PATH entry is the same as a missing one.
+      }
+    }
+  }
+  return null;
+}
+
+function DefaultExecutableExists(Candidate: string): boolean {
+  try {
+    const Stats = fs.statSync(Candidate);
+    if (!Stats.isFile()) return false;
+    if (process.platform === 'win32') return true;
+    fs.accessSync(Candidate, fs.constants.X_OK);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }

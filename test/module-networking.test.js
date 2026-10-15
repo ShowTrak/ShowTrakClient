@@ -272,7 +272,11 @@ test('ProcessMonitor emits on change, stays quiet otherwise, and reports errors'
 
   // What the stubbed sampler returns next. Reassigned by the test to simulate an
   // application starting, or the collection failing outright.
-  let sample = [null, ['Safari', 'Code']];
+  const names = (list) => ({
+    Processes: list.map((Name) => ({ Name })),
+    Capabilities: { Responding: false, Foreground: false },
+  });
+  let sample = [null, names(['Safari', 'Code'])];
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'ProcessMonitor', 'index.js');
   const { Manager, _constants } = loadWithMocks(modulePath, {
@@ -323,7 +327,7 @@ test('ProcessMonitor emits on change, stays quiet otherwise, and reports errors'
     assert.deepEqual(socketEmits[1][1].Items, []);
 
     // A change is reported immediately, with the full list.
-    sample = [null, ['Safari', 'Code', 'Notion']];
+    sample = [null, names(['Safari', 'Code', 'Notion'])];
     now += 3000;
     await tick();
     assert.equal(socketEmits.length, 3);

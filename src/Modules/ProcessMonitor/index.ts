@@ -1,11 +1,20 @@
-import type { RunningApplicationItem } from '@showtrak/protocol';
+import type {
+  RunningApplicationItem,
+  RunningApplicationsCapabilities,
+  RunningApplicationsSnapshot,
+} from '@showtrak/protocol';
 import type { ProcessMonitorState, ProcessMonitorStatus } from '../../types/client';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
 import { DiffByKey, IsEmptyDiff } from '../Utils';
-import { collectRunningApplications, disposeSamplers } from './samplers';
+import {
+  collectRunningApplications,
+  disposeSamplers,
+  type ApplicationProcess,
+  type ApplicationSample,
+} from './samplers';
 
 const Logger = CreateLogger('ProcessMonitor');
 
@@ -42,6 +51,11 @@ let lastFullEmitAt = 0;
 // Last item list actually reported, and so the baseline the next delta is
 // computed against.
 let lastItems: RunningApplicationItem[] = [];
+// Foreground and capabilities as last reported. Kept apart from the item
+// signature because they change without the application set changing — focus
+// moves far more often than anything starts or quits — and the delta path has
+// to tell "only the focus moved" from "the list changed".
+let lastExtrasSignature: string | null = null;
 let currentStatus: ProcessMonitorStatus = {
   State: 'unknown',
   Message: null,
@@ -82,24 +96,44 @@ interface NormalizedNames {
   Items: RunningApplicationItem[];
   TotalCount: number;
   Truncated: boolean;
+  /** Lower-cased name -> the Name its entry is reported under, before truncation. */
+  NamesByKey: Map<string, string>;
 }
 
-function normalizeNames(names: unknown): NormalizedNames {
+/**
+ * Fold a sampler's processes into one entry per application.
+ *
+ * `Responding` is only set when the platform can tell (`withResponding`); an
+ * application is reported as not responding when ANY of its instances is hung,
+ * since one frozen window is the fault an operator needs to see, and as null
+ * (unknown) when none is hung but at least one could not be read.
+ */
+function normalizeNames(processes: unknown, withResponding = false): NormalizedNames {
   const counts = new Map<string, RunningApplicationItem>();
-  for (const rawName of Array.isArray(names) ? names : []) {
-    if (typeof rawName !== 'string') continue;
-    const name = rawName.trim();
+  const namesByKey = new Map<string, string>();
+  for (const raw of Array.isArray(processes) ? processes : []) {
+    if (!raw || typeof raw !== 'object') continue;
+    const entry = raw as ApplicationProcess;
+    if (typeof entry.Name !== 'string') continue;
+    const name = entry.Name.trim();
     if (!name) continue;
     const key = name.toLowerCase();
+    if (!namesByKey.has(key)) namesByKey.set(key, name);
     if (IGNORED_APPLICATION_NAMES.has(key)) continue;
+    const responding =
+      typeof entry.Responding === 'boolean' ? entry.Responding : (null as boolean | null);
     const current = counts.get(key);
     if (current) {
       current.Count += 1;
+      if (withResponding && current.Responding !== false) {
+        current.Responding = responding === false ? false : current.Responding && responding;
+      }
       continue;
     }
     counts.set(key, {
       Name: name,
       Count: 1,
+      ...(withResponding ? { Responding: responding } : {}),
     });
   }
 
@@ -114,7 +148,25 @@ function normalizeNames(names: unknown): NormalizedNames {
     Items: limitedItems,
     TotalCount: totalCount,
     Truncated: totalCount > limitedItems.length,
+    NamesByKey: namesByKey,
   };
+}
+
+/**
+ * The focused application's name, spelled the way its `Items` entry is, so the
+ * server can match the two directly. An application filtered out of the list (a
+ * shell, Explorer, the desktop, ShowTrak itself) is still named: it really does
+ * hold the focus, and that is exactly what "the show app is not in front" needs
+ * to know.
+ */
+export function NormalizeForeground(
+  raw: unknown,
+  namesByKey: ReadonlyMap<string, string>
+): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.trim();
+  if (!name) return null;
+  return namesByKey.get(name.toLowerCase()) ?? name;
 }
 
 interface ApplicationsSnapshot {
@@ -122,18 +174,54 @@ interface ApplicationsSnapshot {
   TotalCount: number;
   Truncated: boolean;
   Items: RunningApplicationItem[];
+  /** Absent when the platform cannot report it, as on the wire. */
+  Foreground?: string | null;
+  Capabilities: RunningApplicationsCapabilities;
+  /** The item list's change signature. */
   Signature: string;
+  /** Foreground + capabilities, which change independently of the list. */
+  ExtrasSignature: string;
 }
 
-function buildSnapshot(names: unknown): ApplicationsSnapshot {
-  const normalized = normalizeNames(names);
-  const signature = normalized.Items.map((item) => `${item.Name}:${item.Count}`).join('|');
+/** What identifies an item for change detection: a Responding flip is a change. */
+function itemSignature(item: RunningApplicationItem): string {
+  const responding = item.Responding === undefined ? '' : `:${String(item.Responding)}`;
+  return `${item.Name}:${item.Count}${responding}`;
+}
+
+function buildSnapshot(sample: ApplicationSample | null | undefined): ApplicationsSnapshot {
+  const capabilities: RunningApplicationsCapabilities = {
+    Responding: !!sample?.Capabilities?.Responding,
+    Foreground: !!sample?.Capabilities?.Foreground,
+  };
+  const normalized = normalizeNames(sample?.Processes, capabilities.Responding);
+  const signature = normalized.Items.map(itemSignature).join('|');
+  const foreground = capabilities.Foreground
+    ? NormalizeForeground(sample?.Foreground, normalized.NamesByKey)
+    : undefined;
   return {
     SampledAt: Date.now(),
     TotalCount: normalized.TotalCount,
     Truncated: normalized.Truncated,
     Items: normalized.Items,
+    ...(foreground !== undefined ? { Foreground: foreground } : {}),
+    Capabilities: capabilities,
     Signature: signature,
+    ExtrasSignature: JSON.stringify([
+      foreground === undefined ? '\u0000absent' : foreground,
+      capabilities.Responding,
+      capabilities.Foreground,
+    ]),
+  };
+}
+
+/** The wire fields every report carries about focus and what is reportable. */
+function extrasOf(
+  snapshot: ApplicationsSnapshot
+): Pick<RunningApplicationsSnapshot, 'Foreground' | 'Capabilities'> {
+  return {
+    ...(snapshot.Foreground !== undefined ? { Foreground: snapshot.Foreground } : {}),
+    Capabilities: snapshot.Capabilities,
   };
 }
 
@@ -188,13 +276,16 @@ function classifyCollectionError(error: unknown): { State: ProcessMonitorState; 
 
 async function emitSnapshot(force = false): Promise<void> {
   if (!activeSocket || !activeSocket.connected) return;
-  const [error, names] = await collectRunningApplications();
-  if (error) {
+  const [error, sample] = await collectRunningApplications();
+  if (error || !sample) {
     Logger.warn('Failed to collect running applications');
     const status = classifyCollectionError(error);
     setStatus(status);
     lastEmitAt = Date.now();
     lastFullEmitAt = lastEmitAt;
+    // Foreground and capabilities are left out: nothing was read, and the status
+    // says why. The next good sample differs from this, so it is reported.
+    lastExtrasSignature = null;
     activeSocket.emit('RunningApplications', {
       SampledAt: lastEmitAt,
       TotalCount: 0,
@@ -205,8 +296,12 @@ async function emitSnapshot(force = false): Promise<void> {
     return;
   }
   const statusChanged = setStatus({ State: 'ok', Message: null });
-  const snapshot = buildSnapshot(names);
-  const changed = snapshot.Signature !== lastSignature;
+  const snapshot = buildSnapshot(sample);
+  const itemsChanged = snapshot.Signature !== lastSignature;
+  // A hung application or a focus change is news the moment it is seen, so both
+  // count as a change here; the keepalive below never stands in for them.
+  const extrasChanged = snapshot.ExtrasSignature !== lastExtrasSignature;
+  const changed = itemsChanged || extrasChanged;
   const now = Date.now();
 
   if (!force && !changed && !statusChanged) {
@@ -222,6 +317,7 @@ async function emitSnapshot(force = false): Promise<void> {
         Truncated: snapshot.Truncated,
         Items: snapshot.Items,
         Status: currentStatus,
+        ...extrasOf(snapshot),
       });
       return;
     }
@@ -234,6 +330,7 @@ async function emitSnapshot(force = false): Promise<void> {
         Items: [],
         Status: currentStatus,
         NoChanges: true,
+        ...extrasOf(snapshot),
       });
     }
     return;
@@ -247,10 +344,13 @@ async function emitSnapshot(force = false): Promise<void> {
       lastItems,
       snapshot.Items,
       (item) => (item && item.Name ? item.Name.toLowerCase() : null),
-      (item) => `${item.Name}:${item.Count}`
+      itemSignature
     );
-    if (!IsEmptyDiff(delta)) {
+    // A focus change with the list untouched is still a delta: an empty one,
+    // carrying the new Foreground, which every delta does.
+    if (!IsEmptyDiff(delta) || !itemsChanged) {
       lastSignature = snapshot.Signature;
+      lastExtrasSignature = snapshot.ExtrasSignature;
       lastItems = snapshot.Items;
       lastEmitAt = now;
       activeSocket.emit('ApplicationDelta', {
@@ -261,12 +361,14 @@ async function emitSnapshot(force = false): Promise<void> {
         TotalCount: snapshot.TotalCount,
         Truncated: snapshot.Truncated,
         Status: currentStatus,
+        ...extrasOf(snapshot),
       });
       return;
     }
   }
 
   lastSignature = snapshot.Signature;
+  lastExtrasSignature = snapshot.ExtrasSignature;
   lastItems = snapshot.Items;
   lastEmitAt = now;
   lastFullEmitAt = now;
@@ -276,6 +378,7 @@ async function emitSnapshot(force = false): Promise<void> {
     Truncated: snapshot.Truncated,
     Items: snapshot.Items,
     Status: currentStatus,
+    ...extrasOf(snapshot),
   });
 }
 
@@ -300,6 +403,7 @@ export const Manager = {
     activeSocket = Socket || null;
     clearMonitorInterval();
     lastSignature = null;
+    lastExtrasSignature = null;
     lastEmitAt = 0;
     lastFullEmitAt = 0;
     lastItems = [];
@@ -315,6 +419,7 @@ export const Manager = {
     clearMonitorInterval();
     activeSocket = null;
     lastSignature = null;
+    lastExtrasSignature = null;
     lastEmitAt = 0;
     lastFullEmitAt = 0;
     lastItems = [];

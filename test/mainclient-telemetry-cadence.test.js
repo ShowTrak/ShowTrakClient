@@ -106,6 +106,10 @@ function createHarness({ displays = [], deltas = false } = {}) {
         SetLevel: async () => ({ Success: true, Error: null }),
       },
     },
+    '../PowerMonitor': { Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} } },
+    '../TemperatureMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
+    },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../Utils': { ...REAL_UTILS, Wait: async () => {} },

@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 
+import { CreatePowerShellHost } from '../ProcessMonitor/powershell-host';
 import { parseEdid, fingerprintFromEdid } from './edid';
 
 /** A physical monitor as reported by one of the per-platform resolvers. */
@@ -212,7 +213,12 @@ async function getMacIdentities(): Promise<DisplayIdentity[]> {
 // ---------------------------------------------------------------------------
 // Windows: PowerShell WmiMonitorID (manufacturer + product + serial + name)
 // ---------------------------------------------------------------------------
+//
+// The script runs inside `& { }` so its `$ErrorActionPreference` and variables
+// stay local to the call: it is evaluated in a persistent PowerShell session
+// shared with every later lookup, and must not change that session's defaults.
 const WINDOWS_PS_SCRIPT = [
+  '& {',
   '$ErrorActionPreference = "SilentlyContinue";',
   '$ids = Get-CimInstance -Namespace root\\wmi -ClassName WmiMonitorID;',
   '$out = foreach ($m in $ids) {',
@@ -226,7 +232,36 @@ const WINDOWS_PS_SCRIPT = [
   '  }',
   '};',
   '$out | ConvertTo-Json -Compress',
+  '}',
 ].join(' ');
+
+// The lookup used to spawn a fresh powershell.exe on every identity-cache miss —
+// on connect, on every display hotplug burst and on the minute's resync once the
+// 30-second cache had lapsed — paying PowerShell's ~0.5s cold start each time.
+// A persistent host of its own (a host serves one request at a time, and the
+// other samplers run on unrelated timers) makes a repeat lookup a stdin write.
+const WINDOWS_HOST_TIMEOUT_MS = 10000;
+const WindowsHost = CreatePowerShellHost('DisplayPowerShellHost');
+
+/**
+ * Run the WMI query in the persistent host, falling back to the original
+ * one-shot spawn when the host is unavailable or fails, exactly as the
+ * application sampler degrades. Null when neither produced output.
+ */
+async function runWindowsIdentityQuery(): Promise<string | null> {
+  const [hostError, output] = await WindowsHost.Run(WINDOWS_PS_SCRIPT, WINDOWS_HOST_TIMEOUT_MS);
+  if (!hostError && output !== null) return output;
+  return runCommand(
+    'powershell.exe',
+    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PS_SCRIPT],
+    { timeout: 10000 }
+  );
+}
+
+/** Stop the Windows identity host. The next lookup starts a fresh one. */
+export function DisposeIdentityHost(): void {
+  WindowsHost.Dispose();
+}
 
 interface WindowsMonitorRow {
   Manufacturer?: unknown;
@@ -237,11 +272,7 @@ interface WindowsMonitorRow {
 }
 
 async function getWindowsIdentities(): Promise<DisplayIdentity[]> {
-  const stdout = await runCommand(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PS_SCRIPT],
-    { timeout: 10000 }
-  );
+  const stdout = await runWindowsIdentityQuery();
   if (!stdout || !stdout.trim()) return [];
 
   let parsed: WindowsMonitorRow | WindowsMonitorRow[];
@@ -378,4 +409,6 @@ export const _internal = {
   getWindowsIdentities,
   physicalWidth,
   physicalHeight,
+  WINDOWS_PS_SCRIPT,
+  WindowsHost,
 };
