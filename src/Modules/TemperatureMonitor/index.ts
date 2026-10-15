@@ -30,8 +30,7 @@ const UNSUPPORTED_MESSAGES: Record<string, string> = {
   linux: 'No readable temperature sensors. This machine exposes no hwmon or thermal-zone sensors.',
   darwin: 'macOS does not report temperatures or thermal pressure to this client.',
 };
-const MAC_THERMAL_STATE_MESSAGE =
-  'macOS reports thermal pressure only; temperatures need administrator tools';
+const MAC_THERMAL_STATE_MESSAGE = 'macOS reports thermal pressure only.';
 
 let activeSocket: ShowTrakSocket | null = null;
 let pollTimer: NodeJS.Timeout | null = null;

@@ -360,7 +360,7 @@ test('BuildSnapshot: sensors are ok; macOS thermal pressure alone is ok; nothing
     );
     assert.deepEqual(mac.Status, {
       State: 'ok',
-      Message: 'macOS reports thermal pressure only; temperatures need administrator tools',
+      Message: 'macOS reports thermal pressure only.',
       Platform: 'darwin',
       Backend: 'thermal-state',
     });
