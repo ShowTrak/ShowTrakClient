@@ -4,7 +4,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { loadWithMocks } = require('./test-helpers');
+const { loadWithMocks, trackLoadTimeListeners } = require('./test-helpers');
+
+// Each fresh Logger attaches its stdout/stderr 'error' latch; detach them after
+// every test so the copies do not pile up across the file.
+const ListenerReleases = [];
+test.afterEach(() => {
+  while (ListenerReleases.length) ListenerReleases.pop()();
+});
 
 // Exercises the log-level gating in src/Modules/Logger/index.ts.
 //
@@ -66,18 +73,22 @@ function loadLogger({ level, nodeEnv, packaged = false } = {}) {
 
   let Mod;
   try {
-    Mod = loadWithMocks(LOGGER_PATH, {
-      picocolors: IDENTITY_COLORS,
-      'electron-squirrel-startup': false,
-      '../AppData': { Manager: { GetLogsDirectory: () => LogRoot } },
-      fs: {
-        existsSync: () => true,
-        mkdirSync: () => {},
-        writeFileSync: () => {},
-        appendFileSync: (_target, content) => appended.push(String(content)),
-      },
-      path,
-    });
+    const Loaded = trackLoadTimeListeners(() =>
+      loadWithMocks(LOGGER_PATH, {
+        picocolors: IDENTITY_COLORS,
+        'electron-squirrel-startup': false,
+        '../AppData': { Manager: { GetLogsDirectory: () => LogRoot } },
+        fs: {
+          existsSync: () => true,
+          mkdirSync: () => {},
+          writeFileSync: () => {},
+          appendFileSync: (_target, content) => appended.push(String(content)),
+        },
+        path,
+      })
+    );
+    Mod = Loaded.result;
+    ListenerReleases.push(Loaded.release);
   } finally {
     console.log = OriginalLog;
     if (PrevLevel === undefined) delete process.env.LOG_LEVEL;

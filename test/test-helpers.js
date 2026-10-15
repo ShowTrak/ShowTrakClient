@@ -114,6 +114,37 @@ function loadWithMocks(modulePath, mocks = {}, { clearCache = true } = {}) {
   return withMocks(mocks, () => require(modulePath));
 }
 
+// Process-wide listeners a module attaches at load time: Logger latches its
+// console sink off on a stdout/stderr 'error', and the process guards hook
+// uncaughtException/unhandledRejection. In the app each runs once, but a test
+// file that fresh-loads such a module per test adds another set every time and
+// trips MaxListenersExceededWarning after ten.
+const LOAD_TIME_LISTENERS = [
+  [process, 'uncaughtException'],
+  [process, 'unhandledRejection'],
+  [process.stdout, 'error'],
+  [process.stderr, 'error'],
+];
+
+// Run `load` (typically a loadWithMocks call) and return its result plus a
+// `release` that detaches exactly the load-time listeners it added. Call
+// release from afterEach so each test's copy is gone before the next loads.
+function trackLoadTimeListeners(load) {
+  const Before = LOAD_TIME_LISTENERS.map(([Emitter, Event]) => new Set(Emitter.listeners(Event)));
+  const result = load();
+  const Added = [];
+  LOAD_TIME_LISTENERS.forEach(([Emitter, Event], Index) => {
+    for (const Listener of Emitter.listeners(Event)) {
+      if (!Before[Index].has(Listener)) Added.push([Emitter, Event, Listener]);
+    }
+  });
+  const release = () => {
+    for (const [Emitter, Event, Listener] of Added) Emitter.removeListener(Event, Listener);
+    Added.length = 0;
+  };
+  return { result, release };
+}
+
 // Evict `entry` and every already-loaded module under the same build root
 // (dist/ or dist-test/), leaving node_modules cached.
 function clearFirstPartyCache(entry) {
@@ -170,6 +201,7 @@ function createSilentLogger(overrides = {}) {
 module.exports = {
   withMocks,
   loadWithMocks,
+  trackLoadTimeListeners,
   normalizeRequest,
   createSilentLogger,
 };

@@ -3,7 +3,14 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { loadWithMocks, trackLoadTimeListeners, createSilentLogger } = require('./test-helpers');
+
+// Each harness fresh-loads main.js, which installs the process guards; detach
+// them after every test so the copies do not pile up across the file.
+const ListenerReleases = [];
+test.afterEach(() => {
+  while (ListenerReleases.length) ListenerReleases.pop()();
+});
 
 // Utils is pure and side-effect free, so the real module is spread in and only
 // Wait is overridden (to avoid real delays). Stubbing Utils wholesale meant that
@@ -127,124 +134,127 @@ function createHarness({ profile, discover = [], onCandidate, primaryFailures = 
     removeAllListeners: () => {},
   };
 
-  loadWithMocks(MODULE_PATH, {
-    electron: {
-      app: {
-        requestSingleInstanceLock: () => true,
-        quit: () => {},
-        whenReady: () => Promise.resolve(),
-        on: () => {},
-        isPackaged: false,
-        dock: { hide: () => {}, show: () => {} },
-      },
-      BrowserWindow: function BrowserWindow() {
-        return fakeWindow;
-      },
-      Menu: { buildFromTemplate: () => ({}) },
-      // Deliberately unavailable, on every platform.
-      //
-      // Recovery status is only pushed to an open window, and main.ts only
-      // creates one when it CANNOT put an icon in the tray (with a tray, the
-      // window appears when the operator opens it). So a working tray means
-      // these statuses are computed and dropped, and there is nothing to
-      // observe.
-      //
-      // This was previously implicit and only worked by accident: the
-      // nativeImage stub below returned a resized image with no isEmpty(), so
-      // tray creation threw on macOS and took the fallback path — while on
-      // Linux the tray succeeded and every test in this file saw nothing at
-      // all. Failing it explicitly makes the harness behave the same
-      // everywhere.
-      Tray: function Tray() {
-        throw new Error('no system tray in this environment');
-      },
-      nativeImage: {
-        createFromPath: () => ({
-          isEmpty: () => false,
-          resize: () => ({ isEmpty: () => false, setTemplateImage: () => {} }),
-        }),
-        createEmpty: () => ({ isEmpty: () => true }),
-      },
-      shell: { openExternal: () => {} },
-      ipcMain: { handle: () => {} },
-      autoUpdater: {
-        on: () => {},
-        setFeedURL: () => {},
-        checkForUpdates: () => {},
-        quitAndInstall: () => {},
-      },
-    },
-    'electron-squirrel-startup': false,
-    './Modules/Logger': {
-      CreateLogger: () => createSilentLogger(),
-    },
-    './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
-    './Modules/Broadcast': { Manager: broadcast },
-    './Modules/AppData': {
-      Manager: {
-        Initialize: () => {},
-        GetLogsDirectory: () => '/tmp',
-        OpenFolder: () => true,
-      },
-    },
-    './Modules/ProfileManager': {
-      Manager: {
-        GetProfile: async () => currentProfile,
-        UpdateServerEndpoint: async (IP, Port) => {
-          currentProfile = { ...currentProfile, Server: { ...currentProfile.Server, IP, Port } };
-          profileUpdates.push([IP, Port]);
+  const { release } = trackLoadTimeListeners(() =>
+    loadWithMocks(MODULE_PATH, {
+      electron: {
+        app: {
+          requestSingleInstanceLock: () => true,
+          quit: () => {},
+          whenReady: () => Promise.resolve(),
+          on: () => {},
+          isPackaged: false,
+          dock: { hide: () => {}, show: () => {} },
         },
-        ResetAdoption: async () => {
-          currentProfile = { UUID: currentProfile.UUID, Adopted: false };
+        BrowserWindow: function BrowserWindow() {
+          return fakeWindow;
+        },
+        Menu: { buildFromTemplate: () => ({}) },
+        // Deliberately unavailable, on every platform.
+        //
+        // Recovery status is only pushed to an open window, and main.ts only
+        // creates one when it CANNOT put an icon in the tray (with a tray, the
+        // window appears when the operator opens it). So a working tray means
+        // these statuses are computed and dropped, and there is nothing to
+        // observe.
+        //
+        // This was previously implicit and only worked by accident: the
+        // nativeImage stub below returned a resized image with no isEmpty(), so
+        // tray creation threw on macOS and took the fallback path — while on
+        // Linux the tray succeeded and every test in this file saw nothing at
+        // all. Failing it explicitly makes the harness behave the same
+        // everywhere.
+        Tray: function Tray() {
+          throw new Error('no system tray in this environment');
+        },
+        nativeImage: {
+          createFromPath: () => ({
+            isEmpty: () => false,
+            resize: () => ({ isEmpty: () => false, setTemplateImage: () => {} }),
+          }),
+          createEmpty: () => ({ isEmpty: () => true }),
+        },
+        shell: { openExternal: () => {} },
+        ipcMain: { handle: () => {} },
+        autoUpdater: {
+          on: () => {},
+          setFeedURL: () => {},
+          checkForUpdates: () => {},
+          quitAndInstall: () => {},
         },
       },
-    },
-    './Modules/Bonjour': {
-      Manager: {
-        OnFind: (cb) => {
-          onFind = cb;
-          for (const Record of discover) setTimeout(() => cb(Record), 0);
-        },
-        Stop: async () => {
-          bonjourStops.push(Date.now());
+      'electron-squirrel-startup': false,
+      './Modules/Logger': {
+        CreateLogger: () => createSilentLogger(),
+      },
+      './Modules/Startup': { Manager: { EnsureEnabled: async () => {} } },
+      './Modules/Broadcast': { Manager: broadcast },
+      './Modules/AppData': {
+        Manager: {
+          Initialize: () => {},
+          GetLogsDirectory: () => '/tmp',
+          OpenFolder: () => true,
         },
       },
-    },
-    './Modules/AdoptionClient': {
-      Manager: { Init: async () => {}, Terminate: async () => {} },
-    },
-    './Modules/MainClient': {
-      Manager: {
-        Init: async (UUID, IP, Port) => {
-          initCalls.push([UUID, IP, Port]);
-          if (IP === PRIMARY_IP) {
-            primaryAttempts += 1;
-            // Fail once to trigger recovery, then succeed so restartService()
-            // cannot spin forever and leave the test process alive.
-            const Event =
-              primaryAttempts <= primaryFailures
-                ? ['ServerConnectFailed', { IP, Port, Error: 'ECONNREFUSED' }]
-                : ['MainClientConnectionStatus', { State: 'connected', IP, Port }];
-            setTimeout(() => broadcast.emit(Event[0], Event[1]), 0);
-            return;
-          }
-          if (typeof onCandidate === 'function') {
-            onCandidate(broadcast, IP, Port);
-            return;
-          }
-          setTimeout(
-            () => broadcast.emit('MainClientConnectionStatus', { State: 'connected', IP, Port }),
-            0
-          );
+      './Modules/ProfileManager': {
+        Manager: {
+          GetProfile: async () => currentProfile,
+          UpdateServerEndpoint: async (IP, Port) => {
+            currentProfile = { ...currentProfile, Server: { ...currentProfile.Server, IP, Port } };
+            profileUpdates.push([IP, Port]);
+          },
+          ResetAdoption: async () => {
+            currentProfile = { UUID: currentProfile.UUID, Adopted: false };
+          },
         },
-        Terminate: async () => {},
       },
-    },
-    './Modules/ProcessMonitor': { Manager: { GetStatus: () => ({ State: 'ok' }) } },
-    './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
-    './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
-    'node:dns': { promises: { lookup: async () => ({ address: '10.0.0.99' }) } },
-  });
+      './Modules/Bonjour': {
+        Manager: {
+          OnFind: (cb) => {
+            onFind = cb;
+            for (const Record of discover) setTimeout(() => cb(Record), 0);
+          },
+          Stop: async () => {
+            bonjourStops.push(Date.now());
+          },
+        },
+      },
+      './Modules/AdoptionClient': {
+        Manager: { Init: async () => {}, Terminate: async () => {} },
+      },
+      './Modules/MainClient': {
+        Manager: {
+          Init: async (UUID, IP, Port) => {
+            initCalls.push([UUID, IP, Port]);
+            if (IP === PRIMARY_IP) {
+              primaryAttempts += 1;
+              // Fail once to trigger recovery, then succeed so restartService()
+              // cannot spin forever and leave the test process alive.
+              const Event =
+                primaryAttempts <= primaryFailures
+                  ? ['ServerConnectFailed', { IP, Port, Error: 'ECONNREFUSED' }]
+                  : ['MainClientConnectionStatus', { State: 'connected', IP, Port }];
+              setTimeout(() => broadcast.emit(Event[0], Event[1]), 0);
+              return;
+            }
+            if (typeof onCandidate === 'function') {
+              onCandidate(broadcast, IP, Port);
+              return;
+            }
+            setTimeout(
+              () => broadcast.emit('MainClientConnectionStatus', { State: 'connected', IP, Port }),
+              0
+            );
+          },
+          Terminate: async () => {},
+        },
+      },
+      './Modules/ProcessMonitor': { Manager: { GetStatus: () => ({ State: 'ok' }) } },
+      './Modules/Config': { Config: { Application: { Version: '1.0.0' } } },
+      './Modules/Utils': { ...REAL_UTILS, Wait: async () => {} },
+      'node:dns': { promises: { lookup: async () => ({ address: '10.0.0.99' }) } },
+    })
+  );
+  ListenerReleases.push(release);
 
   return {
     broadcast,
