@@ -120,9 +120,13 @@ async function UpdateDeviceList(): Promise<void> {
     return;
   }
   const [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
-  if (Err) Logger.error('Error getting USB devices:', Err);
-  if (Err || !DeviceList || DeviceList.length == 0) {
-    Socket.emit('USBDeviceList', []);
+  // A failed enumeration is NOT an empty bus. The server replaces its state from
+  // this list, so sending [] here would read as every device being unplugged
+  // and raise a disconnect alert for each monitored one. Skip the send and let
+  // the next resync (or topology change) report the real list. A genuinely
+  // empty list, without an error, is still sent below.
+  if (Err || !Array.isArray(DeviceList)) {
+    Logger.error('Error getting USB devices; skipping this report:', Err || 'no device list');
     return;
   }
   Socket.emit('USBDeviceList', DeviceList);
@@ -210,8 +214,15 @@ async function UpdateDisplayList(Force = false): Promise<void> {
     return;
   }
   const [Err, DisplayList] = await DisplayMonitorManager.GetDisplays();
-  if (Err) Logger.error('Error getting displays:', Err);
-  const Payload = Err || !Array.isArray(DisplayList) ? [] : DisplayList;
+  // As with USB: a failed read is not "no displays". Reporting [] would tell the
+  // server every display was unplugged, so skip the send entirely — and leave
+  // the change-check baseline alone, so the next good read is still compared
+  // against what the server last heard.
+  if (Err || !Array.isArray(DisplayList)) {
+    Logger.error('Error getting displays; skipping this report:', Err || 'no display list');
+    return;
+  }
+  const Payload = DisplayList;
   let Signature: string | null;
   try {
     Signature = JSON.stringify(Payload);

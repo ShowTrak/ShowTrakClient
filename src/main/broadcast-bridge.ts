@@ -122,7 +122,7 @@ function registerBroadcastBridge(): void {
       // Keep explicit state during candidate validation window.
       sendRecoveryStatus({
         State: 'ValidatingIdentity',
-        Message: `Validating discovered server at ${Info.IP}:${Info.Port}`,
+        Message: `Validating discovered server at ${Info.IP}:${Info.Port}…`,
       });
     }
   });

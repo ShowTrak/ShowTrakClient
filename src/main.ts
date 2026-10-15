@@ -76,7 +76,8 @@ import {
 import { performUpdateCheck } from './main/app-updater';
 import { registerBroadcastBridge } from './main/broadcast-bridge';
 import { registerIpcHandlers } from './main/ipc-handlers';
-import { Main } from './main/service-lifecycle';
+import { Main, stopService } from './main/service-lifecycle';
+import { Manager as ScriptManager } from './Modules/ScriptManager';
 import { Configure as ConfigureTray, createTray } from './main/tray';
 
 // Wired up front, before whenReady: the socket layer can emit a
@@ -144,6 +145,16 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   setAppQuitRequested(true);
+  // No discovery retry or restart may start once we are on the way out.
+  stopService();
+  // Stop scripts we are still running so they are not orphaned. Direct child
+  // processes only: anything a script launched (the show itself) keeps running.
+  try {
+    const Stopped = ScriptManager.StopRunningScripts();
+    if (Stopped > 0) Logger.log(`Stopped ${Stopped} running script(s) on quit`);
+  } catch (Err) {
+    Logger.warn('Failed to stop running scripts during quit', String(Err));
+  }
   try {
     IdentifyOverlay.Hide();
   } catch (Err) {

@@ -173,7 +173,7 @@ async function Main(): Promise<void> {
         await window.API.CheckForAppUpdates();
       } catch {}
       $('#UPDATE_SECTION').removeClass('d-none');
-      $('#UPDATE_STATUS').text('Checking for updates...');
+      $('#UPDATE_STATUS').text('Checking for updates…');
       $('#UPDATE_INSTALL_BTN').addClass('d-none');
       $('#UPDATE_LATER_BTN').addClass('d-none');
       $('#UPDATE_NOTES_WRAPPER').addClass('d-none');

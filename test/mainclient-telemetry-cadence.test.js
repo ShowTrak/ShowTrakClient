@@ -23,6 +23,8 @@ function createHarness({ displays = [], deltas = false } = {}) {
   const usb = {};
   let displayChanged = null;
   let currentDisplays = displays;
+  let displayError = null;
+  let usbResult = [null, [{ SerialNumber: 'ABC' }]];
   const sockets = [];
 
   const originalSetInterval = global.setInterval;
@@ -65,7 +67,7 @@ function createHarness({ displays = [], deltas = false } = {}) {
     '../Config': { Config: { Application: { Version: 'test' } } },
     '../USBMonitor': {
       Manager: {
-        GetUSBDevices: async () => [null, [{ SerialNumber: 'ABC' }]],
+        GetUSBDevices: async () => usbResult,
         OnUSBConnect: (callback) => {
           usb.connect = callback;
         },
@@ -79,7 +81,7 @@ function createHarness({ displays = [], deltas = false } = {}) {
     },
     '../DisplayMonitor': {
       Manager: {
-        GetDisplays: async () => [null, currentDisplays],
+        GetDisplays: async () => (displayError ? [displayError, null] : [null, currentDisplays]),
         OnDisplayChange: (callback) => {
           displayChanged = callback;
         },
@@ -124,6 +126,14 @@ function createHarness({ displays = [], deltas = false } = {}) {
     fireDisplayChange: () => displayChanged(),
     setDisplays: (next) => {
       currentDisplays = next;
+    },
+    /** Make the next display reads fail (pass null to recover). */
+    setDisplayError: (Err) => {
+      displayError = Err;
+    },
+    /** The [Err, Devices] tuple the next USB enumerations return. */
+    setUSBResult: (next) => {
+      usbResult = next;
     },
     eventsNamed: (name) => emits.filter(([event]) => event === name),
     restore: () => {
@@ -346,6 +356,88 @@ test('displays with no usable id fall back to a full list rather than reporting 
 
     assert.equal(H.eventsNamed('DisplayDelta').length, 0);
     assert.equal(H.eventsNamed('DisplayList').length, before + 1);
+  } finally {
+    H.restore();
+  }
+});
+
+// --- Enumeration failures ---------------------------------------------------
+//
+// Both lists are what the server REPLACES its state from, so an empty list means
+// "everything was unplugged" and raises a disconnect alert for every monitored
+// device. A failed read must therefore send nothing at all, while a read that
+// genuinely finds nothing must still be reported.
+
+test('a failed USB enumeration sends nothing rather than an empty list', async () => {
+  const H = createHarness();
+  try {
+    await H.Manager.Init('uuid-1', '127.0.0.1', 3000);
+    await H.socket.handlers.get('connect')();
+    const before = H.eventsNamed('USBDeviceList').length;
+
+    H.setUSBResult([new Error('LIBUSB_ERROR_ACCESS'), null]);
+    for (const entry of H.intervals.filter((i) => i.ms === 60000)) entry.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(H.eventsNamed('USBDeviceList').length, before, 'an error was reported as []');
+  } finally {
+    H.restore();
+  }
+});
+
+test('an empty USB list read without error is still sent', async () => {
+  const H = createHarness();
+  try {
+    H.setUSBResult([null, []]);
+    await H.Manager.Init('uuid-1', '127.0.0.1', 3000);
+    await H.socket.handlers.get('connect')();
+
+    const lists = H.eventsNamed('USBDeviceList');
+    assert.ok(lists.length >= 1, 'an empty bus was never reported');
+    assert.deepEqual(lists.at(-1)[1], []);
+  } finally {
+    H.restore();
+  }
+});
+
+test('a failed display read sends nothing and keeps the last baseline', async () => {
+  const H = createHarness({ displays: [{ DisplayID: 'edid:A' }] });
+  try {
+    await H.Manager.Init('uuid-1', '127.0.0.1', 3000);
+    await H.socket.handlers.get('connect')();
+    const before = H.eventsNamed('DisplayList').length;
+
+    // Neither a change event nor the forced resync may turn an error into [].
+    H.setDisplayError(new Error('screen unavailable'));
+    H.fireDisplayChange();
+    for (const entry of H.intervals.filter((i) => i.ms === 60000)) entry.callback();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(H.eventsNamed('DisplayList').length, before, 'an error was reported as []');
+
+    // The baseline was not overwritten, so recovering to the same hardware is
+    // still "no change" for an unforced report.
+    H.setDisplayError(null);
+    H.fireDisplayChange();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(H.eventsNamed('DisplayList').length, before);
+  } finally {
+    H.restore();
+  }
+});
+
+test('an empty display list read without error is still sent', async () => {
+  const H = createHarness({ displays: [{ DisplayID: 'edid:A' }] });
+  try {
+    await H.Manager.Init('uuid-1', '127.0.0.1', 3000);
+    await H.socket.handlers.get('connect')();
+    const before = H.eventsNamed('DisplayList').length;
+
+    H.setDisplays([]);
+    H.fireDisplayChange();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(H.eventsNamed('DisplayList').length, before + 1);
+    assert.deepEqual(H.eventsNamed('DisplayList').at(-1)[1], []);
   } finally {
     H.restore();
   }

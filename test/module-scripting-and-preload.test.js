@@ -81,7 +81,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
     true
   );
   const [missingErr, missingOk] = await Manager.Execute('r1', 'missing');
-  assert.equal(missingErr, 'Script not found');
+  assert.equal(missingErr, 'Script not found.');
   assert.equal(missingOk, false);
 
   const scriptId = 'script-1';
@@ -116,7 +116,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   assert.equal(trayEntries[0].Enabled, true);
   assert.equal(trayEntries[1].Script.ID, 'script-disabled');
   assert.equal(trayEntries[1].Enabled, false);
-  assert.equal(trayEntries[1].DisabledReason, 'No script is configured for this operating system');
+  assert.equal(trayEntries[1].DisabledReason, 'No script is configured for this operating system.');
 
   const [okErr, ok] = await withMocks({ child_process: childProcessMock }, () =>
     Manager.Execute('r2', scriptId)
@@ -136,7 +136,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
   ]);
 
   const [missingFileErr, missingFileOk] = await Manager.Execute('r3', scriptId);
-  assert.equal(missingFileErr, 'Script file for this operating system was not found');
+  assert.equal(missingFileErr, 'Script file for this operating system was not found.');
   assert.equal(missingFileOk, false);
 
   await Manager.DeleteScripts();
@@ -338,7 +338,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
       },
     ]);
     const [noPathErr, noPathSuccess] = await Manager.Execute('r-no-path', scriptId);
-    assert.equal(noPathErr, 'No script is configured for this operating system');
+    assert.equal(noPathErr, 'No script is configured for this operating system.');
     assert.equal(noPathSuccess, false);
 
     await Manager.SetScripts([
@@ -349,7 +349,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
       },
     ]);
     const [missingDirErr, missingDirSuccess] = await Manager.Execute('r-missing-dir', scriptId);
-    assert.equal(missingDirErr, 'Script path does not exist');
+    assert.equal(missingDirErr, 'Script path does not exist.');
     assert.equal(missingDirSuccess, false);
 
     const scriptFolder = path.join(scriptsDir, scriptId);
@@ -378,7 +378,8 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
       },
       () => Manager.Execute('r-spawn-fail', scriptId)
     );
-    assert.equal(spawnErr, 'An error occured during script execution');
+    // The real reason reaches the operator, not a generic placeholder.
+    assert.equal(spawnErr, 'spawn failed');
     assert.equal(spawnSuccess, false);
   } finally {
     global.fetch = originalFetch;

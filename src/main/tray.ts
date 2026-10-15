@@ -26,7 +26,7 @@ let tray: Tray | null = null;
 let onCheckForUpdates: (() => Promise<void> | void) | null = null;
 
 interface TrayOptions {
-  // Invoked by the "Check For Updates" item. Injected to avoid a tray <-> updater
+  // Invoked by the "Check for Updates" item. Injected to avoid a tray <-> updater
   // import cycle.
   onCheckForUpdates: () => Promise<void> | void;
 }
@@ -145,7 +145,7 @@ function buildTrayContextMenuTemplate(): MenuItemConstructorOptions[] {
       },
     },
     {
-      label: 'Check For Updates',
+      label: 'Check for Updates',
       click: async () => {
         if (onCheckForUpdates) await onCheckForUpdates();
       },

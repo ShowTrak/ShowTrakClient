@@ -365,7 +365,7 @@ test('discovery keeps the operator informed while it searches', async () => {
   const Discovering = H.lastStatus('Discovering');
 
   assert.ok(H.states().includes('PrimaryFailed'));
-  assert.match(Discovering.Message, /Searching for Controlling Server/i);
+  assert.match(Discovering.Message, /Searching for ShowTrak Server on the local network…/);
   assert.deepEqual(H.profileUpdates, [], 'nothing should be persisted while still searching');
 
   await settleDiscovery(H);

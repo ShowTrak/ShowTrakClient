@@ -111,7 +111,7 @@ test('a healthy client shows a reassuring green banner', () => {
     const Model = GetServerRecoveryBannerModel(Recovery);
     assert.equal(
       Model.text,
-      'Connected to ShowTrak Server',
+      'Connected to ShowTrak Server.',
       `recovery ${JSON.stringify(Recovery)}`
     );
     assert.equal(Model.className, 'alert-success');
@@ -164,7 +164,7 @@ test('the banner and the badge never disagree about being disconnected', () => {
 
 test('a whitespace-only message is treated as no message', () => {
   const Model = GetServerRecoveryBannerModel(recovery('primaryfailed', '   '));
-  assert.equal(Model.text, 'Connected to ShowTrak Server');
+  assert.equal(Model.text, 'Connected to ShowTrak Server.');
 });
 
 // --- Application monitoring warning ----------------------------------------
@@ -215,7 +215,7 @@ test('every update state produces a distinct status line', () => {
   const Cases = [
     [{ state: 'checking' }, /Checking for updates/],
     [{ state: 'available', info: { version: '3.14.0' } }, /Update available: 3\.14\.0/],
-    [{ state: 'downloading', percent: 42.9 }, /Downloading update\.\.\. 42%/],
+    [{ state: 'downloading', percent: 42.9 }, /Downloading update… 42%/],
     [{ state: 'downloaded' }, /Restarting to apply/],
     [{ state: 'installing' }, /Installing update/],
     [{ state: 'installed' }, /Restarting/],
@@ -257,7 +257,7 @@ test('an update error always names something', () => {
 });
 
 test('a payload with no state is treated as "no updates"', () => {
-  assert.equal(GetAppUpdateStatusText({}), 'No updates available');
+  assert.equal(GetAppUpdateStatusText({}), 'No updates available.');
 });
 
 test('an unusable payload leaves the panel alone rather than clearing it', () => {
@@ -275,7 +275,7 @@ test('an array payload reads as "no updates" — behaviour preserved from main.t
   // tightened during the extraction: the payload comes from a main-process IPC
   // push that always sends an object, so this is not reachable, and changing it
   // would have made the extraction a behaviour change rather than a move.
-  assert.equal(GetAppUpdateStatusText([]), 'No updates available');
+  assert.equal(GetAppUpdateStatusText([]), 'No updates available.');
 });
 
 // --- Manual server ----------------------------------------------------------

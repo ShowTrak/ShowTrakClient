@@ -14,6 +14,7 @@ import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as VariableStore } from '../Variables';
+import { ErrorMessage } from '../Utils';
 import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ScriptManager');
@@ -24,6 +25,26 @@ export type ProgressReporter = (progress: number, statusText: string) => void;
 let ScriptCache: ClientScript[] = [];
 let LastAppliedDeploymentFingerprint: string | null = null;
 let DeploymentStateLoaded = false;
+
+/** Applied when a script carries no usable Timeout; matches the Server's default. */
+const DEFAULT_SCRIPT_TIMEOUT_MS = 15000;
+/** How long a timed-out script gets to exit on SIGTERM before it is SIGKILLed. */
+const SCRIPT_KILL_GRACE_MS = 3000;
+/** How much of a failing script's stderr is surfaced as its error. */
+const SCRIPT_ERROR_TAIL_LENGTH = 500;
+
+/**
+ * A script process that is still running, and how to stop it.
+ *
+ * Tracked so the app can stop its own scripts on quit rather than leaving them
+ * orphaned. `Abort` kills the DIRECT child only and fails the run with the
+ * given message — see KillDirectChild for why it never kills the tree.
+ */
+interface RunningScript {
+  Child: import('child_process').ChildProcess;
+  Abort: (Message: string) => void;
+}
+const RunningScripts = new Set<RunningScript>();
 
 interface NormalizedFileEntry {
   Path: string;
@@ -225,50 +246,50 @@ const Internal = {
   GetScriptLaunchState(Script: ClientScript | null | undefined): ScriptLaunchState {
     const ScriptID = Script && Script.ID ? String(Script.ID) : '';
     if (!Script || typeof Script !== 'object') {
-      return { Enabled: false, DisabledReason: 'Invalid script configuration' };
+      return { Enabled: false, DisabledReason: 'Invalid script configuration.' };
     }
     if (!ScriptID) {
-      return { Enabled: false, DisabledReason: 'Script is missing an ID' };
+      return { Enabled: false, DisabledReason: 'Script is missing an ID.' };
     }
     if (Script.isValid === false) {
       return {
         Enabled: false,
         DisabledReason: Script.ParseError
           ? String(Script.ParseError)
-          : 'Invalid script configuration',
+          : 'Invalid script configuration.',
       };
     }
     if (Script.Enabled === false || Script.isEnabled === false) {
-      return { Enabled: false, DisabledReason: 'Script is disabled' };
+      return { Enabled: false, DisabledReason: 'Script is disabled.' };
     }
 
     const RelativePath = Internal.ResolvePlatformScript(Script);
     if (!RelativePath) {
       return {
         Enabled: false,
-        DisabledReason: 'No script is configured for this operating system',
+        DisabledReason: 'No script is configured for this operating system.',
       };
     }
 
     const ScriptPath = Internal.ResolveContained(AppDataManager.GetScriptsDirectory(), ScriptID);
     if (!ScriptPath) {
-      return { Enabled: false, DisabledReason: 'Script ID is not a valid directory name' };
+      return { Enabled: false, DisabledReason: 'Script ID is not a valid directory name.' };
     }
     if (!fs.existsSync(ScriptPath)) {
-      return { Enabled: false, DisabledReason: 'Script path does not exist' };
+      return { Enabled: false, DisabledReason: 'Script path does not exist.' };
     }
 
     const TargetFile = Internal.ResolveContained(ScriptPath, RelativePath);
     if (!TargetFile) {
       return {
         Enabled: false,
-        DisabledReason: 'Script path for this operating system escapes the scripts directory',
+        DisabledReason: 'Script path for this operating system escapes the scripts directory.',
       };
     }
     if (!fs.existsSync(TargetFile)) {
       return {
         Enabled: false,
-        DisabledReason: 'Script file for this operating system was not found',
+        DisabledReason: 'Script file for this operating system was not found.',
       };
     }
 
@@ -455,12 +476,67 @@ const Internal = {
     return (line: string) => line.split(Pattern).join('').trim();
   },
 
+  // The timeout a script runs under: its own Timeout when that is a positive
+  // number (the same rule the Server applies when it arms its watchdog),
+  // otherwise the default.
+  ResolveTimeoutMs(Script: ClientScript | null | undefined): number {
+    const Timeout = Script ? Script.Timeout : undefined;
+    return typeof Timeout === 'number' && Number.isFinite(Timeout) && Timeout > 0
+      ? Timeout
+      : DEFAULT_SCRIPT_TIMEOUT_MS;
+  },
+
+  // "15s", "1.5s" — the timeout as an operator would write it.
+  FormatTimeout(TimeoutMs: number): string {
+    return `${Number((TimeoutMs / 1000).toFixed(1))}s`;
+  },
+
+  // The end of a script's stderr, which is where the reason it failed almost
+  // always is. Capped so a chatty script cannot flood the execution panel (the
+  // Server also truncates errors, at 2048 characters).
+  TailText(Text: string, MaxLength = SCRIPT_ERROR_TAIL_LENGTH): string {
+    const Trimmed = String(Text || '').trim();
+    if (Trimmed.length <= MaxLength) return Trimmed;
+    return `…${Trimmed.slice(-MaxLength).trimStart()}`;
+  },
+
+  // Stop a script process — the DIRECT child only, never its process tree.
+  //
+  // This is deliberate. Show scripts routinely exist to launch the show itself
+  // (QLab, a media server, a kiosk browser), and those applications are
+  // descendants of the script process. A tree kill on timeout or on quit would
+  // take the show down with the script, which is far worse than a script that
+  // overstayed its timeout. So only the launcher process we spawned is
+  // signalled; anything it started is left running.
+  //
+  // POSIX gets SIGTERM first so a script can clean up, then SIGKILL if it is
+  // still alive after a short grace. On Windows, kill() is already a hard
+  // TerminateProcess of that one process.
+  KillDirectChild(Child: import('child_process').ChildProcess): void {
+    try {
+      Child.kill();
+    } catch (Err) {
+      Logger.warn(`Failed to stop script process: ${(Err as Error).message}`);
+    }
+    if (process.platform === 'win32') return;
+    const Escalation = setTimeout(() => {
+      if (Child.exitCode !== null || Child.signalCode !== null) return;
+      try {
+        Child.kill('SIGKILL');
+      } catch (Err) {
+        Logger.warn(`Failed to force-stop script process: ${(Err as Error).message}`);
+      }
+    }, SCRIPT_KILL_GRACE_MS);
+    if (typeof Escalation.unref === 'function') Escalation.unref();
+  },
+
   async RunScriptFile(
     ScriptPath: string,
     ExtraArgs: string[] = [],
     OnProgress?: ProgressReporter,
     ConsoleFilter: ScriptConsoleFilter | null = null,
-    Variables: VariableEnvironment | null = null
+    Variables: VariableEnvironment | null = null,
+    TimeoutMs: number = DEFAULT_SCRIPT_TIMEOUT_MS
   ): Promise<string> {
     const Report: ProgressReporter = typeof OnProgress === 'function' ? OnProgress : () => {};
     return new Promise((resolve, reject) => {
@@ -468,7 +544,7 @@ const Internal = {
 
       const Launcher = Internal.ResolveLauncher(ScriptPath);
       if (!Launcher) {
-        return reject(new Error(`No launcher available for script: ${ScriptPath}`));
+        return reject(new Error(`No launcher is available for script: ${ScriptPath}.`));
       }
 
       // Ensure the script is executable on POSIX platforms before launching it.
@@ -498,6 +574,36 @@ const Internal = {
         windowsHide: true,
         env: ScriptEnvironment,
       });
+
+      // Exactly one outcome per run, whichever of close / error / timeout / quit
+      // gets there first.
+      let Settled = false;
+      let TimeoutTimer: NodeJS.Timeout | null = null;
+      const Tracked: RunningScript = {
+        Child,
+        Abort: (Message: string) => {
+          if (Settled) return;
+          Internal.KillDirectChild(Child);
+          Fail(new Error(Message));
+        },
+      };
+      const Finish = () => {
+        Settled = true;
+        if (TimeoutTimer) clearTimeout(TimeoutTimer);
+        if (FlushTimer) clearTimeout(FlushTimer);
+        RunningScripts.delete(Tracked);
+      };
+      const Fail = (Err: Error) => {
+        if (Settled) return;
+        Finish();
+        reject(Err);
+      };
+      const Succeed = (Output: string) => {
+        if (Settled) return;
+        Finish();
+        resolve(Output);
+      };
+      RunningScripts.add(Tracked);
 
       // The process is now live — the server treats the Running stage (progress
       // >= 50) as the spinner state; StatusText from here on is live console tail.
@@ -551,35 +657,61 @@ const Internal = {
         if (FlushTimer && typeof FlushTimer.unref === 'function') FlushTimer.unref();
       };
 
+      // Output keeps being READ after the run has settled, but is discarded. A
+      // process the script launched can inherit these pipes and outlive it; if
+      // we stopped draining them it would block the moment it wrote, and
+      // destroying them would hand it EPIPE — either of which can take down the
+      // very show application the script started.
       Child.stdout.on('data', (data) => {
+        if (Settled) return;
         const text = data.toString();
         StdOut += text;
         QueueOutput(text);
       });
       Child.stderr.on('data', (data) => {
+        if (Settled) return;
         const text = data.toString();
         StdErr += text;
         QueueOutput(text);
       });
 
       Child.on('error', (error) => {
-        if (FlushTimer) clearTimeout(FlushTimer);
+        if (Settled) return;
         Logger.error(`Error executing script: ${error.message}`);
-        reject(error);
+        Fail(error);
       });
 
-      Child.on('close', (code) => {
+      Child.on('close', (code, signal) => {
         // Stop tailing; the Complete response now owns the final StatusText.
-        if (FlushTimer) clearTimeout(FlushTimer);
-        // A non-zero exit code still means the script process completed.
-        if (code !== 0) {
-          const Message = StdErr.trim() || `Script exited with code ${code}`;
-          Logger.warn(`Script exited non-zero (${code}): ${Message}`);
-        } else {
+        if (Settled) return;
+        if (code === 0) {
           Logger.success(`Script executed successfully: ${StdOut}`);
+          Succeed(StdOut);
+          return;
         }
-        resolve(StdOut);
+        // A non-zero exit is a failed run. Its stderr is usually the reason, so
+        // that is what the operator sees; the exit code is the fallback.
+        const Message =
+          Internal.TailText(StdErr) ||
+          (code === null && signal
+            ? `Script was stopped by ${signal}.`
+            : `Script exited with code ${code}.`);
+        Logger.warn(`Script exited non-zero (${code ?? signal}): ${Message}`);
+        Fail(new Error(Message));
       });
+
+      // The script's Timeout is enforced here, so it applies to every run path
+      // (server dispatch, tray, run-on-launch). On expiry the run fails at once
+      // rather than waiting for 'close': a process the script launched can hold
+      // the output pipes open indefinitely, so 'close' may never come.
+      if (!Settled) {
+        const Limit = Math.max(1, Number(TimeoutMs) || DEFAULT_SCRIPT_TIMEOUT_MS);
+        TimeoutTimer = setTimeout(() => {
+          Logger.warn(`Script timed out after ${Limit}ms; stopping it: ${ScriptPath}`);
+          Tracked.Abort(`Script timed out after ${Internal.FormatTimeout(Limit)}.`);
+        }, Limit);
+        if (typeof TimeoutTimer.unref === 'function') TimeoutTimer.unref();
+      }
     });
   },
 };
@@ -635,7 +767,7 @@ export const Manager = {
   } {
     const Script = ScriptCache.find((s) => s && s.ID === ScriptID);
     if (!Script) {
-      return { Found: false, Enabled: false, DisabledReason: 'Script not found', Name: null };
+      return { Found: false, Enabled: false, DisabledReason: 'Script not found.', Name: null };
     }
     const State = Internal.GetScriptLaunchState(Script);
     return {
@@ -660,7 +792,7 @@ export const Manager = {
     // progress bar / running spinner. It is optional so other callers still work.
     const Report: ProgressReporter = typeof OnProgress === 'function' ? OnProgress : () => {};
     const Script = ScriptCache.find((s) => s.ID === ScriptID);
-    if (!Script) return ['Script not found', false];
+    if (!Script) return ['Script not found.', false];
     Logger.log(`Executing script: ${Script.Name} (${Script.ID})`);
     try {
       Report(10, 'Preparing');
@@ -677,14 +809,27 @@ export const Manager = {
         PlatformArgs,
         Report,
         Script.ConsoleFilter,
-        Variables || VariableStore.GetEnvironment()
+        Variables || VariableStore.GetEnvironment(),
+        Internal.ResolveTimeoutMs(Script)
       );
       Logger.success(`Script ${Script.Name} executed successfully`);
       return [null, true];
     } catch (error) {
       Logger.error(`Error executing script ${Script.Name}`, error);
-      return ['An error occured during script execution', false];
+      // The real reason goes back to the operator. Never an empty string: the
+      // Server reads a falsy error as success.
+      const Message = ErrorMessage(error, '').trim();
+      return [Message || 'Failed to run script.', false];
     }
+  },
+
+  // Stop every script this client is still running — direct child processes
+  // only, so anything a script launched keeps running (see KillDirectChild).
+  // Called on app quit. Returns how many were stopped.
+  StopRunningScripts(Reason = 'Script was stopped because ShowTrak Client is quitting.'): number {
+    const Running = Array.from(RunningScripts);
+    for (const Entry of Running) Entry.Abort(Reason);
+    return Running.length;
   },
 
   async DeleteScripts(): Promise<void> {

@@ -118,7 +118,7 @@ export function GetServerRecoveryBannerModel(
 ): RecoveryBannerModel {
   const { state, message } = readRecovery(Recovery);
   const isConnectedState = !message || state === 'idle';
-  const text = isConnectedState ? 'Connected to ShowTrak Server' : message;
+  const text = isConnectedState ? 'Connected to ShowTrak Server.' : message;
 
   let className: string;
   if (state === 'recoveryfailed') className = 'alert-danger';
@@ -171,24 +171,24 @@ export function GetAppUpdateStatusText(Payload: AppUpdateStatus | null | undefin
   const State = Payload.state || 'none';
   switch (State) {
     case 'checking':
-      return 'Checking for updates...';
+      return 'Checking for updates…';
     case 'available': {
       const Version =
         (Payload.info && (Payload.info.version || Payload.info.tag)) || 'Update available';
-      return `Update available: ${Version}. Downloading...`;
+      return `Update available: ${Version}. Downloading…`;
     }
     case 'downloading': {
       const Percent = Payload.percent ? Math.floor(Payload.percent) : 0;
-      return `Downloading update... ${Percent}%`;
+      return `Downloading update… ${Percent}%`;
     }
     case 'downloaded':
-      return 'Update downloaded. Restarting to apply...';
+      return 'Update downloaded. Restarting to apply…';
     case 'installing':
-      return 'Installing update...';
+      return 'Installing update…';
     case 'installed':
-      return 'Update installed. Restarting...';
+      return 'Update installed. Restarting…';
     case 'none':
-      return 'No updates available';
+      return 'No updates available.';
     case 'error':
       return `Update error: ${Payload.error || 'Unknown error'}`;
     default:

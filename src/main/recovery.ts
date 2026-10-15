@@ -94,7 +94,7 @@ function scheduleRecoveryRetry(waitMs: number, Info: ServerConnectFailedInfo): v
       Logger.error('Scheduled recovery flow failed', Err);
       sendRecoveryStatus({
         State: 'RecoveryFailed',
-        Message: 'Unable to recover server connection automatically.',
+        Message: 'Failed to recover the server connection automatically.',
       });
     }
   }, Delay);
@@ -115,7 +115,7 @@ async function handlePrimaryFailure(Info: ServerConnectFailedInfo): Promise<void
     const waitMs = RECOVERY_COOLDOWN_MS - sinceLastAttempt;
     sendRecoveryStatus({
       State: 'PrimaryFailed',
-      Message: `Primary failed. Cooling down for ${Math.ceil(waitMs / 1000)}s before retry.`,
+      Message: `Failed to reach ShowTrak Server. Retrying in ${Math.ceil(waitMs / 1000)}s…`,
     });
     scheduleRecoveryRetry(waitMs, Info);
     return;
@@ -128,7 +128,7 @@ async function handlePrimaryFailure(Info: ServerConnectFailedInfo): Promise<void
     Logger.error('Recovery flow failed', Err);
     sendRecoveryStatus({
       State: 'RecoveryFailed',
-      Message: 'Unable to recover server connection automatically.',
+      Message: 'Failed to recover the server connection automatically.',
     });
   }
 }
@@ -147,7 +147,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
 
   sendRecoveryStatus({
     State: 'PrimaryFailed',
-    Message: `Primary server ${Info.IP || 'Unknown'}:${Info.Port || 'Unknown'} is unreachable. Retry attempt ${recoveryMetrics.Attempts}.`,
+    Message: `ShowTrak Server at ${Info.IP || 'Unknown'}:${Info.Port || 'Unknown'} is unreachable. Retry attempt ${recoveryMetrics.Attempts}.`,
   });
 
   try {
@@ -155,14 +155,14 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
     if (backoffDelay > 0) {
       sendRecoveryStatus({
         State: 'PrimaryFailed',
-        Message: `Waiting ${Math.ceil(backoffDelay / 1000)}s before discovery retry`,
+        Message: `Searching for ShowTrak Server in ${Math.ceil(backoffDelay / 1000)}s…`,
       });
       await Wait(backoffDelay);
     }
 
     sendRecoveryStatus({
       State: 'Discovering',
-      Message: 'Searching for Controlling Server on Local Network',
+      Message: 'Searching for ShowTrak Server on the local network…',
     });
 
     const Profile = await ProfileManager.GetProfile();
@@ -175,7 +175,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
     if (ManualServer && ManualServer.Host && ManualServer.Port) {
       sendRecoveryStatus({
         State: 'ConnectingPrimary',
-        Message: `Reconnecting to configured server ${ManualServer.Host}:${ManualServer.Port}`,
+        Message: `Reconnecting to configured server ${ManualServer.Host}:${ManualServer.Port}…`,
       });
       Candidate = {
         IP: ManualServer.Host,
@@ -192,7 +192,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
       recoveryMetrics.LastFailureReason = 'discovery_no_candidate';
       sendRecoveryStatus({
         State: 'RecoveryFailed',
-        Message: 'No server discovered for automatic recovery.',
+        Message: 'No ShowTrak Server found on the local network.',
       });
       await restartService('recovery-no-candidate');
       return;
@@ -201,7 +201,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
     pendingRecoveryCandidate = Candidate;
     sendRecoveryStatus({
       State: 'ValidatingIdentity',
-      Message: `Validating discovered server at ${Candidate.IP}:${Candidate.Port}`,
+      Message: `Validating discovered server at ${Candidate.IP}:${Candidate.Port}…`,
     });
 
     await MainClientManager.Init(Profile.UUID, Candidate.IP, Candidate.Port);
@@ -228,7 +228,7 @@ async function recoverFromPrimaryFailure(Info: ServerConnectFailedInfo): Promise
     recoveryMetrics.LastRecoveredAt = Date.now();
     sendRecoveryStatus({
       State: 'Reconnected',
-      Message: `Recovered connection to ${Candidate.IP}:${Candidate.Port}`,
+      Message: `Recovered connection to ${Candidate.IP}:${Candidate.Port}.`,
     });
   } finally {
     recoveryInProgress = false;
