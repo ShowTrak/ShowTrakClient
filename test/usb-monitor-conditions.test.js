@@ -5,10 +5,10 @@ const path = require('node:path');
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
 
 // What the USB monitor reports beyond a device's names and serial: the port it
-// is plugged into and its firmware (read off the libusb device each WebUSB
-// device wraps), and on Windows its Plug and Play problem state. The Windows
-// query cannot run on the CI runners, so its parsing and matching are pinned
-// here against fixtures and the query itself is replaced.
+// is plugged into and its firmware (read off each usb 3.x UsbDevice), and on
+// Windows its Plug and Play problem state. The Windows query cannot run on the
+// CI runners, so its parsing and matching are pinned here against fixtures and
+// the query itself is replaced.
 
 const DIST = path.join(__dirname, '..', 'dist', 'Modules', 'USBMonitor');
 const Windows = require(path.join(DIST, 'windows.js'));
@@ -17,48 +17,56 @@ class FakeWebUSB {
   constructor() {
     this.listeners = new Map();
     FakeWebUSB.devices = FakeWebUSB.devices || [];
+    FakeWebUSB.instance = this;
   }
   async getDevices() {
     return FakeWebUSB.devices;
   }
   addEventListener(event, handler) {
-    this.listeners.set(event, handler);
+    if (!this.listeners.has(event)) this.listeners.set(event, []);
+    this.listeners.get(event).push(handler);
+  }
+  emit(event, device) {
+    for (const handler of this.listeners.get(event) || []) handler({ device });
   }
 }
 
-function webDevice(overrides = {}, native = {}) {
+// A usb 3.x UsbDevice as the macOS backend reports it: bus 0x14, port 2 then 4.
+function webDevice(overrides = {}) {
   return {
     vendorId: 0x0fd9,
     productId: 0x0080,
     manufacturerName: 'Elgato',
     productName: 'Stream Deck',
     serialNumber: 'CL12345',
-    device: {
-      busNumber: 1,
-      portNumbers: [2, 4],
-      deviceDescriptor: { bcdDevice: 0x0123 },
-      ...native,
-    },
+    deviceClass: 0,
+    deviceVersionMajor: 1,
+    deviceVersionMinor: 2,
+    deviceVersionSubminor: 3,
+    bus: '14',
+    ports: [2, 4],
     ...overrides,
   };
 }
 
-function loadMonitor() {
+function loadMonitor(platform = 'darwin') {
   const { Manager, _internal } = loadWithMocks(path.join(DIST, 'index.js'), {
     '../Logger': { CreateLogger: () => createSilentLogger() },
     usb: { WebUSB: FakeWebUSB },
   });
+  _internal.Platform = () => platform;
   return { Manager, Internal: _internal };
 }
 
 // --- Port and firmware ------------------------------------------------------------
 
-test('the port path and firmware are read off the libusb device', async () => {
+test('the port path and firmware are read off the device', async () => {
   const { Manager } = loadMonitor();
   FakeWebUSB.devices = [webDevice()];
   const [err, [device]] = await Manager.GetUSBDevices();
   assert.equal(err, null);
-  assert.equal(device.Location, '1-2.4');
+  // nusb's macOS bus "14" is hex; libusb (usb 2.x) said 20, and so do we.
+  assert.equal(device.Location, '20-2.4');
   assert.equal(device.FirmwareVersion, '1.23');
   // Off Windows there is no device state, and so no key for it.
   assert.equal('DeviceState' in device, false);
@@ -66,21 +74,95 @@ test('the port path and firmware are read off the libusb device', async () => {
 
 test('an unreadable port or firmware is null, never absent', async () => {
   const { Manager } = loadMonitor();
-  FakeWebUSB.devices = [{ ...webDevice(), device: undefined }];
+  FakeWebUSB.devices = [
+    webDevice({ bus: undefined, ports: undefined, deviceVersionMajor: undefined }),
+  ];
   const [, [device]] = await Manager.GetUSBDevices();
   assert.equal(device.Location, null);
   assert.equal(device.FirmwareVersion, null);
   assert.equal('Location' in device, true);
 });
 
+test('root hubs are not listed, but every device below them is', async () => {
+  const { Manager } = loadMonitor('linux');
+  FakeWebUSB.devices = [
+    webDevice({ vendorId: 0x1d6b, deviceClass: 9, bus: '001', ports: [] }),
+    webDevice({ deviceClass: 9, bus: '001', ports: [1] }),
+    webDevice({ bus: '001', ports: [1, 3] }),
+  ];
+  const [, devices] = await Manager.GetUSBDevices();
+  assert.deepEqual(
+    devices.map((d) => d.Location),
+    ['1-1', '1-1.3']
+  );
+});
+
 test('formats bcdDevice and port paths the way lsusb does', () => {
-  const { FormatFirmware, FormatLocation } = require(path.join(DIST, 'index.js'));
+  const { FormatFirmware, FormatLocation, DeviceBCD } = require(path.join(DIST, 'index.js'));
   assert.equal(FormatFirmware(0x0100), '1.00');
   assert.equal(FormatFirmware(0x1a2b), '1a.2b');
   assert.equal(FormatFirmware(-1), null);
-  assert.equal(FormatLocation(3, [1]), '3-1');
-  assert.equal(FormatLocation(3, []), null);
-  assert.equal(FormatLocation(undefined, [1]), null);
+  assert.equal(FormatLocation('3', [1]), '3-1');
+  assert.equal(FormatLocation('3', []), null);
+  assert.equal(FormatLocation(null, [1]), null);
+  // The WebUSB split puts bcdDevice back together exactly.
+  assert.equal(
+    DeviceBCD({ deviceVersionMajor: 0x1a, deviceVersionMinor: 2, deviceVersionSubminor: 0xb }),
+    0x1a2b
+  );
+  assert.equal(
+    DeviceBCD({ deviceVersionMajor: 1, deviceVersionMinor: 16, deviceVersionSubminor: 0 }),
+    null
+  );
+  assert.equal(DeviceBCD({}), null);
+});
+
+test('the bus reads as the number usb 2.x reported on macOS and Linux', () => {
+  const { FormatBus } = require(path.join(DIST, 'index.js'));
+  assert.equal(FormatBus('14', 'darwin'), '20');
+  assert.equal(FormatBus('00', 'darwin'), '0');
+  assert.equal(FormatBus('zz', 'darwin'), null);
+  assert.equal(FormatBus('001', 'linux'), '1');
+  assert.equal(FormatBus('012', 'linux'), '12');
+  assert.equal(FormatBus('1a', 'linux'), null);
+  assert.equal(FormatBus('', 'linux'), null);
+  assert.equal(FormatBus(undefined, 'darwin'), null);
+});
+
+test('a Windows bus is the controller PCI address, read off its location path', () => {
+  const { FormatBus, FormatWindowsBus } = require(path.join(DIST, 'index.js'));
+  assert.equal(FormatBus('PCIROOT(0)#PCI(1400)#USBROOT(0)', 'win32'), 'PCI0:14.0');
+  // Behind bridges, one hop each; a second root hub on the controller is named.
+  assert.equal(FormatWindowsBus('PCIROOT(0)#PCI(0201)#PCI(0000)#USBROOT(0)'), 'PCI0:02.1/00.0');
+  assert.equal(FormatWindowsBus('PCIROOT(0)#PCI(1400)#USBROOT(1)'), 'PCI0:14.0/r1');
+  assert.equal(FormatWindowsBus('PCIROOT(A)#PCI(1D07)#USBROOT(0)'), 'PCIa:1d.7');
+  // Any other shape is kept as it is, so it still tells controllers apart...
+  assert.equal(
+    FormatWindowsBus('ACPI(_SB_)#ACPI(URS0)#USBROOT(0)'),
+    'ACPI(_SB_)#ACPI(URS0)#USBROOT(0)'
+  );
+  // ...unless it could not survive as one part of a Location.
+  assert.equal(FormatWindowsBus('ACPI(A-B)#USBROOT(0)'), null);
+  assert.equal(FormatWindowsBus('A,B'), null);
+});
+
+test('a Windows device reports its port under its controller address', async () => {
+  const { Manager, Internal } = loadMonitor('win32');
+  Internal.QueryWindowsUSBStates = async () => [null, []];
+  FakeWebUSB.devices = [webDevice({ bus: 'PCIROOT(0)#PCI(1400)#USBROOT(0)', ports: [3, 1] })];
+  const [, [device]] = await Manager.GetUSBDevices();
+  assert.equal(device.Location, 'PCI0:14.0-3.1');
+});
+
+test('a plug-in or unplug of any device counts as a topology change', () => {
+  const { Manager } = loadMonitor();
+  let changes = 0;
+  Manager.OnUSBTopologyChange(() => {
+    changes += 1;
+  });
+  FakeWebUSB.instance.emit('connect', webDevice());
+  FakeWebUSB.instance.emit('disconnect', webDevice());
+  assert.equal(changes, 2);
 });
 
 // --- Windows: parsing ---------------------------------------------------------------
