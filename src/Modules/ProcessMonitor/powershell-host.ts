@@ -38,6 +38,27 @@ const INIT_SCRIPT = [
   '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
 ].join('; ');
 
+/**
+ * Set as `code` on the error a Run() resolves with when the script itself was the
+ * problem — it ran past its deadline, or raised — rather than the host. A fresh
+ * powershell.exe would only do the same again, so callers skip their one-shot
+ * fallback for these.
+ */
+export const SCRIPT_TIMED_OUT = 'ETIMEDOUT';
+export const SCRIPT_FAILED = 'ESCRIPT';
+
+/** Whether a Run() error came from the script rather than the host. */
+export function IsScriptFailure(error: unknown): boolean {
+  const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : null;
+  return code === SCRIPT_TIMED_OUT || code === SCRIPT_FAILED;
+}
+
+function TaggedError(message: string, code?: string): Error {
+  const error = new Error(message);
+  if (code) Object.assign(error, { code });
+  return error;
+}
+
 interface PendingRequest {
   resolve: (value: Result<string>) => void;
   timer: NodeJS.Timeout | null;
@@ -73,7 +94,7 @@ export function CreatePowerShellHost(Name = 'PowerShellHost'): PowerShellHost {
   }
 
   /** Tear the host down, failing any in-flight request. Safe to call repeatedly. */
-  function destroy(reason: string): void {
+  function destroy(reason: string, code?: string): void {
     const dying = child;
     child = null;
     buffer = '';
@@ -87,7 +108,7 @@ export function CreatePowerShellHost(Name = 'PowerShellHost'): PowerShellHost {
         // Already gone; nothing to do.
       }
     }
-    settle([new Error(reason), null]);
+    settle([TaggedError(reason, code), null]);
   }
 
   // Drain whole responses out of the rolling stdout buffer. Anything before a
@@ -112,7 +133,7 @@ export function CreatePowerShellHost(Name = 'PowerShellHost'): PowerShellHost {
       const errorAt = body.indexOf(ERROR_PREFIX);
       if (errorAt !== -1) {
         const message = body.slice(errorAt + ERROR_PREFIX.length).trim();
-        settle([new Error(message || 'PowerShell script failed'), null]);
+        settle([TaggedError(message || 'PowerShell script failed', SCRIPT_FAILED), null]);
         continue;
       }
       settle([null, body]);
@@ -198,7 +219,7 @@ export function CreatePowerShellHost(Name = 'PowerShellHost'): PowerShellHost {
 
       return new Promise<Result<string>>((resolve) => {
         const timer = setTimeout(() => {
-          destroy(`PowerShell host timed out after ${timeoutMs}ms`);
+          destroy(`PowerShell host timed out after ${timeoutMs}ms`, SCRIPT_TIMED_OUT);
         }, timeoutMs);
         // Do not hold the event loop open on the sampler's account; the app should
         // still be able to quit between samples.

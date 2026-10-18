@@ -233,49 +233,80 @@ test('Linux volumes: labels from by-label, USB disks external, read-only from th
 // Windows
 // ---------------------------------------------------------------------------
 
-test('Windows: drive letters with health and read-only where the Storage module says', () => {
-  const { ParseWindowsStorage } = load('windows.js', {
+// The real host's error tags, so the reader can tell a slow script from a dead host.
+const SCRIPT_TIMED_OUT = 'ETIMEDOUT';
+const SCRIPT_FAILED = 'ESCRIPT';
+const tagged = (message, code) => Object.assign(new Error(message), { code });
+
+// The Windows reader with a scripted host: `answer(script)` returns what the host
+// resolves with, and every one-shot powershell.exe call is recorded.
+function loadWindows(answer, oneShot = () => [new Error('no one-shot expected'), null]) {
+  const runs = [];
+  const oneShots = [];
+  const mod = load('windows.js', {
     '../ProcessMonitor/powershell-host': {
-      CreatePowerShellHost: () => ({ Run: async () => [null, ''], Dispose() {} }),
+      SCRIPT_TIMED_OUT,
+      IsScriptFailure: (error) =>
+        !!error && (error.code === SCRIPT_TIMED_OUT || error.code === SCRIPT_FAILED),
+      CreatePowerShellHost: () => ({
+        Run: async (script) => {
+          runs.push(script.includes('MSFT_') ? 'detail' : 'volumes');
+          return answer(script);
+        },
+        Dispose() {},
+      }),
+    },
+    '../AudioMonitor/shared': {
+      COMMAND_TIMEOUT_MS: 8000,
+      ErrorText: (error, fallback) => (error && error.message) || fallback,
+      RunCommand: async (command, args) => {
+        oneShots.push(args);
+        return oneShot(args);
+      },
     },
   });
-  const Output = JSON.stringify([
-    {
-      Drive: 'C:',
-      Label: 'Windows',
-      FileSystem: 'NTFS',
-      Size: 500 * GB,
-      Free: 120 * GB,
-      Type: 3,
-      Provider: null,
-      Health: 'Healthy',
-      ReadOnly: false,
-    },
-    {
-      Drive: 'e:',
-      Label: '',
-      FileSystem: 'exFAT',
-      Size: 64 * GB,
-      Free: 70 * GB,
-      Type: 2,
-      Provider: null,
-      Health: 'Warning',
-      ReadOnly: true,
-    },
-    {
-      Drive: 'S:',
-      Label: null,
-      FileSystem: 'NTFS',
-      Size: 4096 * GB,
-      Free: 1024 * GB,
-      Type: 4,
-      Provider: '\\\\nas\\show',
-      Health: null,
-      ReadOnly: null,
-    },
-    { Drive: 'F:', Label: null, FileSystem: null, Size: null, Free: null, Type: 2 },
-  ]);
-  const Volumes = ParseWindowsStorage(`WARNING: noise\r\n${Output}\r\n`);
+  return { ...mod, runs, oneShots };
+}
+
+const WIN_DRIVES = JSON.stringify([
+  {
+    Drive: 'C:',
+    Label: 'Windows',
+    FileSystem: 'NTFS',
+    Size: 500 * GB,
+    Free: 120 * GB,
+    Type: 3,
+    Provider: null,
+  },
+  { Drive: 'e:', Label: '', FileSystem: 'exFAT', Size: 64 * GB, Free: 70 * GB, Type: 2 },
+  {
+    Drive: 'S:',
+    Label: null,
+    FileSystem: 'NTFS',
+    Size: 4096 * GB,
+    Free: 1024 * GB,
+    Type: 4,
+    Provider: '\\\\nas\\show',
+  },
+  { Drive: 'F:', Label: null, FileSystem: null, Size: null, Free: null, Type: 2 },
+]);
+const WIN_DETAIL = JSON.stringify({
+  Health: { C: 0, E: 1, D: 2 },
+  ReadOnly: { c: false, E: true },
+});
+
+test('Windows: drive letters, with health and read-only where the Storage module says', () => {
+  const { ParseWindowsStorage, ParseWindowsStorageDetail, ApplyWindowsStorageDetail } = loadWindows(
+    () => [null, '']
+  );
+  const Drives = ParseWindowsStorage(`WARNING: noise\r\n${WIN_DRIVES}\r\n`);
+  assert.ok(Drives.every((Volume) => Volume.ReadOnly === null && Volume.Health === null));
+  const Detail = ParseWindowsStorageDetail(`noise\r\n${WIN_DETAIL}`);
+  assert.deepEqual(Detail, {
+    Health: { C: 'ok', E: 'warning', D: 'failing' },
+    ReadOnly: { C: false, E: true },
+  });
+  const Volumes = ApplyWindowsStorageDetail(Drives, Detail);
   assert.deepEqual(
     Volumes.map((Volume) => [
       Volume.MountPoint,
@@ -287,6 +318,7 @@ test('Windows: drive letters with health and read-only where the Storage module 
     [
       ['C:', 'Windows', 'internal', false, 'ok'],
       ['E:', null, 'external', true, 'warning'],
+      // A mapped share has no partition, so nothing to say about either.
       ['S:', '\\\\nas\\show', 'network', null, null],
     ]
   );
@@ -298,6 +330,100 @@ test('Windows: drive letters with health and read-only where the Storage module 
   );
   assert.deepEqual(ParseWindowsStorage(''), []);
   assert.throws(() => ParseWindowsStorage('nothing useful'));
+  // Unknown (5) is "cannot tell", not a fault.
+  assert.deepEqual(ParseWindowsStorageDetail('{"Health":{"C":5},"ReadOnly":{}}').Health, {});
+});
+
+test('Windows: the slow health lookup is cached, and its failure never hides the drives', async () => {
+  let detailAnswer = [null, WIN_DETAIL];
+  const reader = loadWindows((script) =>
+    script.includes('MSFT_') ? detailAnswer : [null, WIN_DRIVES]
+  );
+  const { CollectWindowsStorage, runs, _internal } = reader;
+
+  const [, First] = await CollectWindowsStorage();
+  assert.deepEqual(runs, ['volumes', 'detail']);
+  assert.equal(First[0].Health, 'ok');
+
+  // Within the TTL, with the same drives, only the drive list is read again.
+  detailAnswer = [tagged('PowerShell host timed out after 15000ms', SCRIPT_TIMED_OUT), null];
+  const [, Second] = await CollectWindowsStorage();
+  assert.deepEqual(runs, ['volumes', 'detail', 'volumes']);
+  assert.equal(Second[0].Health, 'ok');
+
+  // Once due, a lookup that times out keeps the last answer and reports the drives.
+  _internal.DetailCache.AttemptAt -= _internal.DETAIL_TTL_MS;
+  const [Error_, Third] = await CollectWindowsStorage();
+  assert.equal(Error_, null);
+  assert.deepEqual(runs.slice(3), ['volumes', 'detail']);
+  assert.equal(Third.length, 3);
+  assert.equal(Third[1].ReadOnly, true, 'last good answer kept');
+  assert.equal(reader.oneShots.length, 0, 'a timed-out script is not re-run as a one-shot');
+});
+
+test('Windows: a drive letter appearing refreshes the lookup, but not every poll', async () => {
+  let drives = WIN_DRIVES;
+  const { CollectWindowsStorage, runs, _internal } = loadWindows((script) =>
+    script.includes('MSFT_') ? [null, WIN_DETAIL] : [null, drives]
+  );
+  await CollectWindowsStorage();
+  drives = JSON.stringify([
+    ...JSON.parse(WIN_DRIVES),
+    { Drive: 'G:', Size: GB, Free: GB, Type: 2 },
+  ]);
+  await CollectWindowsStorage();
+  assert.deepEqual(runs, ['volumes', 'detail', 'volumes'], 'too soon after the last lookup');
+  _internal.DetailCache.AttemptAt -= _internal.DETAIL_RETRY_MS;
+  await CollectWindowsStorage();
+  assert.deepEqual(runs.slice(3), ['volumes', 'detail']);
+});
+
+test('Windows: failures say what went wrong, never the whole PowerShell command line', async () => {
+  const timedOut = loadWindows(() => [
+    tagged('PowerShell host timed out after 20000ms', SCRIPT_TIMED_OUT),
+    null,
+  ]);
+  const [TimeoutError] = await timedOut.CollectWindowsStorage();
+  assert.equal(TimeoutError.message, 'Windows did not list the drives within 20 seconds');
+  assert.equal(timedOut.oneShots.length, 0);
+
+  const raised = loadWindows(() => [tagged('Access denied', SCRIPT_FAILED), null]);
+  const [RaisedError] = await raised.CollectWindowsStorage();
+  assert.equal(RaisedError.message, 'Could not list the drives: Access denied');
+  assert.equal(raised.oneShots.length, 0, 'a script that raised would raise again');
+
+  // A host that could not run at all falls back to a one-shot powershell.exe.
+  const commandLine =
+    "Command failed: powershell.exe -NoProfile -Command $ErrorActionPreference = 'Stop'; & { … }";
+  const dead = loadWindows(
+    () => [new Error('PowerShell host exited'), null],
+    () => [
+      Object.assign(
+        new Error(
+          `${commandLine}\r\n#< CLIXML\r\nGet-CimInstance : Invalid class\r\nAt line:1 char:5\r\n`
+        ),
+        { code: 1 }
+      ),
+      null,
+    ]
+  );
+  const [DeadError] = await dead.CollectWindowsStorage();
+  assert.equal(dead.oneShots.length, 1);
+  assert.equal(DeadError.message, 'Could not list the drives: Get-CimInstance : Invalid class');
+
+  const { OneShotError } = dead;
+  assert.equal(
+    OneShotError(Object.assign(new Error(commandLine), { killed: true }), 8000).message,
+    'PowerShell did not answer within 8 seconds'
+  );
+  assert.equal(
+    OneShotError(Object.assign(new Error(commandLine), { code: 1 }), 8000).message,
+    'PowerShell exited with code 1'
+  );
+  assert.equal(
+    OneShotError(new Error('spawn powershell.exe ENOENT'), 8000).message,
+    'spawn powershell.exe ENOENT'
+  );
 });
 
 // ---------------------------------------------------------------------------

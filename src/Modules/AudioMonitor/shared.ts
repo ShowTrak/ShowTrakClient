@@ -197,7 +197,7 @@ export function IsMissingCommand(Error_: unknown): boolean {
   return !!Error_ && typeof Error_ === 'object' && (Error_ as { code?: unknown }).code === 'ENOENT';
 }
 
-const COMMAND_TIMEOUT_MS = 8000;
+export const COMMAND_TIMEOUT_MS = 8000;
 
 /**
  * Run a command without a shell and collect its stdout. Arguments are passed as
