@@ -16,6 +16,7 @@ import { Manager as ProcessMonitor } from '../ProcessMonitor';
 import { Manager as AudioMonitor } from '../AudioMonitor';
 import { Manager as PowerMonitor } from '../PowerMonitor';
 import { Manager as TemperatureMonitor } from '../TemperatureMonitor';
+import { Manager as StorageMonitor } from '../StorageMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
@@ -152,6 +153,8 @@ function registerUSBListeners(): void {
     // Nearly every professional audio interface arrives over USB, so a hotplug
     // is the cue to look at the audio stack now rather than at the next poll.
     AudioMonitor.RequestSample();
+    // A USB drive is mounted a moment after it enumerates.
+    StorageMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBConnect');
       return;
@@ -161,6 +164,7 @@ function registerUSBListeners(): void {
 
   USBMonitorManager.OnUSBDisconnect((Device) => {
     AudioMonitor.RequestSample();
+    StorageMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
       Logger.warn('Socket not connected, aborting OnUSBDisconnect');
       return;
@@ -374,6 +378,11 @@ export const Manager = {
     } catch (_error) {
       Logger.warn('Failed to stop temperature monitor during termination');
     }
+    try {
+      StorageMonitor.Stop();
+    } catch (_error) {
+      Logger.warn('Failed to stop storage monitor during termination');
+    }
     disposeDisplayIdentity();
     if (Socket) {
       Socket.disconnect();
@@ -474,6 +483,11 @@ export const Manager = {
       TemperatureMonitor.Start(ActiveSocket).catch(() => {
         Logger.warn('Failed to start temperature monitor on connect');
       });
+      // Not awaited: diskutil (macOS) and the Storage module (Windows) take a
+      // moment on the first sample.
+      StorageMonitor.Start(ActiveSocket).catch(() => {
+        Logger.warn('Failed to start storage monitor on connect');
+      });
     });
 
     ActiveSocket.on('disconnect', () => {
@@ -517,6 +531,11 @@ export const Manager = {
         TemperatureMonitor.Stop();
       } catch (_error) {
         Logger.warn('Failed to stop temperature monitor on disconnect');
+      }
+      try {
+        StorageMonitor.Stop();
+      } catch (_error) {
+        Logger.warn('Failed to stop storage monitor on disconnect');
       }
       disposeDisplayIdentity();
     });

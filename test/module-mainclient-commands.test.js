@@ -163,6 +163,9 @@ test('MainClient handles command events and reconnect lifecycle branches', async
     '../TemperatureMonitor': {
       Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
     },
+    '../StorageMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, RequestSample: () => {} },
+    },
     '../ProcessMonitor': {
       Manager: {
         Start: async () => {},
@@ -370,6 +373,9 @@ test('MainClient reports UpdateScripts download errors and pre-download failures
     '../PowerMonitor': { Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} } },
     '../TemperatureMonitor': {
       Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
+    },
+    '../StorageMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, RequestSample: () => {} },
     },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },

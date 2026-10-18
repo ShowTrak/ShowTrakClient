@@ -163,6 +163,9 @@ async function boot({
       '../AudioMonitor': { Manager: audio || AUDIO_STUB() },
       '../PowerMonitor': { Manager: power },
       '../TemperatureMonitor': { Manager: temperature },
+      '../StorageMonitor': {
+        Manager: { Start: async () => {}, Stop: () => {}, RequestSample: () => {} },
+      },
       '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
       '../Utils': { ...REAL_UTILS, Wait: async () => {} },
       '../ProfileManager': {

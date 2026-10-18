@@ -112,6 +112,9 @@ function createHarness({ displays = [], deltas = false } = {}) {
     '../TemperatureMonitor': {
       Manager: { Start: async () => {}, Stop: () => {}, Dispose: () => {} },
     },
+    '../StorageMonitor': {
+      Manager: { Start: async () => {}, Stop: () => {}, RequestSample: () => {} },
+    },
     '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../NetworkMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
     '../Utils': { ...REAL_UTILS, Wait: async () => {} },
