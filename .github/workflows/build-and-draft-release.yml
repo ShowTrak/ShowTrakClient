@@ -111,7 +111,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Linux is pinned, not ubuntu-latest: any native addon compiled here
+        # needs the runner's glibc or newer on the user's machine, so a newer
+        # image would quietly raise the oldest distro the packages run on.
+        os: [ubuntu-24.04, macos-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
     env:
