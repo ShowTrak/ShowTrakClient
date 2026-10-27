@@ -67,13 +67,13 @@
     "c8": "^12.0.0",
     "electron": "^45.0.0",
     "esbuild": "^0.28.2",
-    "eslint": "^10.12.0",
+    "eslint": "^10.13.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.13.0",
     "husky": "^9.1.7",
     "prettier": "^3.9.10",
     "typescript": "~5.9",
-    "typescript-eslint": "^8.71.2"
+    "typescript-eslint": "^8.72.0"
   },
   "dependencies": {
     "@showtrak/protocol": "file:./shared",
