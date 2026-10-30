@@ -26,10 +26,14 @@ import {
   handlePrimaryFailure,
   isRecoveryInProgress,
 } from './recovery';
-import { restartService } from './service-lifecycle';
+import { restartService, restartServiceAfter } from './service-lifecycle';
+import { RejectionBackoff } from './rejection-backoff';
 import { handleRemoteLanUpdateRequest, handleRemoteUpdateRequest } from './app-updater';
 
 const Logger = CreateLogger('BroadcastBridge');
+
+// Restarts after a different server rejected us (see rejection-backoff.ts).
+const IdentityMismatchBackoff = new RejectionBackoff();
 
 // A server rejecting our adoption is ambiguous, and the three branches below are
 // the disambiguation:
@@ -50,11 +54,14 @@ async function onServerAdoptionRejected(Info: ServerAdoptionRejectedInfo): Promi
     RejectedByIdentity &&
     ExpectedServerIdentity !== RejectedByIdentity
   ) {
+    // Retried on a backoff: the same address will usually reject us again, and
+    // restarting at once looped as fast as the network allowed.
+    const DelayMs = IdentityMismatchBackoff.NextDelayMs();
     sendRecoveryStatus({
       State: 'RecoveryFailed',
-      Message: 'Ignoring adoption rejection from a different server identity.',
+      Message: `Ignoring adoption rejection from a different server identity. Retrying in ${Math.ceil(DelayMs / 1000)}s.`,
     });
-    await restartService('server-identity-mismatch');
+    restartServiceAfter('server-identity-mismatch', DelayMs);
     return;
   }
 

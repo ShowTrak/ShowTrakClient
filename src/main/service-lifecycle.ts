@@ -96,10 +96,39 @@ function scheduleDiscoveryRetry(Generation: number): void {
   if (typeof discoveryRetryTimer.unref === 'function') discoveryRetryTimer.unref();
 }
 
+// A restart that waits (see restartServiceAfter). At most one is pending.
+let delayedRestartTimer: NodeJS.Timeout | null = null;
+
+function cancelDelayedRestart(): void {
+  if (delayedRestartTimer) {
+    clearTimeout(delayedRestartTimer);
+    delayedRestartTimer = null;
+  }
+}
+
+// Restart after `DelayMs`. One already pending is kept rather than replaced, so
+// repeated triggers cannot keep pushing a restart back forever; any restart for
+// another reason, or stopping the service, cancels it, since that restart has
+// already done its job.
+function restartServiceAfter(reason: string, DelayMs: number): void {
+  if (serviceStopped || delayedRestartTimer) return;
+  delayedRestartTimer = setTimeout(
+    () => {
+      delayedRestartTimer = null;
+      restartService(reason).catch((Err) =>
+        Logger.error(`Delayed restart failed (${reason})`, Err)
+      );
+    },
+    Math.max(0, DelayMs)
+  );
+  if (typeof delayedRestartTimer.unref === 'function') delayedRestartTimer.unref();
+}
+
 // Stop the service for good: called on app quit. Cancels any pending discovery
 // retry and makes sure no in-flight boot or later restart starts anything new.
 function stopService(): void {
   serviceStopped = true;
+  cancelDelayedRestart();
   invalidateBoot();
   discoveryRetryAttempts = 0;
 }
@@ -114,6 +143,7 @@ async function restartService(reason: string): Promise<void> {
     return;
   }
   isReinitializing = true;
+  cancelDelayedRestart();
   // A restart is a fresh start: drop any pending discovery retry and its
   // backoff, and disown a discovery the previous boot is still waiting on.
   invalidateBoot();
@@ -202,5 +232,6 @@ export {
   Main,
   isServiceReinitializing,
   restartService,
+  restartServiceAfter,
   stopService,
 };

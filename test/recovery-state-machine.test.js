@@ -598,3 +598,33 @@ test('a record with no resolvable address at all is skipped', async () => {
 
   await settleDiscovery(H);
 });
+
+// --- Rejection by a different server ------------------------------------------
+
+test('a rejection from a different server identity is retried on a backoff, not at once', async () => {
+  // The saved address answering as another ShowTrak Server used to restart the
+  // client straight back into the same rejection, as fast as the network allowed.
+  const H = createHarness({ profile: ADOPTED_PROFILE, primaryFailures: 0 });
+  await waitFor(() => H.initCalls.length >= 1, 'the first connection');
+  const Before = H.initCalls.length;
+
+  const Reject = () =>
+    H.broadcast.emit('ServerAdoptionRejected', {
+      IP: PRIMARY_IP,
+      Port: 3000,
+      Reason: 'server_identity_mismatch',
+      ServerIdentity: 'someone-elses-server',
+    });
+  Reject();
+  Reject();
+  Reject();
+  await tick(300);
+  assert.equal(H.initCalls.length, Before, 'no immediate reconnect');
+  assert.match(H.lastStatus('RecoveryFailed').Message, /Retrying in \d+s/);
+
+  // One restart after the wait, not one per rejection.
+  await waitFor(() => H.initCalls.length > Before, 'the delayed reconnect', 5000);
+  await tick(300);
+  assert.equal(H.initCalls.length, Before + 1);
+  assert.deepEqual(H.profileUpdates, [], 'the foreign server is never adopted');
+});
