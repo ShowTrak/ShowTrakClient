@@ -159,3 +159,31 @@ body {
   padding: 0.1rem 0.25rem;
   border-radius: 0.25rem;
 }
+
+/* Update channel: a two-way toggle (Stable / Beta). */
+.update-channel-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.06);
+}
+.update-channel-toggle .btn {
+  color: rgba(255, 255, 255, 0.75);
+  background: transparent;
+  border: 0;
+  border-radius: 0.4rem;
+  padding: 2px 12px;
+}
+.update-channel-toggle .btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
+}
+.update-channel-toggle .btn[aria-checked='true'] {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.2);
+  font-weight: 600;
+}
+.update-channel-toggle .btn[data-update-channel='beta'][aria-checked='true'] {
+  background: rgba(255, 193, 7, 0.35);
+}

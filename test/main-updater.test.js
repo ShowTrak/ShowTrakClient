@@ -31,7 +31,14 @@ const silentLogger = {
  * @param version           Config.Application.Version, for the LAN version check
  * @param pushes            collects PushToRenderer calls
  */
-function buildMocks({ isPackaged = true, version = '3.14.0', pushes = [] } = {}) {
+function buildMocks({
+  isPackaged = true,
+  version = '3.14.0',
+  pushes = [],
+  channel = 'stable',
+  feedCalls = [],
+  updater = {},
+} = {}) {
   // electron-updater must be mocked, not just electron: it dereferences
   // app.getVersion() the moment its `autoUpdater` getter is touched, so the real
   // package cannot be constructed outside a running Electron main process. Its
@@ -40,13 +47,15 @@ function buildMocks({ isPackaged = true, version = '3.14.0', pushes = [] } = {})
   const electronUpdaterMock = {
     autoUpdater: {
       on: () => {},
-      setFeedURL: () => {},
+      setFeedURL: (Options) => feedCalls.push(Options),
       checkForUpdates: async () => ({}),
       quitAndInstall: () => {},
       autoDownload: false,
       autoInstallOnAppQuit: false,
       allowDowngrade: false,
+      allowPrerelease: true,
       updateConfigPath: '',
+      ...updater,
     },
   };
 
@@ -62,6 +71,7 @@ function buildMocks({ isPackaged = true, version = '3.14.0', pushes = [] } = {})
     },
     'electron-updater': electronUpdaterMock,
     '../Modules/Logger': { CreateLogger: () => silentLogger },
+    '../Modules/UpdateChannel': { Manager: { Get: () => channel } },
     '../Modules/Config': { Config: { Application: { Version: version, Name: 'ShowTrak Client' } } },
     './renderer-bus': {
       PushToRenderer: (channel, payload) => pushes.push([channel, payload]),
@@ -361,3 +371,106 @@ test('installUpdate on an unpackaged build reports installing then installed', a
     assert.deepEqual(pushes.at(-1), ['AppUpdate:Status', { state: 'installed' }]);
   });
 });
+
+// --- Update channels ----------------------------------------------------------
+
+/** Run `body` with global fetch answering the GitHub releases list. */
+async function withReleases(Releases, body) {
+  const Original = globalThis.fetch;
+  const Asked = [];
+  globalThis.fetch = async (Url) => {
+    Asked.push(String(Url));
+    if (Releases instanceof Error) throw Releases;
+    return { ok: true, status: 200, json: async () => Releases };
+  };
+  try {
+    return await body(Asked);
+  } finally {
+    globalThis.fetch = Original;
+  }
+}
+
+test(
+  'the beta channel checks against the newest release of any kind',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const feedCalls = [];
+    const updater = {};
+    await withReleases(
+      [{ tag_name: 'v3.28.2' }, { tag_name: 'v3.29.0-beta.1', prerelease: true }],
+      async (Asked) => {
+        await withUpdater(
+          { channel: 'beta', feedCalls, updater },
+          async ({ performUpdateCheck }) => {
+            await performUpdateCheck();
+          }
+        );
+        assert.deepEqual(Asked, [
+          'https://api.github.com/repos/ShowTrak/ShowTrakClient/releases?per_page=30',
+        ]);
+      }
+    );
+    assert.deepEqual(feedCalls, [
+      {
+        provider: 'generic',
+        url: 'https://github.com/ShowTrak/ShowTrakClient/releases/download/v3.29.0-beta.1/',
+      },
+    ]);
+  }
+);
+
+test(
+  'the stable channel keeps the GitHub feed and never takes a pre-release',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const feedCalls = [];
+    let Updater;
+    await withReleases(new Error('must not be asked'), async (Asked) => {
+      await withUpdater({ channel: 'stable', feedCalls }, async (mod) => {
+        await mod.performUpdateCheck();
+        Updater = require('electron-updater').autoUpdater;
+      });
+      assert.deepEqual(Asked, [], 'stable does not look the release list up');
+    });
+    assert.deepEqual(feedCalls, []);
+    // Even if the installed build is itself a beta (which turns this on by default).
+    assert.equal(Updater.allowPrerelease, false);
+  }
+);
+
+test(
+  'a failed beta lookup falls back to the stable feed instead of failing the check',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const feedCalls = [];
+    const pushes = [];
+    await withReleases(new Error('offline'), async () => {
+      await withUpdater({ channel: 'beta', feedCalls, pushes }, async ({ performUpdateCheck }) => {
+        await performUpdateCheck();
+      });
+    });
+    assert.deepEqual(feedCalls, []);
+    assert.equal(
+      pushes.some(([, Payload]) => Payload && Payload.state === 'error'),
+      false,
+      'the check itself did not fail'
+    );
+  }
+);
+
+test(
+  'an update the server pushes over the LAN ignores the channel',
+  { skip: process.platform === 'win32' },
+  async () => {
+    const feedCalls = [];
+    await withReleases(new Error('must not be asked'), async (Asked) => {
+      await withUpdater({ channel: 'beta', feedCalls }, async ({ performUpdateCheck }) => {
+        await performUpdateCheck({ FeedURL: 'http://10.0.0.1:3000/updates/client/latest/' });
+      });
+      assert.deepEqual(Asked, []);
+    });
+    assert.deepEqual(feedCalls, [
+      { provider: 'generic', url: 'http://10.0.0.1:3000/updates/client/latest/' },
+    ]);
+  }
+);

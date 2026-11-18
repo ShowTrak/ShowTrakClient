@@ -31,6 +31,8 @@ import path from 'path';
 import type { AppUpdateStatus } from '../types/preload';
 import { CreateLogger } from '../Modules/Logger';
 import { Config } from '../Modules/Config';
+import { Manager as UpdateChannel } from '../Modules/UpdateChannel';
+import { ResolveChannelRelease } from '@showtrak/protocol/runtime';
 import { PushToRenderer } from './renderer-bus';
 import { destroyTray, hasTray } from './tray';
 import {
@@ -65,6 +67,40 @@ let euAutoUpdaterHandlersBound = false;
 let squirrelUpdaterInitialized = false;
 let autoInstallNext = false; // when true, auto-install on update-downloaded
 let ActiveRemoteUpdateSession: RemoteUpdateSession | null = null;
+// Whether electron-updater was pointed at a specific release by the beta
+// channel, so a later stable check knows to point it back at GitHub.
+let usingChannelFeed = false;
+
+const STABLE_SQUIRREL_FEED = 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
+
+// The beta channel's release for a self-initiated check: the newest release of
+// any kind (see @showtrak/protocol/runtime update-channel), or null on stable.
+// A failed lookup falls back to stable rather than failing the check; the
+// updaters never downgrade, so that can only ever offer a newer build.
+async function resolveChannelFeed(): Promise<{ Tag: string; FeedURL: string } | null> {
+  if (UpdateChannel.Get() !== 'beta') return null;
+  try {
+    const Release = await ResolveChannelRelease({
+      Owner: 'ShowTrak',
+      Repo: 'ShowTrakClient',
+      Channel: 'beta',
+      FetchJson: async (Url) => {
+        const Res = await fetch(Url, {
+          headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'ShowTrakClient' },
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!Res.ok) throw new Error(`GET ${Url} failed with status ${Res.status}`);
+        return Res.json();
+      },
+    });
+    if (Release) Logger.log(`[Updater] Beta channel: checking against ${Release.Tag}`);
+    else Logger.warn('[Updater] Beta channel: no installable release found; using the stable feed');
+    return Release;
+  } catch (Err) {
+    Logger.warn('[Updater] Beta channel lookup failed; using the stable feed', Err);
+    return null;
+  }
+}
 
 function getAppUpdateStatus(): AppUpdateStatus | null {
   return currentAppUpdateStatus;
@@ -343,11 +379,13 @@ async function performUpdateCheck(
       autoInstallNext,
     });
 
+    // Updates the server pushes (LAN feed) name their own build; only a check
+    // this client starts itself follows its update channel.
+    const ChannelFeed = UseLANFeed ? null : await resolveChannelFeed();
+
     if (isSquirrelWindows()) {
       initSquirrelUpdater();
-      const feed = UseLANFeed
-        ? FeedURL
-        : 'https://github.com/ShowTrak/ShowTrakClient/releases/latest/download/';
+      const feed = UseLANFeed ? FeedURL : ChannelFeed ? ChannelFeed.FeedURL : STABLE_SQUIRREL_FEED;
       Logger.log('[Updater][Squirrel] setting feed URL', { feed });
       try {
         SquirrelUpdater.setFeedURL({ url: feed });
@@ -374,6 +412,29 @@ async function performUpdateCheck(
     }
 
     ensureUpdateConfig(Updater, UseLANFeed, FeedURL);
+
+    // Channel (self-initiated checks only): beta points the updater at the
+    // chosen release's own files (latest-mac.yml); stable uses GitHub's
+    // "latest" release and never offers a pre-release, even when the installed
+    // build is itself a beta.
+    if (!UseLANFeed) {
+      try {
+        if (ChannelFeed) {
+          Updater.setFeedURL({ provider: 'generic', url: ChannelFeed.FeedURL });
+          usingChannelFeed = true;
+        } else if (usingChannelFeed) {
+          Updater.setFeedURL({ provider: 'github', owner: 'ShowTrak', repo: 'ShowTrakClient' });
+          usingChannelFeed = false;
+        }
+        Updater.allowPrerelease = false;
+      } catch (err) {
+        Logger.error('[Updater][ElectronUpdater] failed to apply the update channel', err);
+      }
+    } else {
+      // The LAN feed below replaces the GitHub one too; the next check this
+      // client starts itself must point it back.
+      usingChannelFeed = true;
+    }
 
     if (UseLANFeed && typeof Updater.setFeedURL === 'function') {
       try {

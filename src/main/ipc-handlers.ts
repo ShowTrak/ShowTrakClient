@@ -6,6 +6,7 @@
 //
 // Registered once, from main.ts, after app.whenReady().
 
+import { Manager as UpdateChannel } from '../Modules/UpdateChannel';
 import { app } from 'electron';
 
 import { CreateLogger } from '../Modules/Logger';
@@ -36,6 +37,7 @@ function registerIpcHandlers(): void {
         ProcessMonitorStatus: ProcessMonitor.GetStatus(),
         ServerRecoveryStatus: getRecoveryStatus(),
         AppUpdateStatus: getAppUpdateStatus(),
+        UpdateChannel: UpdateChannel.Get(),
       },
     ];
   });
@@ -83,6 +85,7 @@ function registerIpcHandlers(): void {
     async (args) => {
       assertNoArgs('Profile:FactoryReset', args);
       await ProfileManager.ResetProfileToFactoryDefaults();
+      UpdateChannel.Reset();
       await ScriptManager.DeleteScripts();
       // Take the show's variables with it, including anything exported to the
       // Windows user environment — a factory-reset machine must not keep the
@@ -122,6 +125,18 @@ function registerIpcHandlers(): void {
       return [null, true];
     },
     { errorLog: 'Failed to clear manual server endpoint' }
+  );
+
+  Handle(
+    'AppUpdate:SetChannel',
+    (args) => {
+      const [Channel] = args;
+      if (Channel !== 'stable' && Channel !== 'beta') {
+        throw new Error('The update channel must be stable or beta.');
+      }
+      return [null, UpdateChannel.Set(Channel)];
+    },
+    { errorLog: 'Failed to set the update channel' }
   );
 
   Handle('AppUpdate:Check', async (args) => {

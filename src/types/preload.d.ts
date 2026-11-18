@@ -58,6 +58,8 @@ export interface LoadedSnapshot {
   ProcessMonitorStatus: ProcessMonitorStatus;
   ServerRecoveryStatus: ServerRecoveryStatus;
   AppUpdateStatus: AppUpdateStatus | null;
+  /** This client's update channel. */
+  UpdateChannel: 'stable' | 'beta';
 }
 
 /** `window.API` in the main config window (src/preload.ts). */
@@ -70,6 +72,8 @@ export interface ClientPreloadAPI {
   SetManualServer(Host: string, Port: number): Promise<IpcResult<ManualServer>>;
   ClearManualServer(): Promise<unknown>;
   CheckForAppUpdates(): Promise<unknown>;
+  /** Choose the update channel ('stable' or 'beta'); applies from the next check. */
+  SetUpdateChannel(Channel: 'stable' | 'beta'): Promise<IpcResult<'stable' | 'beta'>>;
   InstallAppUpdate(): Promise<unknown>;
   OnAppUpdateStatus(callback: (status: AppUpdateStatus) => void): Unsubscribe;
   OnProcessMonitorStatus(callback: (status: ProcessMonitorStatus) => void): Unsubscribe;

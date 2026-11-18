@@ -36,6 +36,22 @@ import {
 } from './lib/dom';
 
 let Profile: ClientProfile = {};
+let UpdateChannelState: 'stable' | 'beta' = 'stable';
+
+const UPDATE_CHANNEL_HINTS = {
+  stable: 'Full releases only.',
+  beta: 'Pre-releases as well: always the newest release of any kind. Switching back to Stable keeps this version until a newer full release is out.',
+} as const;
+
+function RenderUpdateChannel(): void {
+  for (const Button of document.querySelectorAll<HTMLElement>('[data-update-channel]')) {
+    Button.setAttribute(
+      'aria-checked',
+      String(Button.getAttribute('data-update-channel') === UpdateChannelState)
+    );
+  }
+  setText(byId('UPDATE_CHANNEL_HINT'), UPDATE_CHANNEL_HINTS[UpdateChannelState]);
+}
 let Version = '0.0.0';
 let ProcessMonitorStatusState: ProcessMonitorStatus = {
   State: 'unknown',
@@ -167,12 +183,25 @@ async function Main(): Promise<void> {
       Message: '',
     };
     ApplyAppUpdateStatus(LoadedSnapshot.AppUpdateStatus || null);
+    UpdateChannelState = LoadedSnapshot.UpdateChannel === 'beta' ? 'beta' : 'stable';
   }
   Version = await window.API.GetVersion();
   setText(byId('APPLICATION_NAVBAR_TITLE'), `ShowTrak Client v${Version}`);
   RenderProcessMonitorWarning();
   RenderServerRecoveryStatus();
   RenderManualServer();
+  RenderUpdateChannel();
+  for (const Button of document.querySelectorAll<HTMLElement>('[data-update-channel]')) {
+    onOnly(Button, 'click', async () => {
+      const Next = Button.getAttribute('data-update-channel') === 'beta' ? 'beta' : 'stable';
+      if (Next === UpdateChannelState) return;
+      try {
+        const [Err, Saved] = (await window.API.SetUpdateChannel(Next)) || [];
+        if (!Err && Saved) UpdateChannelState = Saved;
+      } catch {}
+      RenderUpdateChannel();
+    });
+  }
   // Bind updater UI
   onOnly(byId('BTN_CHECK_UPDATES'), 'click', async () => {
     try {

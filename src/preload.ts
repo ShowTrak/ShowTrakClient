@@ -21,6 +21,7 @@ const INVOKE_CHANNELS = new Set([
   'Profile:ClearManualServer',
   'AppUpdate:Check',
   'AppUpdate:Install',
+  'AppUpdate:SetChannel',
 ]);
 
 const SUBSCRIBE_CHANNELS = new Set([
@@ -67,6 +68,8 @@ const API: ClientPreloadAPI = {
     (await invoke('Profile:SetManualServer', Host, Port)) as IpcResult<ManualServer>,
   ClearManualServer: async () => invoke('Profile:ClearManualServer'),
   CheckForAppUpdates: async () => invoke('AppUpdate:Check'),
+  SetUpdateChannel: async (Channel) =>
+    (await invoke('AppUpdate:SetChannel', Channel)) as IpcResult<'stable' | 'beta'>,
   InstallAppUpdate: async () => invoke('AppUpdate:Install'),
   OnAppUpdateStatus: (cb) => subscribe('AppUpdate:Status', cb as (...p: never[]) => void),
   OnProcessMonitorStatus: (cb) => subscribe('ProcessMonitorStatus', cb as (...p: never[]) => void),
