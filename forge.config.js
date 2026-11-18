@@ -87,6 +87,11 @@ module.exports = {
     // tray, matching the Windows background-service behavior.
     extendInfo: {
       LSUIElement: 1,
+      // macOS Local Network privacy: Bonjour discovery is raw multicast on UDP
+      // 5353, which macOS blocks for an app that has not been granted Local
+      // Network access. This string is what the permission prompt shows.
+      NSLocalNetworkUsageDescription:
+        'ShowTrak Client needs local network access to find and connect to your ShowTrak Server.',
     },
     ...(shouldSignMac
       ? {
