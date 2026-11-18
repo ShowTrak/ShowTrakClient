@@ -20,6 +20,9 @@ const Logger = CreateLogger('ServerCapabilities');
  * default of true.
  */
 let supportsDeltas = false;
+// Whether the server shows a running script's console (ScriptExecutionOutput).
+// Same rule as deltas: off until the server says otherwise.
+let supportsExecutionOutput = false;
 
 export const Manager = {
   /**
@@ -31,9 +34,11 @@ export const Manager = {
    */
   Probe(Socket: ShowTrakSocket): void {
     supportsDeltas = false;
+    supportsExecutionOutput = false;
     try {
       Socket.emit('GetServerCapabilities', (Capabilities) => {
         supportsDeltas = !!(Capabilities && Capabilities.Deltas);
+        supportsExecutionOutput = !!(Capabilities && Capabilities.ExecutionOutput);
         Logger.log(
           supportsDeltas
             ? 'Server supports incremental telemetry; enabling deltas'
@@ -48,9 +53,14 @@ export const Manager = {
   /** Reset to the safe default. Called whenever the connection drops. */
   Reset(): void {
     supportsDeltas = false;
+    supportsExecutionOutput = false;
   },
 
   SupportsDeltas(): boolean {
     return supportsDeltas;
+  },
+
+  SupportsExecutionOutput(): boolean {
+    return supportsExecutionOutput;
   },
 };

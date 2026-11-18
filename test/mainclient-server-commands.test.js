@@ -109,6 +109,7 @@ async function boot({
   temperature = MONITOR_STUB(),
   display = {},
   usb = {},
+  executionOutput = false,
 } = {}) {
   const Broadcasts = [];
   const OriginalSetInterval = global.setInterval;
@@ -157,6 +158,14 @@ async function boot({
           DeleteScripts: async () => {},
           GetLastAppliedDeploymentFingerprint: async () => 'fp',
           Execute: execute || (async () => [null, true]),
+        },
+      },
+      '../ServerCapabilities': {
+        Manager: {
+          Probe: () => {},
+          Reset: () => {},
+          SupportsDeltas: () => false,
+          SupportsExecutionOutput: () => executionOutput,
         },
       },
       '../ProcessMonitor': { Manager: { Start: async () => {}, Stop: async () => {} } },
@@ -412,6 +421,49 @@ test('script progress reaches the server while connected', async () => {
     'Starting',
   ]);
   assert.equal(typeof Report, 'function');
+});
+
+// --- Script console output --------------------------------------------------
+
+test('a server without the console capability is never sent output', async () => {
+  // An older server has no handler for ScriptExecutionOutput; the client must
+  // not even pass an output reporter in.
+  let Reporter = 'unset';
+  const { socket } = await boot({
+    execute: async (_RequestID, _ScriptID, _OnProgress, _Variables, OnOutput) => {
+      Reporter = OnOutput;
+      return [null, true];
+    },
+  });
+  await socket.trigger('ExecuteScript', 'req-11', 'chatty');
+  assert.equal(Reporter, null);
+  assert.deepEqual(emitsOf(socket, 'ScriptExecutionOutput'), []);
+});
+
+test('console output reaches a server that shows it, before the result', async () => {
+  const { socket } = await boot({
+    executionOutput: true,
+    execute: async (_RequestID, _ScriptID, _OnProgress, _Variables, OnOutput) => {
+      OnOutput('stdout', 'line 1\n');
+      OnOutput('stdout', 'line 2\n');
+      OnOutput('stderr', 'warning\n');
+      return [null, true];
+    },
+  });
+  await socket.trigger('ExecuteScript', 'req-12', 'chatty');
+  const Order = socket.emits
+    .map(([Event]) => Event)
+    .filter((Event) => Event === 'ScriptExecutionOutput' || Event === 'ScriptExecutionResponse');
+  assert.deepEqual(Order, ['ScriptExecutionOutput', 'ScriptExecutionResponse']);
+  assert.deepEqual(emitsOf(socket, 'ScriptExecutionOutput')[0], [
+    'ScriptExecutionOutput',
+    'req-12',
+    [
+      { Stream: 'stdout', Text: 'line 1\nline 2\n' },
+      { Stream: 'stderr', Text: 'warning\n' },
+    ],
+    false,
+  ]);
 });
 
 // --- Registration -----------------------------------------------------------

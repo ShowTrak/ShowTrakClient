@@ -21,6 +21,8 @@ const Logger = CreateLogger('ScriptManager');
 
 /** Progress reporter passed through to the server's execution modal. */
 export type ProgressReporter = (progress: number, statusText: string) => void;
+/** Receives a running script's raw console output (for the server's console view). */
+export type OutputReporter = (Stream: 'stdout' | 'stderr', Text: string) => void;
 
 let ScriptCache: ClientScript[] = [];
 let LastAppliedDeploymentFingerprint: string | null = null;
@@ -536,7 +538,8 @@ const Internal = {
     OnProgress?: ProgressReporter,
     ConsoleFilter: ScriptConsoleFilter | null = null,
     Variables: VariableEnvironment | null = null,
-    TimeoutMs: number = DEFAULT_SCRIPT_TIMEOUT_MS
+    TimeoutMs: number = DEFAULT_SCRIPT_TIMEOUT_MS,
+    OnOutput: OutputReporter | null = null
   ): Promise<string> {
     const Report: ProgressReporter = typeof OnProgress === 'function' ? OnProgress : () => {};
     return new Promise((resolve, reject) => {
@@ -667,12 +670,14 @@ const Internal = {
         const text = data.toString();
         StdOut += text;
         QueueOutput(text);
+        if (OnOutput) OnOutput('stdout', text);
       });
       Child.stderr.on('data', (data) => {
         if (Settled) return;
         const text = data.toString();
         StdErr += text;
         QueueOutput(text);
+        if (OnOutput) OnOutput('stderr', text);
       });
 
       Child.on('error', (error) => {
@@ -786,7 +791,9 @@ export const Manager = {
     // pushed cache — a script that waited its turn in the queue runs with the
     // values current when it actually started. Absent for tray and launch runs
     // (and from a server too old to send them), which fall back to the cache.
-    Variables: VariableEnvironment | null = null
+    Variables: VariableEnvironment | null = null,
+    // Raw console output as it is written, for servers that show a console.
+    OnOutput: OutputReporter | null = null
   ): Promise<[string | null, boolean]> {
     // OnProgress(Progress:0-100, StatusText) lets the server render a live
     // progress bar / running spinner. It is optional so other callers still work.
@@ -810,7 +817,8 @@ export const Manager = {
         Report,
         Script.ConsoleFilter,
         Variables || VariableStore.GetEnvironment(),
-        Internal.ResolveTimeoutMs(Script)
+        Internal.ResolveTimeoutMs(Script),
+        OnOutput
       );
       Logger.success(`Script ${Script.Name} executed successfully`);
       return [null, true];

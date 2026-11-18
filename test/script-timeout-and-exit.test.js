@@ -112,6 +112,23 @@ test('a non-zero exit with no stderr names the exit code', { skip: !POSIX }, asy
   assert.deepEqual(await Manager.Execute('r', 'script-1'), ['Script exited with code 4.', false]);
 });
 
+test('console output is reported from both streams, in order', { skip: !POSIX }, async () => {
+  const { Manager } = await setup('echo one; echo two >&2; echo three; exit 0');
+  const Seen = [];
+  const Result = await Manager.Execute('r', 'script-1', undefined, null, (Stream, Text) =>
+    Seen.push([Stream, Text])
+  );
+  assert.deepEqual(Result, [null, true]);
+  const Out = Seen.filter(([S]) => S === 'stdout')
+    .map(([, T]) => T)
+    .join('');
+  const Err = Seen.filter(([S]) => S === 'stderr')
+    .map(([, T]) => T)
+    .join('');
+  assert.equal(Out, 'one\nthree\n');
+  assert.equal(Err, 'two\n');
+});
+
 test('a long stderr is trimmed to its tail, which is where the reason is', () => {
   const { _internal } = loadModule();
   const Long = `${'noise '.repeat(200)}the actual reason`;

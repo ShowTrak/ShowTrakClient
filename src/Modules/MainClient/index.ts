@@ -19,6 +19,7 @@ import { Manager as TemperatureMonitor } from '../TemperatureMonitor';
 import { Manager as StorageMonitor } from '../StorageMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
+import { CreateOutputStreamer } from '../ScriptManager/output-stream';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
 import { DiffByKey, ErrorMessage, IsEmptyDiff, ReadIdentityToken, Wait } from '../Utils';
 
@@ -668,12 +669,23 @@ export const Manager = {
         if (!ActiveSocket.connected) return;
         ActiveSocket.emit('ScriptExecutionProgress', RequestID, Progress, StatusText);
       };
+      // Stream the console only to a server that shows it (older servers
+      // would drop the event). Flushed before the result so the server's
+      // console is complete when it records the outcome.
+      const Output = ServerCapabilities.SupportsExecutionOutput()
+        ? CreateOutputStreamer((Chunks, Truncated) => {
+            if (!ActiveSocket.connected) return;
+            ActiveSocket.emit('ScriptExecutionOutput', RequestID, Chunks, Truncated);
+          })
+        : null;
       const [Err, Success] = await ScriptManager.Execute(
         RequestID,
         ScriptID,
         ReportProgress,
-        VariableStore.Adopt(Variables)
+        VariableStore.Adopt(Variables),
+        Output ? (Stream, Text) => Output.Write(Stream, Text) : null
       );
+      if (Output) Output.Close();
       if (Err) {
         Logger.error(`Error executing script: ${Err}`);
         ActiveSocket.emit('ScriptExecutionResponse', RequestID, Err, null);
