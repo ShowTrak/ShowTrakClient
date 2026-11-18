@@ -9,7 +9,7 @@
  * - Listens for profile updates and updates the profile display accordingly.
  * - Handles minimize and shutdown button events.
  *
- * jQuery and Bootstrap are external <script> globals, not bundled here.
+ * Plain DOM through ./lib/dom: no jQuery, no Bootstrap JavaScript.
  */
 import type { ClientProfile, ProcessMonitorStatus } from '../../../types/client';
 import type { AppUpdateStatus, ServerRecoveryStatus } from '../../../types/preload';
@@ -23,6 +23,17 @@ import {
   GetProfileServerModel,
   GetServerRecoveryBannerModel,
 } from './lib/status-models';
+import {
+  addClass,
+  byId,
+  isFocused,
+  onOnly,
+  removeClass,
+  setText,
+  setValue,
+  toggleClass,
+  valueOf,
+} from './lib/dom';
 
 let Profile: ClientProfile = {};
 let Version = '0.0.0';
@@ -35,24 +46,28 @@ let ServerRecoveryStatusState: ServerRecoveryStatus = { State: 'idle', Message: 
 
 // Paint the profile panel.
 //
-// Text is set with .text() against the static structure in index.html rather than
-// interpolated into .html(): the UUID and endpoint come from a server payload, and
+// Text is set with textContent against the static structure in index.html rather
+// than interpolated into markup: the UUID and endpoint come from a server payload, and
 // building markup out of them made this an injection sink inside a
 // context-isolated window for no benefit.
 function ApplyProfile(NewProfile: ClientProfile | null | undefined): void {
   Profile = NewProfile || {};
 
   const AdoptionBadge = GetAdoptionBadgeModel(Profile, ServerRecoveryStatusState);
-  $('#PROFILE_ADOPTION_BADGE')
-    .removeClass(ADOPTION_BADGE_CLASSES)
-    .addClass(AdoptionBadge.className)
-    .text(AdoptionBadge.label);
+  const Badge = byId('PROFILE_ADOPTION_BADGE');
+  removeClass(Badge, ADOPTION_BADGE_CLASSES);
+  addClass(Badge, AdoptionBadge.className);
+  setText(Badge, AdoptionBadge.label);
 
   const ServerModel = GetProfileServerModel(Profile);
-  $('#PROFILE_SERVER_IP').toggleClass('d-none', !ServerModel.hasServer).text(ServerModel.ip);
-  $('#PROFILE_SERVER_PORT').toggleClass('d-none', !ServerModel.hasServer).text(ServerModel.port);
-  $('#PROFILE_SERVER_NONE').toggleClass('d-none', ServerModel.hasServer);
-  $('#PROFILE_UUID').text(ServerModel.uuid);
+  const ServerIP = byId('PROFILE_SERVER_IP');
+  toggleClass(ServerIP, 'd-none', !ServerModel.hasServer);
+  setText(ServerIP, ServerModel.ip);
+  const ServerPort = byId('PROFILE_SERVER_PORT');
+  toggleClass(ServerPort, 'd-none', !ServerModel.hasServer);
+  setText(ServerPort, ServerModel.port);
+  toggleClass(byId('PROFILE_SERVER_NONE'), 'd-none', ServerModel.hasServer);
+  setText(byId('PROFILE_UUID'), ServerModel.uuid);
 
   RenderManualServer();
 }
@@ -60,66 +75,59 @@ function ApplyProfile(NewProfile: ClientProfile | null | undefined): void {
 function ApplyAppUpdateStatus(payload: AppUpdateStatus | null | undefined): void {
   if (!payload || typeof payload !== 'object') return;
   try {
-    $('#UPDATE_SECTION').removeClass('d-none');
-    const $status = $('#UPDATE_STATUS');
-    const $install = $('#UPDATE_INSTALL_BTN');
-    const $later = $('#UPDATE_LATER_BTN');
-    const $notesWrap = $('#UPDATE_NOTES_WRAPPER');
-    const $notes = $('#UPDATE_CHANGELOG');
-    $install.addClass('d-none');
-    $later.addClass('d-none');
-    $notesWrap.addClass('d-none');
-    $notes.empty();
+    removeClass(byId('UPDATE_SECTION'), 'd-none');
+    addClass(byId('UPDATE_INSTALL_BTN'), 'd-none');
+    addClass(byId('UPDATE_LATER_BTN'), 'd-none');
+    addClass(byId('UPDATE_NOTES_WRAPPER'), 'd-none');
+    setText(byId('UPDATE_CHANGELOG'), '');
     const StatusText = GetAppUpdateStatusText(payload);
-    if (StatusText != null) $status.text(StatusText);
+    if (StatusText != null) setText(byId('UPDATE_STATUS'), StatusText);
   } catch {}
 }
 
 function RenderManualServerPortHint(): void {
-  const $port = $('#MANUAL_SERVER_PORT');
-  const $hint = $('#MANUAL_SERVER_HINT');
-  if (!$port.length || !$hint.length) return;
-  const isBlank = !String($port.val() || '').trim();
-  $hint.toggleClass('d-none', !isBlank);
+  const Port = byId<HTMLInputElement>('MANUAL_SERVER_PORT');
+  const Hint = byId('MANUAL_SERVER_HINT');
+  if (!Port || !Hint) return;
+  const isBlank = !valueOf(Port).trim();
+  toggleClass(Hint, 'd-none', !isBlank);
 }
 
 function RenderProcessMonitorWarning(): void {
-  const $warning = $('#PROCESS_MONITOR_WARNING');
-  if (!$warning || !$warning.length) return;
+  const Warning = byId('PROCESS_MONITOR_WARNING');
+  if (!Warning) return;
   const Model = GetProcessMonitorWarningModel(ProcessMonitorStatusState);
-  if (Model.visible) {
-    $warning.removeClass('d-none').text(Model.text);
-    return;
-  }
-  $warning.addClass('d-none').text('');
+  toggleClass(Warning, 'd-none', !Model.visible);
+  setText(Warning, Model.visible ? Model.text : '');
 }
 
 function RenderManualServer(): void {
-  const $section = $('#MANUAL_SERVER_SECTION');
-  const $status = $('#MANUAL_SERVER_STATUS');
-  const $clear = $('#BTN_MANUAL_SERVER_CLEAR');
-  const $host = $('#MANUAL_SERVER_HOST');
-  const $port = $('#MANUAL_SERVER_PORT');
-  if (!$status.length || !$section.length) return;
+  const Section = byId('MANUAL_SERVER_SECTION');
+  const Status = byId('MANUAL_SERVER_STATUS');
+  const Host = byId<HTMLInputElement>('MANUAL_SERVER_HOST');
+  const Port = byId<HTMLInputElement>('MANUAL_SERVER_PORT');
+  if (!Status || !Section) return;
 
-  $section.removeClass('d-none');
+  removeClass(Section, 'd-none');
 
   const Model = GetManualServerModel(Profile);
-  $status.removeClass(Model.removeClass).addClass(Model.addClass).text(Model.statusText);
-  $clear.toggleClass('d-none', !Model.isManual);
-  if (!$host.is(':focus')) $host.val(Model.host);
-  if (!$port.is(':focus')) $port.val(Model.port);
+  removeClass(Status, Model.removeClass);
+  addClass(Status, Model.addClass);
+  setText(Status, Model.statusText);
+  toggleClass(byId('BTN_MANUAL_SERVER_CLEAR'), 'd-none', !Model.isManual);
+  if (!isFocused(Host)) setValue(Host, Model.host);
+  if (!isFocused(Port)) setValue(Port, Model.port);
   RenderManualServerPortHint();
 }
 
 function RenderServerRecoveryStatus(): void {
-  const $status = $('#SERVER_RECOVERY_STATUS');
-  if (!$status || !$status.length) return;
+  const Status = byId('SERVER_RECOVERY_STATUS');
+  if (!Status) return;
 
   const Model = GetServerRecoveryBannerModel(ServerRecoveryStatusState);
-  $status.removeClass('d-none alert-info alert-warning alert-success alert-danger');
-  $status.addClass(Model.className);
-  $status.text(Model.text);
+  removeClass(Status, 'd-none alert-info alert-warning alert-success alert-danger');
+  addClass(Status, Model.className);
+  setText(Status, Model.text);
 }
 
 async function Main(): Promise<void> {
@@ -161,109 +169,94 @@ async function Main(): Promise<void> {
     ApplyAppUpdateStatus(LoadedSnapshot.AppUpdateStatus || null);
   }
   Version = await window.API.GetVersion();
-  $('#APPLICATION_NAVBAR_TITLE').text(`ShowTrak Client v${Version}`);
+  setText(byId('APPLICATION_NAVBAR_TITLE'), `ShowTrak Client v${Version}`);
   RenderProcessMonitorWarning();
   RenderServerRecoveryStatus();
   RenderManualServer();
   // Bind updater UI
-  $('#BTN_CHECK_UPDATES')
-    .off('click')
-    .on('click', async () => {
-      try {
-        await window.API.CheckForAppUpdates();
-      } catch {}
-      $('#UPDATE_SECTION').removeClass('d-none');
-      $('#UPDATE_STATUS').text('Checking for updates…');
-      $('#UPDATE_INSTALL_BTN').addClass('d-none');
-      $('#UPDATE_LATER_BTN').addClass('d-none');
-      $('#UPDATE_NOTES_WRAPPER').addClass('d-none');
-      $('#UPDATE_CHANGELOG').empty();
-    });
-  $('#UPDATE_INSTALL_BTN')
-    .off('click')
-    .on('click', async () => {
-      try {
-        await window.API.InstallAppUpdate();
-      } catch {}
-    });
-  $('#UPDATE_LATER_BTN')
-    .off('click')
-    .on('click', async () => {
-      $('#UPDATE_SECTION').addClass('d-none');
-    });
-  $('#MANUAL_SERVER_PORT')
-    .off('input')
-    .on('input', () => {
+  onOnly(byId('BTN_CHECK_UPDATES'), 'click', async () => {
+    try {
+      await window.API.CheckForAppUpdates();
+    } catch {}
+    removeClass(byId('UPDATE_SECTION'), 'd-none');
+    setText(byId('UPDATE_STATUS'), 'Checking for updates…');
+    addClass(byId('UPDATE_INSTALL_BTN'), 'd-none');
+    addClass(byId('UPDATE_LATER_BTN'), 'd-none');
+    addClass(byId('UPDATE_NOTES_WRAPPER'), 'd-none');
+    setText(byId('UPDATE_CHANGELOG'), '');
+  });
+  onOnly(byId('UPDATE_INSTALL_BTN'), 'click', async () => {
+    try {
+      await window.API.InstallAppUpdate();
+    } catch {}
+  });
+  onOnly(byId('UPDATE_LATER_BTN'), 'click', async () => {
+    addClass(byId('UPDATE_SECTION'), 'd-none');
+  });
+  onOnly(byId('MANUAL_SERVER_PORT'), 'input', () => {
+    RenderManualServerPortHint();
+  });
+
+  onOnly(byId('BTN_MANUAL_SERVER_SAVE'), 'click', async () => {
+    const ErrorBox = byId('MANUAL_SERVER_ERROR');
+    const ShowError = (Message: string) => {
+      removeClass(ErrorBox, 'd-none');
+      setText(ErrorBox, Message);
+    };
+    const host = valueOf(byId<HTMLInputElement>('MANUAL_SERVER_HOST')).trim();
+    const portRaw = valueOf(byId<HTMLInputElement>('MANUAL_SERVER_PORT')).trim();
+    const port = portRaw ? Number(portRaw) : DEFAULT_SERVER_PORT;
+    addClass(ErrorBox, 'd-none');
+    setText(ErrorBox, '');
+    if (!host) {
+      ShowError('Enter the server IP address or hostname.');
+      return;
+    }
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      ShowError('Enter a valid port between 1 and 65535.');
+      return;
+    }
+    try {
+      const [err] = (await window.API.SetManualServer(host, port)) || [];
+      if (err) ShowError(String(err));
+    } catch (error) {
+      ShowError(String(error && (error as Error).message ? (error as Error).message : error));
+    }
+  });
+
+  onOnly(byId('BTN_MANUAL_SERVER_CLEAR'), 'click', async () => {
+    try {
+      const ErrorBox = byId('MANUAL_SERVER_ERROR');
+      addClass(ErrorBox, 'd-none');
+      setText(ErrorBox, '');
+      setValue(byId<HTMLInputElement>('MANUAL_SERVER_PORT'), DEFAULT_SERVER_PORT);
       RenderManualServerPortHint();
-    });
+      await window.API.ClearManualServer();
+    } catch (error) {
+      console.error('Failed to clear manual server:', error);
+    }
+  });
 
-  $('#BTN_MANUAL_SERVER_SAVE')
-    .off('click')
-    .on('click', async () => {
-      const $error = $('#MANUAL_SERVER_ERROR');
-      const host = String($('#MANUAL_SERVER_HOST').val() || '').trim();
-      const portRaw = String($('#MANUAL_SERVER_PORT').val() || '').trim();
-      const port = portRaw ? Number(portRaw) : DEFAULT_SERVER_PORT;
-      $error.addClass('d-none').text('');
-      if (!host) {
-        $error.removeClass('d-none').text('Enter the server IP address or hostname.');
-        return;
-      }
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        $error.removeClass('d-none').text('Enter a valid port between 1 and 65535.');
-        return;
-      }
-      try {
-        const [err] = (await window.API.SetManualServer(host, port)) || [];
-        if (err) {
-          $error.removeClass('d-none').text(String(err));
-        }
-      } catch (error) {
-        $error
-          .removeClass('d-none')
-          .text(String(error && (error as Error).message ? (error as Error).message : error));
-      }
-    });
+  onOnly(byId('BTN_MINIMIZE'), 'click', async () => {
+    window.API.Minimise();
+  });
 
-  $('#BTN_MANUAL_SERVER_CLEAR')
-    .off('click')
-    .on('click', async () => {
-      try {
-        $('#MANUAL_SERVER_ERROR').addClass('d-none').text('');
-        $('#MANUAL_SERVER_PORT').val(DEFAULT_SERVER_PORT);
-        RenderManualServerPortHint();
-        await window.API.ClearManualServer();
-      } catch (error) {
-        console.error('Failed to clear manual server:', error);
-      }
-    });
+  onOnly(byId('BTN_SHUTDOWN'), 'click', async () => {
+    window.API.Shutdown();
+  });
 
-  $('#BTN_MINIMIZE')
-    .off('click')
-    .on('click', async () => {
-      window.API.Minimise();
-    });
+  onOnly(byId('BTN_FACTORY_RESET'), 'click', async () => {
+    const confirmed = window.confirm(
+      'Factory reset ShowTrak Client? This clears adoption status and local client configuration.'
+    );
+    if (!confirmed) return;
 
-  $('#BTN_SHUTDOWN')
-    .off('click')
-    .on('click', async () => {
-      window.API.Shutdown();
-    });
-
-  $('#BTN_FACTORY_RESET')
-    .off('click')
-    .on('click', async () => {
-      const confirmed = window.confirm(
-        'Factory reset ShowTrak Client? This clears adoption status and local client configuration.'
-      );
-      if (!confirmed) return;
-
-      try {
-        await window.API.ResetClientFactoryDefaults();
-      } catch (error) {
-        console.error('Factory reset failed:', error);
-      }
-    });
+    try {
+      await window.API.ResetClientFactoryDefaults();
+    } catch (error) {
+      console.error('Factory reset failed:', error);
+    }
+  });
 }
 
 Main();

@@ -28,11 +28,15 @@ let _lastEmitAt = 0;
 let _lastInterfaces: NetworkInterface[] = [];
 
 // Routers come from the routing table, which costs a process on macOS and
-// Windows — too much for the one-second poll. They are refreshed on their own
-// slower cadence, and at once when the interface list changes, in the
-// background: after the first, the poll never waits for one — it merges the
-// latest it has.
-const GATEWAY_REFRESH_INTERVAL_MS = 5000;
+// Windows (`netstat -rn`, `route print -4`) — too much for the one-second poll.
+// A default route almost only changes WITH the interface list (a cable, a DHCP
+// lease, a VPN coming up), so the table is re-read at once when that list
+// changes, and otherwise only as a once-a-minute resync for the rare router that
+// changes behind an unchanged address. It used to be re-read every five seconds:
+// twelve spawns a minute on every connected client, for an answer that almost
+// never moves. Reads happen in the background: after the first, the poll never
+// waits for one — it merges the latest it has.
+const GATEWAY_REFRESH_INTERVAL_MS = 60000;
 // Null until the routing table has been read once. Until then interfaces carry
 // no `gateway` at all, which the server reads as "unknown" rather than "none";
 // after a failed refresh the last good map is kept for the same reason.
@@ -180,6 +184,12 @@ async function sampleAndMaybeEmit(): Promise<void> {
     _inFlight = false;
   }
 }
+
+export const _constants = {
+  POLL_INTERVAL_MS,
+  FULL_RESYNC_INTERVAL_MS,
+  GATEWAY_REFRESH_INTERVAL_MS,
+};
 
 export const Manager = {
   async Start(Socket: ShowTrakSocket): Promise<void> {

@@ -23,12 +23,13 @@ import {
 
 const Logger = CreateLogger('AudioMonitor');
 
-// How often the audio stack is sampled. The macOS sample is the expensive one —
-// ~130ms of CPU across system_profiler and osascript — which is why this is not
-// the 3s the application sampler runs at. A USB hotplug triggers an immediate
+// How often the audio stack is sampled. A USB hotplug triggers an immediate
 // sample anyway (see RequestSample), and almost every professional interface
 // arrives over USB or Thunderbolt, so the poll mostly catches level changes.
-const POLL_INTERVAL_MS = 5000;
+// macOS's level read is an osascript (~60ms of CPU), so it polls half as often;
+// its device list (system_profiler) is cached for a minute on top of that.
+// Windows' is a method call in a warm PowerShell host and Linux's a pactl.
+const POLL_INTERVAL_MS = process.platform === 'darwin' ? 10000 : 5000;
 // An unchanged snapshot is still re-sent at this interval. The server records a
 // history point per report, so going silent between changes would thin a critical
 // device's timeline down to nothing.
@@ -99,8 +100,12 @@ export function SnapshotSignature(Snapshot: AudioDevicesSnapshot): string {
   ]);
 }
 
-async function SampleAndReport(ForceEmit: boolean, Generation: number): Promise<void> {
-  const Collection = await CollectAudio();
+async function SampleAndReport(
+  ForceEmit: boolean,
+  Generation: number,
+  Refresh = false
+): Promise<void> {
+  const Collection = await CollectAudio(process.platform, { Refresh });
   if (Generation !== generation) return;
   if (!Collection.Ok) {
     Logger.warn(`Audio sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
@@ -129,6 +134,8 @@ interface SampleOptions {
    * a hotplug or a level change must see the world AFTER the event.
    */
   Queue?: boolean;
+  /** Re-read the device list, not just the levels (macOS caches it). */
+  Refresh?: boolean;
 }
 
 function RunSample(Options: SampleOptions = {}): Promise<void> {
@@ -136,7 +143,7 @@ function RunSample(Options: SampleOptions = {}): Promise<void> {
     if (!Options.Queue) return inFlight;
     return inFlight.then(() => RunSample(Options));
   }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation)
+  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.Refresh)
     .catch((error: unknown) => {
       Logger.warn(`Audio sample threw: ${ErrorText(error, 'unknown error')}`);
     })
@@ -202,7 +209,7 @@ export const Manager = {
     if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection, so it
     // goes out even if this process sampled the same thing a moment ago.
-    return RunSample({ ForceEmit: true, Queue: true });
+    return RunSample({ ForceEmit: true, Queue: true, Refresh: true });
   },
 
   Stop(): void {
@@ -225,7 +232,7 @@ export const Manager = {
     if (hotplugTimer) clearTimeout(hotplugTimer);
     hotplugTimer = setTimeout(() => {
       hotplugTimer = null;
-      void RunSample({ Queue: true });
+      void RunSample({ Queue: true, Refresh: true });
     }, HOTPLUG_SETTLE_MS);
     if (typeof hotplugTimer.unref === 'function') hotplugTimer.unref();
   },

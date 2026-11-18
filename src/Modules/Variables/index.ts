@@ -43,6 +43,8 @@ const VARIABLE_NAME_PATTERN = /^SHOWTRAK_VAR_[A-Z0-9_]+$/;
 let Environment: VariableEnvironment = {};
 let Exported: string[] = [];
 let Loaded = false;
+/** What the state file holds, as last read or written; null when unknown. */
+let PersistedSignature: string | null = null;
 
 const Internal = {
   GetStatePath(): string {
@@ -87,6 +89,7 @@ const Internal = {
       const Parsed = JSON.parse(fs.readFileSync(StatePath, 'utf-8') || '{}');
       Environment = Internal.Sanitize(Parsed && Parsed.Environment);
       Exported = Internal.SanitizeExported(Parsed && Parsed.Exported, Environment);
+      PersistedSignature = JSON.stringify([Environment, Exported]);
       Logger.log(`Loaded ${Object.keys(Environment).length} variable(s) from disk`);
     } catch (Err) {
       Logger.warn(`Failed to load variables from disk: ${(Err as Error).message}`);
@@ -97,11 +100,17 @@ const Internal = {
 
   Persist(): void {
     const StatePath = Internal.GetStatePath();
+    // The server pushes the full set on every connect and on every edit anywhere
+    // in the show; an unchanged set is not rewritten (the timestamp alone would
+    // otherwise make every push a disk write).
+    const Signature = JSON.stringify([Environment, Exported]);
+    if (Signature === PersistedSignature && fs.existsSync(StatePath)) return;
     try {
       fs.writeFileSync(
         StatePath,
         JSON.stringify({ Environment, Exported, UpdatedAt: Date.now() }, null, 2)
       );
+      PersistedSignature = Signature;
     } catch (Err) {
       Logger.warn(`Failed to persist variables: ${(Err as Error).message}`);
     }

@@ -14,7 +14,8 @@ import {
 // macOS reads devices through `system_profiler SPAudioDataType -json` and the
 // default devices' levels through AppleScript's `get volume settings`. Measured
 // on an M-series MacBook: ~230ms wall / ~70ms CPU and ~170ms wall / ~60ms CPU
-// respectively. Neither needs a privacy permission — `volume settings` is a
+// respectively — which is why the device list is cached (DEVICE_LIST_TTL_MS)
+// and only the level is read on every sample. Neither needs a privacy permission — `volume settings` is a
 // Standard Additions command, not an Apple Event to another application, so
 // unlike the old System Events process query it never prompts for Automation.
 
@@ -157,15 +158,44 @@ export function ApplyVolumeSettings(
   });
 }
 
-export async function CollectMacAudio(): Promise<Result<AudioSample>> {
+// The device list is the expensive half (system_profiler), and devices come and
+// go with hotplugs, which ask for a fresh list (Refresh). So it is re-read on
+// those and at least this often; the cheap level read runs every sample.
+const DEVICE_LIST_TTL_MS = 60 * 1000;
+
+const DeviceList = {
+  Endpoints: null as AudioEndpoint[] | null,
+  At: -Infinity,
+};
+
+export interface MacCollectOptions {
+  /** Re-read the device list even if the cached one is recent. */
+  Refresh?: boolean;
+  Now?: number;
+}
+
+async function ReadDeviceList(Options: MacCollectOptions): Promise<Result<AudioEndpoint[]>> {
+  const Now = Options.Now ?? Date.now();
+  if (!Options.Refresh && DeviceList.Endpoints && Now - DeviceList.At < DEVICE_LIST_TTL_MS) {
+    return [null, DeviceList.Endpoints];
+  }
   const [ProfilerError, Json] = await RunCommand('system_profiler', ['SPAudioDataType', '-json']);
   if (ProfilerError || Json === null) return [ProfilerError || new Error('No output'), null];
-  let Endpoints: AudioEndpoint[];
   try {
-    Endpoints = ParseSystemProfilerAudio(Json);
+    DeviceList.Endpoints = ParseSystemProfilerAudio(Json);
+    DeviceList.At = Now;
+    return [null, DeviceList.Endpoints];
   } catch (error) {
     return [error, null];
   }
+}
+
+export async function CollectMacAudio(
+  Options: MacCollectOptions = {}
+): Promise<Result<AudioSample>> {
+  const [ListError, Listed] = await ReadDeviceList(Options);
+  if (ListError || !Listed) return [ListError || new Error('No output'), null];
+  let Endpoints: AudioEndpoint[] = Listed;
   // A failed level read still leaves a useful device list, so it degrades to
   // "level unknown" rather than failing the whole sample.
   const [VolumeError, VolumeText] = await RunCommand('osascript', ['-e', 'get volume settings']);
@@ -221,3 +251,12 @@ export async function SetMacAudioLevel(
   }
   return [null, true];
 }
+
+export const _internal = {
+  DEVICE_LIST_TTL_MS,
+  /** Test seam: forget the cached device list. */
+  ResetDeviceList(): void {
+    DeviceList.Endpoints = null;
+    DeviceList.At = -Infinity;
+  },
+};

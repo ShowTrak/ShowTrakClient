@@ -338,6 +338,27 @@ test('CollectMacAudio fails when the profiler fails or returns garbage', async (
   assert.equal(sample2, null);
 });
 
+test('CollectMacAudio caches the device list for a minute; the level is read every sample', async () => {
+  const { mod, calls } = loadMac({
+    execFile: (command) =>
+      command === 'system_profiler'
+        ? [null, PROFILER_FIXTURE]
+        : [null, 'output volume:31, input volume:71, alert volume:100, output muted:false'],
+  });
+  const T0 = 1_000_000;
+  await mod.CollectMacAudio({ Now: T0 });
+  const [error, sample] = await mod.CollectMacAudio({ Now: T0 + 10_000 });
+  assert.equal(error, null);
+  assert.equal(sample.Endpoints.length, 4);
+  const commands = () => calls.map((call) => call.command);
+  assert.deepEqual(commands(), ['system_profiler', 'osascript', 'osascript']);
+  // A hotplug asks for the list afresh.
+  await mod.CollectMacAudio({ Now: T0 + 20_000, Refresh: true });
+  assert.equal(commands().filter((c) => c === 'system_profiler').length, 2);
+  await mod.CollectMacAudio({ Now: T0 + 20_000 + mod._internal.DEVICE_LIST_TTL_MS });
+  assert.equal(commands().filter((c) => c === 'system_profiler').length, 3);
+});
+
 test('BuildMacLevelScripts emits clamped AppleScript, and refuses an input mute', () => {
   const { mod } = loadMac();
   assert.deepEqual(

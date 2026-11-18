@@ -160,3 +160,74 @@ test('on macOS, GetVitals reads the cached vm_stat figure without spawning per c
   assert.equal(Second.Ram.Used, 40);
   assert.deepEqual(calls, ['vm_stat'], 'one sample at start, none per GetVitals');
 });
+
+test('the OS module starts no timers: CPU and memory are sampled when vitals are read', async () => {
+  const intervals = [];
+  const originalSetInterval = global.setInterval;
+  global.setInterval = (...args) => {
+    intervals.push(args);
+    return { unref() {} };
+  };
+  let cpuReads = 0;
+  try {
+    const { Manager } = loadWithMocks(MODULE_PATH, {
+      os: {
+        hostname: () => 'unit-host',
+        totalmem: () => 100,
+        freemem: () => 30,
+        uptime: () => 1,
+        cpus: () => {
+          cpuReads += 1;
+          // Each read: one more second of which 3/4 busy.
+          return [{ times: { user: cpuReads * 3, nice: 0, sys: 0, idle: cpuReads, irq: 0 } }];
+        },
+        networkInterfaces: () => ({}),
+      },
+      child_process: { execFile: () => {} },
+    });
+    assert.equal(intervals.length, 0, 'nothing ticks while nobody reads vitals');
+    assert.equal(cpuReads, 1, 'one baseline at load');
+    const realNow = Date.now;
+    let now = realNow() + 1000;
+    Date.now = () => now;
+    try {
+      const First = await Manager.GetVitals();
+      assert.equal(First.CPU.UsagePercentage, 75);
+      await Manager.GetVitals();
+      assert.equal(cpuReads, 2, 'a second read within the same second does not resample');
+    } finally {
+      Date.now = realNow;
+    }
+  } finally {
+    global.setInterval = originalSetInterval;
+  }
+});
+
+test('on macOS, vm_stat is refreshed from GetVitals once its figure is 15 seconds old', async (t) => {
+  if (process.platform !== 'darwin') {
+    t.skip('the sampler only runs on macOS');
+    return;
+  }
+  const calls = [];
+  const { Manager, _constants } = loadOS({
+    execFile: (command, args, options, callback) => {
+      calls.push(command);
+      callback(
+        null,
+        'Mach Virtual Memory Statistics: (page size of 1 bytes)\nPages wired down: 10.\nAnonymous pages: 30.\nPages occupied by compressor: 5.\n'
+      );
+    },
+  });
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  try {
+    await Manager.GetVitals();
+    assert.equal(calls.length, 1);
+    now += _constants.MAC_MEMORY_SAMPLE_INTERVAL_MS;
+    await Manager.GetVitals();
+    assert.equal(calls.length, 2);
+  } finally {
+    Date.now = realNow;
+  }
+});

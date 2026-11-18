@@ -82,6 +82,7 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
   }
 
   const createdSockets = [];
+  let usbWatching = false;
 
   const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js');
   const { Manager } = loadWithMocks(modulePath, {
@@ -107,6 +108,12 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
     '../Config': { Config: { Application: { Version: 'test' } } },
     '../USBMonitor': {
       Manager: {
+        Start: () => {
+          usbWatching = true;
+        },
+        Stop: () => {
+          usbWatching = false;
+        },
         GetUSBDevices: async () => [null, []],
         OnUSBConnect: () => {
           onUsbConnectRegistrations += 1;
@@ -185,6 +192,7 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
 
     assert.equal(onUsbConnectRegistrations, 1);
     assert.equal(onUsbDisconnectRegistrations, 1);
+    assert.equal(usbWatching, true, 'the USB hotplug watcher runs once the client is adopted');
     assert.ok(clearIntervalCalls > clearsAfterFirstConnect);
     assert.ok(processStarts >= 2);
     assert.ok(networkStarts >= 2);
@@ -193,8 +201,20 @@ test('MainClient reinit clears timers and does not re-register USB listeners', a
     assert.ok(processStops >= 1);
     assert.ok(networkStops >= 1);
     assert.equal(activeIntervals.size, 0);
+    assert.equal(usbWatching, false, 'and stops with the client');
   } finally {
     global.setInterval = originalSetInterval;
     global.clearInterval = originalClearInterval;
   }
+});
+
+test('a server that stays away is logged once a minute, not on every reconnect attempt', () => {
+  const { shouldWarnConnectError } = require(
+    path.join(__dirname, '..', 'dist', 'Modules', 'MainClient', 'index.js')
+  );
+  const warned = [];
+  for (let attempt = 1; attempt <= 36; attempt += 1) {
+    if (shouldWarnConnectError(attempt)) warned.push(attempt);
+  }
+  assert.deepEqual(warned, [1, 12, 24, 36]);
 });

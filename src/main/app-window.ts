@@ -26,6 +26,10 @@ const BASE_WEB_PREFERENCES = Object.freeze({
   sandbox: true,
   nodeIntegration: false,
   webSecurity: true,
+  // Nothing these windows show needs a spellchecker, and enabling it makes
+  // Chromium fetch Hunspell dictionaries — a request that can only fail, slowly,
+  // on the air-gapped show networks this client usually lives on.
+  spellcheck: false,
 });
 
 // The live config window, or null before creation / after teardown.
@@ -35,6 +39,36 @@ let mainWindow: BrowserWindow | null = null;
 // window", which hides to tray instead. Written by the before-quit handler and
 // by the updater immediately before quitAndInstall; read by the close handler.
 let appQuitRequested = false;
+
+// Whether dismissing the window destroys it (tray mode: the tray reopens a fresh
+// one) or only hides it (the no-tray fallback, where a hidden window is the only
+// way back). A hidden window used to be kept for the life of the process — a
+// renderer of ~40-80 MB, idle, from the first time anyone opened the settings.
+// Reopening is cheap: the renderer asks for its whole first frame ('Loaded'),
+// so nothing pushed while it was closed is lost.
+let destroyOnDismiss = false;
+
+function setDestroyOnDismiss(value: boolean): void {
+  destroyOnDismiss = value;
+}
+
+/** Put the window away: destroyed in tray mode, hidden otherwise. */
+function dismissMainWindow(): void {
+  const Window = mainWindow;
+  if (!Window || Window.isDestroyed()) return;
+  try {
+    Window.hide();
+  } catch {
+    Logger.debug('Window hide failed; window is already gone');
+  }
+  if (!destroyOnDismiss) return;
+  // Not synchronously: this is often reached from the window's own close event
+  // or IPC call, and tearing the webContents down inside either is asking for a
+  // use-after-destroy.
+  setImmediate(() => {
+    if (!Window.isDestroyed()) Window.destroy();
+  });
+}
 
 function getMainWindow(): BrowserWindow | null {
   return mainWindow;
@@ -96,16 +130,10 @@ function createMainWindow(): BrowserWindow {
     const isUserInitiatedClose =
       FocusedWindow === Window || (typeof Window.isFocused === 'function' && Window.isFocused());
 
-    // Only hide-to-tray when the user closes the active client window.
+    // Only put the window away when the user closes the active client window.
     // Ignore non-user/native side-effect close events so connection/service
     // transitions cannot collapse the UI unexpectedly.
-    if (isUserInitiatedClose) {
-      try {
-        Window.hide();
-      } catch {
-        Logger.debug('Window hide failed during close; window is already gone');
-      }
-    }
+    if (isUserInitiatedClose) dismissMainWindow();
   });
 
   Window.on('closed', () => {
@@ -158,6 +186,7 @@ function removeCloseGuard(): void {
 export {
   BASE_WEB_PREFERENCES,
   createMainWindow,
+  dismissMainWindow,
   getMainWindow,
   getWindowIconPath,
   hasMainWindow,
@@ -166,4 +195,5 @@ export {
   removeCloseGuard,
   restoreExistingWindow,
   setAppQuitRequested,
+  setDestroyOnDismiss,
 };

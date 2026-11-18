@@ -96,8 +96,12 @@ function Emit(Socket: ShowTrakSocket, Snapshot: StorageSnapshot): void {
   Socket.emit('StorageVolumes', Snapshot);
 }
 
-async function SampleAndReport(ForceEmit: boolean, Generation: number): Promise<void> {
-  const Collection = await CollectStorage();
+async function SampleAndReport(
+  ForceEmit: boolean,
+  Generation: number,
+  Relist = false
+): Promise<void> {
+  const Collection = await CollectStorage(process.platform, { Force: Relist });
   if (Generation !== generation) return;
   if (!Collection.Ok && !Collection.Unsupported) {
     Logger.warn(`Storage sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
@@ -120,6 +124,8 @@ interface SampleOptions {
   ForceEmit?: boolean;
   /** Run a fresh sample after any in-flight one rather than sharing its result. */
   Queue?: boolean;
+  /** List the volumes afresh rather than refreshing a recent listing (Windows). */
+  Relist?: boolean;
 }
 
 function RunSample(Options: SampleOptions = {}): Promise<void> {
@@ -127,7 +133,7 @@ function RunSample(Options: SampleOptions = {}): Promise<void> {
     if (!Options.Queue) return inFlight;
     return inFlight.then(() => RunSample(Options));
   }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation)
+  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.Relist)
     .catch((error: unknown) => {
       Logger.warn(`Storage sample threw: ${ErrorText(error, 'unknown error')}`);
     })
@@ -160,7 +166,7 @@ export const Manager = {
     if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection, so it
     // goes out even if nothing changed since the last one.
-    return RunSample({ ForceEmit: true, Queue: true });
+    return RunSample({ ForceEmit: true, Queue: true, Relist: true });
   },
 
   /** Stop reporting (the connection dropped, or the client is shutting down). */
@@ -183,7 +189,7 @@ export const Manager = {
     if (hotplugTimer) clearTimeout(hotplugTimer);
     hotplugTimer = setTimeout(() => {
       hotplugTimer = null;
-      void RunSample({ Queue: true });
+      void RunSample({ Queue: true, Relist: true });
     }, HOTPLUG_SETTLE_MS);
     if (typeof hotplugTimer.unref === 'function') hotplugTimer.unref();
   },

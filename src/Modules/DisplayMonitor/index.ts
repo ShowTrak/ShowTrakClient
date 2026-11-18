@@ -33,10 +33,16 @@ interface ResolvedDisplayIdentity {
   IdentitySource: DisplayIdentitySource;
 }
 
-// Short-lived cache of the (relatively expensive) OS identity lookup. It is
-// invalidated whenever the display topology changes so a freshly plugged-in
-// monitor is identified promptly.
-const IDENTITY_CACHE_TTL_MS = 30000;
+// Cache of the (relatively expensive) OS identity lookup: system_profiler on
+// macOS, a WMI query on Windows. Which monitors are attached only changes with a
+// screen event, and every screen event invalidates the cache, so the answer is
+// kept until then. It used to expire after 30 seconds — shorter than the
+// minute's forced display resync, so every resync paid for a fresh lookup. The
+// TTL is now only a safety net for a change no event announced.
+const IDENTITY_CACHE_TTL_MS = 30 * 60 * 1000;
+// An empty answer (no EDID readable, a lookup that failed) is asked again
+// sooner, but still not on every resync.
+const EMPTY_IDENTITY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Electron's screen events arrive in bursts: plugging a monitor in fires
 // display-added followed by several display-metrics-changed as the OS settles
@@ -50,17 +56,16 @@ const IDENTITY_CACHE_TTL_MS = 30000;
 const DISPLAY_EVENT_DEBOUNCE_MS = 300;
 
 const Internal = {
-  identityCache: { at: 0, value: [] as DisplayIdentity[] },
+  identityCache: { at: 0, value: [] as DisplayIdentity[], valid: false },
 
   GetDisplayIdentities,
 
   async ResolveIdentitiesCached(): Promise<DisplayIdentity[]> {
     const now = Date.now();
-    if (
-      Internal.identityCache.value.length &&
-      now - Internal.identityCache.at < IDENTITY_CACHE_TTL_MS
-    ) {
-      return Internal.identityCache.value;
+    const cache = Internal.identityCache;
+    const ttl = cache.value.length ? IDENTITY_CACHE_TTL_MS : EMPTY_IDENTITY_CACHE_TTL_MS;
+    if (cache.valid && now - cache.at < ttl) {
+      return cache.value;
     }
     let identities: DisplayIdentity[];
     try {
@@ -69,12 +74,16 @@ const Internal = {
       Logger.error('Error resolving display identities:', error);
       identities = [];
     }
-    Internal.identityCache = { at: now, value: Array.isArray(identities) ? identities : [] };
+    Internal.identityCache = {
+      at: now,
+      value: Array.isArray(identities) ? identities : [],
+      valid: true,
+    };
     return Internal.identityCache.value;
   },
 
   InvalidateIdentityCache(): void {
-    Internal.identityCache = { at: 0, value: [] };
+    Internal.identityCache = { at: 0, value: [], valid: false };
   },
 
   FormatDisplay(Display: Display, PrimaryID: number | null, Index = 0): ClientDisplay {
@@ -207,7 +216,7 @@ export const Manager = {
       Internal.ApplyStableIdentities(Displays, Identities);
 
       const StableCount = Displays.filter((d) => d.IsStableIdentity).length;
-      Logger.log(
+      Logger.debug(
         `Found ${Displays.length} display${
           Displays.length === 1 ? '' : 's'
         } (${StableCount} with stable hardware id)`
@@ -222,7 +231,11 @@ export const Manager = {
   OnDisplayChange(callback: () => void): void {
     if (!screen || typeof screen.on !== 'function') return;
     let debounceTimer: NodeJS.Timeout | null = null;
-    const handler = () => {
+    const handler = (...args: unknown[]) => {
+      // display-metrics-changed names what moved. A work-area change alone (the
+      // dock or taskbar showing, hiding or moving) changes nothing this module
+      // reports or identifies, and is by far the most frequent screen event.
+      if (IsWorkAreaOnly(args[2])) return;
       // Topology changed — force a fresh hardware-identity lookup next poll.
       Internal.InvalidateIdentityCache();
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -243,14 +256,27 @@ export const Manager = {
   },
 
   /**
-   * Release the Windows identity lookup's PowerShell host. Called when the
-   * connection drops: lookups only happen while reporting, and a host idling
-   * through an outage is ~40MB for nothing. The next lookup starts a fresh one.
+   * Called when the connection drops. The Windows lookup runs in the shared WMI
+   * PowerShell host, which stops itself after a few idle minutes, so there is
+   * nothing resident to release here any more.
    */
   Dispose(): void {
     DisposeIdentityHost();
   },
 };
 
+/** Whether a display-metrics-changed `changedMetrics` list names the work area alone. */
+export function IsWorkAreaOnly(ChangedMetrics: unknown): boolean {
+  return (
+    Array.isArray(ChangedMetrics) &&
+    ChangedMetrics.length > 0 &&
+    ChangedMetrics.every((Metric) => Metric === 'workArea')
+  );
+}
+
 export const _internal = Internal;
-export const _constants = { DISPLAY_EVENT_DEBOUNCE_MS, IDENTITY_CACHE_TTL_MS };
+export const _constants = {
+  DISPLAY_EVENT_DEBOUNCE_MS,
+  IDENTITY_CACHE_TTL_MS,
+  EMPTY_IDENTITY_CACHE_TTL_MS,
+};

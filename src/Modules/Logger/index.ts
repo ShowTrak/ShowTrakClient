@@ -2,10 +2,17 @@
 //
 // Level ranking, default-level derivation and the formatting helpers come from
 // @showtrak/protocol/runtime, shared with ShowTrakServer. The SINK below does
-// not: this app appends SYNCHRONOUSLY, because an unattended agent that crashes
+// not: this app writes SYNCHRONOUSLY, because an unattended agent that crashes
 // must not lose the lines that explain why — the Server queues asynchronous
 // appends instead. That difference is deliberate, which is why only the pure
 // half is shared.
+//
+// The sink holds ONE open file descriptor and writes each line with writeSync.
+// It used to existsSync the directory and appendFileSync every line — an open,
+// a write and a close per line — and named the file once, at module load, so a
+// client up for a month wrote a month into the file named after its first day,
+// and nothing was ever deleted. Files are now one per calendar day, rotated as
+// the day changes, and those older than RETENTION_DAYS are removed.
 import pc from 'picocolors';
 import fs from 'fs';
 import path from 'path';
@@ -23,14 +30,73 @@ import { Manager as AppDataManager } from '../AppData';
 
 const LogDirectory = AppDataManager.GetLogsDirectory();
 console.log(`Log Directory: ${LogDirectory}`);
-const LogFileName = `ShowTrakClient-${GetDatestampLabel()}.log`;
 if (!fs.existsSync(LogDirectory)) {
   fs.mkdirSync(LogDirectory, { recursive: true });
 }
-const LogFilePath = path.join(LogDirectory, LogFileName);
-if (!fs.existsSync(LogFilePath)) {
-  fs.writeFileSync(LogFilePath, '', 'utf8');
+
+/** Daily files kept, today's included. */
+const RETENTION_DAYS = 14;
+/** After the log file cannot be opened, wait this long before trying again. */
+const REOPEN_BACKOFF_MS = 60 * 1000;
+const LOG_FILE_PATTERN = /^ShowTrakClient-(\d{4}-\d{2}-\d{2})\.log$/;
+
+function LogFileFor(Day: string): string {
+  return path.join(LogDirectory, `ShowTrakClient-${Day}.log`);
 }
+
+const Sink = {
+  Fd: null as number | null,
+  Day: '',
+  FailedAt: -Infinity,
+};
+
+/** Delete daily files older than the retention window. Never throws. */
+function PruneOldLogs(Today: string): void {
+  try {
+    const Cutoff = new Date(`${Today}T00:00:00`);
+    Cutoff.setDate(Cutoff.getDate() - (RETENTION_DAYS - 1));
+    const Oldest = GetDatestampLabel(Cutoff);
+    for (const Name of fs.readdirSync(LogDirectory)) {
+      const Match = LOG_FILE_PATTERN.exec(Name);
+      // Lexical order is date order for YYYY-MM-DD.
+      if (Match && Match[1]! < Oldest) fs.unlinkSync(path.join(LogDirectory, Name));
+    }
+  } catch {
+    // A file in use, a permissions change: try again at the next rotation.
+  }
+}
+
+function CloseSink(): void {
+  if (Sink.Fd === null) return;
+  try {
+    fs.closeSync(Sink.Fd);
+  } catch {
+    // Already closed.
+  }
+  Sink.Fd = null;
+}
+
+/** The descriptor for today's file, opening (and rotating to) it as needed. */
+function SinkFor(Now: Date): number | null {
+  const Day = GetDatestampLabel(Now);
+  if (Sink.Fd !== null && Sink.Day === Day) return Sink.Fd;
+  if (Sink.Fd === null && Now.getTime() - Sink.FailedAt < REOPEN_BACKOFF_MS) return null;
+  const Rotating = Sink.Day !== Day;
+  CloseSink();
+  try {
+    Sink.Fd = fs.openSync(LogFileFor(Day), 'a');
+    Sink.Day = Day;
+  } catch {
+    Sink.FailedAt = Now.getTime();
+    return null;
+  }
+  if (Rotating) PruneOldLogs(Day);
+  return Sink.Fd;
+}
+
+// Opened at load, as the file was created at load before: the day's log exists
+// as soon as the client starts.
+if (!IsInInstallation) SinkFor(new Date());
 
 const Types = {
   Info: pc.cyan(Pad('INFO')),
@@ -113,11 +179,16 @@ function WriteToConsole(...args: unknown[]): void {
 function WriteToFile(Line: unknown): void {
   if (IsInInstallation) return;
   if (typeof Line !== 'string') return;
+  const Now = new Date();
+  const Fd = SinkFor(Now);
+  if (Fd === null) return;
   try {
-    if (!fs.existsSync(LogDirectory)) return;
-    fs.appendFileSync(LogFilePath, `${GetDateTimeStamp()} > ${Line}` + '\n', 'utf8');
+    fs.writeSync(Fd, `${GetDateTimeStamp(Now)} > ${Line}` + '\n', null, 'utf8');
   } catch {
-    // Disk full, permissions changed, directory removed — never fatal.
+    // Disk full, permissions changed, the file deleted from under us — never
+    // fatal. Reopen at the next line (after a back-off, if that fails too).
+    CloseSink();
+    Sink.FailedAt = Now.getTime();
   }
 }
 
@@ -186,3 +257,16 @@ export type { Logger };
 export function CreateLogger(Alias: string): Logger {
   return new Logger(Alias);
 }
+
+export const _internal = {
+  RETENTION_DAYS,
+  LogFileFor,
+  PruneOldLogs,
+  /** Test seam: write a line as if at `Now`. */
+  WriteAt(Line: string, Now: Date): void {
+    const Fd = SinkFor(Now);
+    if (Fd === null) return;
+    fs.writeSync(Fd, `${GetDateTimeStamp(Now)} > ${Line}\n`, null, 'utf8');
+  },
+  Close: CloseSink,
+};

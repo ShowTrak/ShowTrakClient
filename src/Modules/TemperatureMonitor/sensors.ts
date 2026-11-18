@@ -1,7 +1,4 @@
 import type { TemperatureSensor, TemperatureSensorKind } from '@showtrak/protocol';
-import type { Result } from '../../types/client';
-import { RunCommand } from '../AudioMonitor/shared';
-import { FindOnPath } from '../Utils';
 
 /** What one successful read of the platform produced, before sanitising. */
 export interface TemperatureReading {
@@ -115,33 +112,7 @@ export function ParseNvidiaSmi(Output: string): TemperatureSensor[] {
   return Sensors;
 }
 
-/** nvidia-smi's location, looked up once per process (null: not installed). */
-let NvidiaSmiPath: string | null | undefined;
-
-/**
- * GPU temperatures from nvidia-smi, when it is installed. An empty list (not an
- * error) when it is not, so the caller can always just append the result.
- */
-export async function ReadNvidiaTemperatures(
-  Platform: string = process.platform
-): Promise<Result<TemperatureSensor[]>> {
-  if (NvidiaSmiPath === undefined) {
-    NvidiaSmiPath = FindOnPath('nvidia-smi', process.env, Platform);
-  }
-  if (!NvidiaSmiPath) return [null, []];
-  const [Error_, Output] = await RunCommand(NvidiaSmiPath, [
-    '--query-gpu=index,name,temperature.gpu',
-    '--format=csv,noheader,nounits',
-  ]);
-  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
-  return [null, ParseNvidiaSmi(Output)];
-}
-
 export const _internal = {
   MIN_PLAUSIBLE_CELSIUS,
   MAX_PLAUSIBLE_CELSIUS,
-  /** Test seam: forget the cached nvidia-smi lookup. */
-  ResetNvidiaSmi(Path?: string | null): void {
-    NvidiaSmiPath = Path;
-  },
 };

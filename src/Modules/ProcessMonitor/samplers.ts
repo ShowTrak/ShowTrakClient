@@ -6,21 +6,18 @@ import type { RunningApplicationsCapabilities } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
 import { CreateLogger } from '../Logger';
 import { FindOnPath } from '../Utils';
-import { Manager as PowerShellHost } from './powershell-host';
+import { Hosts, JsonRows, RunOneShot, type PowerShellPrelude } from '../PowerShell';
 
 const Logger = CreateLogger('ProcessMonitor');
 
 const COMMAND_TIMEOUT_MS = 8000;
-// The host answers in single-digit milliseconds once warm, so a short deadline
-// still leaves room for a first call that has to pay the cold start.
+// The host answers in single-digit milliseconds once warm. A fresh host's first
+// request gets a startup allowance on top (see PowerShell/host.ts), and the one
+// that carries the window shim's compile gets SHIM_COMPILE_ALLOWANCE_MS more:
+// holding that call to the warm deadline would time it out, kill the host, and
+// recompile in the next one — forever.
 const HOST_TIMEOUT_MS = 5000;
-// ...except the first call into a fresh host also compiles the window shim
-// (Add-Type), which takes a second or two on a fast machine and more on a slow
-// one. Holding that call to the warm deadline would time it out, kill the host,
-// and recompile in the next one — forever. So the deadline is generous until a
-// host has answered once.
-const COLD_HOST_TIMEOUT_MS = 20000;
-let hostWarm = false;
+const SHIM_COMPILE_ALLOWANCE_MS = 15000;
 
 export function execFileAsync(command: string, args: string[]): Promise<[unknown, string]> {
   return new Promise((resolve) => {
@@ -88,8 +85,20 @@ const WINDOWS_QUERY =
   '| Select-Object -ExpandProperty ProcessName';
 
 /**
- * user32 calls PowerShell has no cmdlet for: which window has focus and who owns
- * it, and whether a window is hung.
+ * The running-application query, in C#: one EnumWindows pass and one process
+ * snapshot, with the JSON built in the shim.
+ *
+ * It replaced `Get-Process | Where-Object { $_.MainWindowHandle -ne 0 }`, whose
+ * cost grows with processes x windows — .NET finds each process's main window
+ * with its own full EnumWindows pass — and then ConvertTo-Json on top: tens to
+ * hundreds of milliseconds of CPU every three seconds. This walks the windows
+ * once and indexes them by process.
+ *
+ * Which processes are reported is unchanged. A process counts when it owns a
+ * main window as .NET's Process.MainWindowHandle defines one: the FIRST visible,
+ * unowned top-level window found for it in EnumWindows order. Names come from
+ * Process.ProcessName, rows are ordered as Get-Process orders them (name, case
+ * insensitively, then id), and nameless processes are skipped, as before.
  *
  * Hung detection deliberately uses IsHungAppWindow rather than Get-Process's
  * `.Responding`. That property is a SendMessageTimeout with a FIVE SECOND
@@ -105,12 +114,28 @@ const WINDOWS_QUERY =
  */
 export const WINDOWS_WINDOW_SHIM = `
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace ShowTrak
 {
     public static class ApplicationWindows
     {
+        delegate bool EnumWindowsProc(IntPtr window, IntPtr parameter);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetWindow(IntPtr window, uint command);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool IsWindowVisible(IntPtr window);
+
         [DllImport("user32.dll")]
         static extern IntPtr GetForegroundWindow();
 
@@ -120,6 +145,8 @@ namespace ShowTrak
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         static extern bool IsHungAppWindow(IntPtr window);
+
+        const uint GW_OWNER = 4;
 
         public static int ForegroundProcessId()
         {
@@ -134,6 +161,90 @@ namespace ShowTrak
         {
             return window != IntPtr.Zero && IsHungAppWindow(window);
         }
+
+        // Process id -> its main window, as Process.MainWindowHandle picks it: the
+        // first visible, unowned top-level window in EnumWindows order.
+        public static Dictionary<int, IntPtr> MainWindows()
+        {
+            Dictionary<int, IntPtr> found = new Dictionary<int, IntPtr>();
+            EnumWindowsProc callback = delegate (IntPtr window, IntPtr parameter)
+            {
+                if (GetWindow(window, GW_OWNER) != IntPtr.Zero) return true;
+                if (!IsWindowVisible(window)) return true;
+                uint processId;
+                GetWindowThreadProcessId(window, out processId);
+                if (processId != 0 && !found.ContainsKey((int)processId)) found[(int)processId] = window;
+                return true;
+            };
+            EnumWindows(callback, IntPtr.Zero);
+            GC.KeepAlive(callback);
+            return found;
+        }
+
+        static string Name(Process process)
+        {
+            try { return process.ProcessName; } catch { return null; }
+        }
+
+        static int CompareProcesses(Process left, Process right)
+        {
+            int byName = String.Compare(Name(left), Name(right), StringComparison.OrdinalIgnoreCase);
+            if (byName != 0) return byName;
+            return left.Id.CompareTo(right.Id);
+        }
+
+        static string Json(string value)
+        {
+            if (value == null) return "null";
+            StringBuilder sb = new StringBuilder("\\"");
+            foreach (char c in value)
+            {
+                if (c == '\\\\') sb.Append("\\\\\\\\");
+                else if (c == '"') sb.Append("\\\\\\"");
+                else if (c < ' ') sb.Append("\\\\u").Append(((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.Append('"').ToString();
+        }
+
+        // {"Processes":[{"Name":..,"Responding":..}],"Foreground":..,"Shim":true}
+        public static string Query()
+        {
+            Dictionary<int, IntPtr> windows = MainWindows();
+            int foregroundId = ForegroundProcessId();
+            string foreground = null;
+            Process[] processes = Process.GetProcesses();
+            Array.Sort(processes, CompareProcesses);
+            StringBuilder rows = new StringBuilder();
+            foreach (Process process in processes)
+            {
+                try
+                {
+                    int id = process.Id;
+                    string name = Name(process);
+                    if (id == foregroundId && foregroundId > 0) foreground = name;
+                    IntPtr window;
+                    if (!windows.TryGetValue(id, out window)) continue;
+                    if (String.IsNullOrEmpty(name)) continue;
+                    string responding;
+                    try { responding = IsHungAppWindow(window) ? "false" : "true"; }
+                    catch { responding = "null"; }
+                    if (rows.Length > 0) rows.Append(',');
+                    rows.Append("{\\"Name\\":").Append(Json(name))
+                        .Append(",\\"Responding\\":").Append(responding).Append('}');
+                }
+                catch { }
+                finally { process.Dispose(); }
+            }
+            if (foreground == null && foregroundId > 0)
+            {
+                // Started between the window walk and the snapshot.
+                try { using (Process owner = Process.GetProcessById(foregroundId)) { foreground = owner.ProcessName; } }
+                catch { foreground = null; }
+            }
+            if (foreground != null && foreground.Length == 0) foreground = null;
+            return "{\\"Processes\\":[" + rows.ToString() + "],\\"Foreground\\":" + Json(foreground) + ",\\"Shim\\":true}";
+        }
     }
 }
 `;
@@ -141,55 +252,38 @@ namespace ShowTrak
 const WINDOW_SHIM_BASE64 = Buffer.from(WINDOWS_WINDOW_SHIM, 'utf8').toString('base64');
 
 /**
- * The persistent host's query: every windowed process with its hung verdict, and
- * the owner of the focused window, as one JSON object.
- *
- *  - The shim is compiled at most ONCE per host, success or not: a session flag
- *    stops a failing Add-Type (blocked by policy, no compiler) being retried
- *    every three seconds at a second of CPU each time. Without it the query
- *    still answers, with `Shim` false, and the monitor reports both
- *    capabilities as unavailable rather than losing the application list.
- *  - Everything else runs inside `& { }`, so its variables die with the call
- *    instead of accumulating in the long-lived session.
- *  - The source rides as base64 so the statement stays on one line (the host
- *    evaluates one line per request) and no quoting rules apply to it.
+ * Compiles the shim into the Desktop host's session, once per powershell.exe. A
+ * failing Add-Type (blocked by policy, no compiler) is not retried: the query
+ * below answers without it, with `Shim` false, and the monitor reports both
+ * capabilities as unavailable rather than losing the application list. The
+ * source rides as base64 so the statement stays on one line (the host evaluates
+ * one line per request) and no quoting rules apply to it.
  */
-export const WINDOWS_HOST_QUERY = [
-  'if (-not $global:ShowTrakWindowShimTried) {',
-  '  $global:ShowTrakWindowShimTried = $true;',
-  `  try { Add-Type -ErrorAction Stop -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${WINDOW_SHIM_BASE64}'))) } catch { }`,
-  '};',
-  '& {',
-  "  $shim = [bool]('ShowTrak.ApplicationWindows' -as [type]);",
-  '  $foreground = $null;',
-  '  if ($shim) {',
-  '    try {',
-  '      $foregroundId = [ShowTrak.ApplicationWindows]::ForegroundProcessId();',
-  '      if ($foregroundId -gt 0) { $foreground = (Get-Process -Id $foregroundId -ErrorAction Stop).ProcessName }',
-  '    } catch { $foreground = $null }',
-  '  };',
-  '  $rows = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName } | ForEach-Object {',
-  '    $responding = $null;',
-  '    if ($shim) { try { $responding = -not [ShowTrak.ApplicationWindows]::IsHung($_.MainWindowHandle) } catch { $responding = $null } };',
-  '    [pscustomobject]@{ Name = $_.ProcessName; Responding = $responding }',
-  '  });',
-  '  ConvertTo-Json -Compress -Depth 4 -InputObject ([pscustomobject]@{ Processes = $rows; Foreground = $foreground; Shim = $shim })',
-  '}',
-].join(' ');
+export const WINDOWS_WINDOW_PRELUDE: PowerShellPrelude = {
+  Key: 'ShowTrak.ApplicationWindows',
+  Script:
+    "if (-not ('ShowTrak.ApplicationWindows' -as [type])) { " +
+    `Add-Type -ErrorAction Stop -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${WINDOW_SHIM_BASE64}'))) }`,
+  ExtraTimeoutMs: SHIM_COMPILE_ALLOWANCE_MS,
+};
 
 /**
- * The rows of a list-valued property in PowerShell's JSON. Three shapes reach us:
- * an array; one bare object, where a single-element list was unrolled; and, from
- * Windows PowerShell 5.1, `{"value":[...],"Count":n}` when the array was wrapped
- * in a PSObject on its way into the property — a long-standing ConvertTo-Json
- * quirk that would otherwise read as one malformed row.
+ * The persistent host's query: the shim's one-pass answer, or — when the shim
+ * could not be compiled — the old Get-Process pipeline, names only, with `Shim`
+ * false. Everything runs inside `& { }`, so its variables die with the call
+ * instead of accumulating in the long-lived session.
  */
-function jsonRows(Value: unknown): unknown[] {
-  if (Array.isArray(Value)) return Value;
-  if (!Value || typeof Value !== 'object') return [];
-  const Wrapped = (Value as { value?: unknown }).value;
-  return Array.isArray(Wrapped) ? Wrapped : [Value];
-}
+export const WINDOWS_HOST_QUERY = [
+  '& {',
+  "  if ('ShowTrak.ApplicationWindows' -as [type]) { [ShowTrak.ApplicationWindows]::Query() }",
+  '  else {',
+  '    $rows = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.ProcessName } | ForEach-Object {',
+  '      [pscustomobject]@{ Name = $_.ProcessName; Responding = $null }',
+  '    });',
+  '    ConvertTo-Json -Compress -Depth 4 -InputObject ([pscustomobject]@{ Processes = $rows; Foreground = $null; Shim = $false })',
+  '  }',
+  '}',
+].join(' ');
 
 /**
  * Parse the host query's JSON. Throws on anything that is not the expected
@@ -208,7 +302,7 @@ export function ParseWindowsApplications(Text: string): ApplicationSample {
   }
   const Root = Parsed as Record<string, unknown>;
   const Shim = Root.Shim === true;
-  const RawRows = jsonRows(Root.Processes);
+  const RawRows = JsonRows(Root.Processes);
   const Processes: ApplicationProcess[] = [];
   for (const Raw of RawRows as unknown[]) {
     if (!Raw || typeof Raw !== 'object') continue;
@@ -231,39 +325,28 @@ export function ParseWindowsApplications(Text: string): ApplicationSample {
 }
 
 export async function collectWindowsApplications(): Promise<Result<ApplicationSample>> {
-  const [hostError, stdout] = await PowerShellHost.Run(
-    WINDOWS_HOST_QUERY,
-    hostWarm ? HOST_TIMEOUT_MS : COLD_HOST_TIMEOUT_MS
-  );
+  const [hostError, stdout] = await Hosts.Desktop.Run(WINDOWS_HOST_QUERY, {
+    TimeoutMs: HOST_TIMEOUT_MS,
+    Prelude: WINDOWS_WINDOW_PRELUDE,
+  });
   if (!hostError && stdout !== null) {
     try {
-      const sample = ParseWindowsApplications(stdout);
-      hostWarm = true;
-      return [null, sample];
+      return [null, ParseWindowsApplications(stdout)];
     } catch (error) {
       Logger.debug('PowerShell host returned an unreadable sample', error);
     }
   }
-  // Whatever went wrong, the next host call may land in a fresh session that
-  // has to compile the shim again.
-  hostWarm = false;
 
-  // The host is unavailable or wedged. Fall back to the pre-existing one-shot
-  // spawn so a broken host costs latency rather than the whole signal. The
-  // fallback lists names only: compiling the window shim into a cold
-  // powershell.exe every three seconds would cost more than the host it is
-  // standing in for, so hung and foreground detection report themselves
-  // unavailable until the host recovers.
+  // The host is unavailable, wedged or answered nonsense. Unlike the other
+  // samplers this one falls back even after a timeout: a failed sample is
+  // reported as an empty application list, which would read as every critical
+  // application having quit. The fallback lists names only — compiling the
+  // window shim into a cold powershell.exe every three seconds would cost more
+  // than the host it is standing in for — so hung and foreground detection
+  // report themselves unavailable until the host recovers.
   Logger.debug('PowerShell host sample failed; falling back to a one-shot spawn');
-  const [error, oneShot] = await execFileAsync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    `$ErrorActionPreference = 'Stop'; ${WINDOWS_QUERY}`,
-  ]);
-  if (error) return [error, null];
+  const [error, oneShot] = await RunOneShot(WINDOWS_QUERY, COMMAND_TIMEOUT_MS);
+  if (error || oneShot === null) return [error || new Error('No output'), null];
   return [
     null,
     { Processes: namesOnly(splitLines(oneShot)), Capabilities: { ...NO_CAPABILITIES } },
@@ -507,11 +590,12 @@ export async function collectRunningApplications(): Promise<Result<ApplicationSa
   return collectLinuxApplications();
 }
 
-/** Release any resident sampler state. Called when the monitor stops. */
+/**
+ * Release resident sampler state. Called when the monitor stops. The shared
+ * Desktop PowerShell host is left to its idle shutdown, so a reconnect within a
+ * few minutes keeps its compiled shim.
+ */
 export function disposeSamplers(): void {
-  PowerShellHost.Dispose();
-  // A disposed host comes back as a fresh session that must compile the shim.
-  hostWarm = false;
   displayNameCache.clear();
 }
 

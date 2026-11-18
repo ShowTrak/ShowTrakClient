@@ -9,37 +9,42 @@
 // src/main.ts (window icon, tray image, UI/index.html) and the overlay modules.
 const fs = require('node:fs');
 const path = require('node:path');
-const { copyDir } = require('./lib/copy-dir');
 
 const SRC_ROOT = path.resolve(__dirname, '..', 'src');
 const DIST_ROOT = path.resolve(__dirname, '..', 'dist');
 
-// Directories (relative to src/) copied wholesale into dist/.
-// Keep this in sync with the `exclude` globs in tsconfig.json.
-const ASSET_DIRECTORIES = ['UI', 'images'];
-
-// The renderer TypeScript sources are bundled by scripts/build-renderer.js
-// (esbuild owns dist/UI/js/app/*.js). Skip those source dirs entirely so
-// copy-assets never ships them or creates empty mirror folders. Individual `.ts`
-// files are also skipped by copyDir, but skipping the dirs avoids empty output.
-const skipDirs = new Set([
-  path.resolve(SRC_ROOT, 'UI', 'js', 'app'),
-  path.resolve(SRC_ROOT, 'UI', 'types'),
-]);
+// Exactly what ships, relative to src/. This used to copy src/UI and src/images
+// wholesale, which put 7.4 MB of vendored jQuery and Bootstrap (every build of
+// both, source maps and RTL variants included) into every install for a window
+// that used one stylesheet. A file missing from here is missing from the app, so
+// a new asset must be listed — and the build fails loudly if one listed is gone.
+const ASSET_FILES = [
+  // The config window, and the stylesheet purged from Bootstrap for it.
+  'UI/index.html',
+  'UI/index.css',
+  'UI/bootstrap-subset.css',
+  // The overlays carry their styles inline.
+  'UI/identify-overlay.html',
+  'UI/launch-countdown-overlay.html',
+  // Window and tray icons (src/main/app-window.ts, src/main/tray.ts) and the
+  // logo the windows show. icon.icns is read from src/ by the packager.
+  'images/icon.ico',
+  'images/icon.png',
+  'images/trayTemplate.png',
+  'images/ui-icon.png',
+];
 
 function main() {
-  let copied = 0;
-  for (const dir of ASSET_DIRECTORIES) {
-    const source = path.join(SRC_ROOT, dir);
-    const destination = path.join(DIST_ROOT, dir);
-    if (fs.existsSync(source)) {
-      copyDir(source, destination, { skipDirs });
-      copied += 1;
+  for (const relative of ASSET_FILES) {
+    const source = path.join(SRC_ROOT, relative);
+    const destination = path.join(DIST_ROOT, relative);
+    if (!fs.existsSync(source)) {
+      throw new Error(`[copy-assets] Listed asset is missing: src/${relative}`);
     }
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
   }
-  console.log(
-    `[copy-assets] Copied ${copied} static asset director${copied === 1 ? 'y' : 'ies'} into dist/`
-  );
+  console.log(`[copy-assets] Copied ${ASSET_FILES.length} static assets into dist/`);
 }
 
 main();

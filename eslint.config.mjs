@@ -29,8 +29,8 @@ const NoShadowedErrorCatch = {
 export default defineConfig([
   {
     ignores: [
-      // Vendored browser libraries (jQuery, Bootstrap) shipped as-is.
-      'src/UI/vendors/**',
+      // Bootstrap's published CSS, input to scripts/purge-bootstrap-css.js.
+      'scripts/vendor/**',
       'node_modules/**',
       'dist/**',
       'dist-test/**',

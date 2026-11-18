@@ -3,10 +3,6 @@
 // Each preload exposes exactly one bridge object, and the interfaces come from
 // src/types/preload.d.ts — the same file the preloads implement — so a channel
 // added on one side and not the other fails to compile.
-//
-// jQuery and Bootstrap stay external <script> globals (loaded from
-// src/UI/vendors) rather than bundled; `types: ["jquery"]` in
-// tsconfig.renderer.json supplies the `$` declaration.
 
 import type {
   ClientPreloadAPI,

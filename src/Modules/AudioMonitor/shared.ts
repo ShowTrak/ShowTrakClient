@@ -9,6 +9,7 @@ import type {
   AudioTransport,
 } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
+import { LowerChildPriority } from '../Utils/process-priority';
 
 /** What one successful read of the platform's audio stack produced. */
 export interface AudioSample {
@@ -202,7 +203,8 @@ export const COMMAND_TIMEOUT_MS = 8000;
 /**
  * Run a command without a shell and collect its stdout. Arguments are passed as
  * an array, so nothing a device or a server request names can be interpreted by
- * a shell.
+ * a shell. The samplers' helpers (system_profiler, osascript, pactl, nvidia-smi…)
+ * run below normal priority, so they never compete with the show.
  */
 export function RunCommand(
   Command: string,
@@ -210,7 +212,7 @@ export function RunCommand(
   Env?: NodeJS.ProcessEnv
 ): Promise<Result<string>> {
   return new Promise((resolve) => {
-    execFile(
+    const Child = execFile(
       Command,
       Args,
       {
@@ -224,5 +226,6 @@ export function RunCommand(
         return resolve([null, String(Stdout || '')]);
       }
     );
+    LowerChildPriority(Child);
   });
 }

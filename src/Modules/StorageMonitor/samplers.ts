@@ -39,12 +39,13 @@ export function SortVolumes(Volumes: StorageVolume[], SystemDrive?: string): Sto
 }
 
 export async function CollectStorage(
-  Platform: string = process.platform
+  Platform: string = process.platform,
+  Options: { Force?: boolean } = {}
 ): Promise<StorageCollection> {
   let Outcome: Result<StorageVolume[]>;
   if (Platform === 'darwin') Outcome = await CollectMacStorage();
   else if (Platform === 'linux') Outcome = await CollectLinuxStorage();
-  else if (Platform === 'win32') Outcome = await CollectWindowsStorage();
+  else if (Platform === 'win32') Outcome = await CollectWindowsStorage({ Force: !!Options.Force });
   else {
     return {
       Ok: false,
@@ -65,7 +66,7 @@ export async function CollectStorage(
   };
 }
 
-/** Release resident sampler state (the Windows PowerShell host). */
+/** Release resident sampler state. */
 export function DisposeStorageSamplers(): void {
   DisposeWindowsStorage();
 }

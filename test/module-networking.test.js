@@ -369,3 +369,65 @@ test('ProcessMonitor emits on change, stays quiet otherwise, and reports errors'
 // behaviours (a match reaching the callback, Stop/Terminate releasing the
 // instance, and the per-interface fallback launching after the 10s timeout) and
 // ~30 more, against a single maintained stub of the current API.
+
+test('NetworkMonitor reads the routing table when the interfaces change, else once a minute', async () => {
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const originalNow = Date.now;
+  let intervalHandle = null;
+  global.setInterval = (callback, ms) => {
+    intervalHandle = { callback, ms };
+    return intervalHandle;
+  };
+  global.clearInterval = () => {
+    intervalHandle = null;
+  };
+  let now = 9_000_000;
+  Date.now = () => now;
+
+  let address = '10.0.0.2';
+  let reads = 0;
+  const socket = { connected: true, emit: () => {} };
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'NetworkMonitor', 'index.js');
+  const { Manager, _constants } = loadWithMocks(modulePath, {
+    './gateways': {
+      ReadGateways: async () => {
+        reads += 1;
+        return [null, new Map([['en0', '10.0.0.1']])];
+      },
+    },
+    '../Logger': { CreateLogger: () => createSilentLogger() },
+    '../OS': {
+      Manager: {
+        GetNetworkInterfaces: async () => [
+          null,
+          [{ name: 'en0', addresses: [{ family: 'IPv4', address, internal: false }] }],
+        ],
+      },
+    },
+  });
+  const poll = async (ms) => {
+    now += ms;
+    intervalHandle.callback();
+    await waitTick();
+    await waitTick();
+  };
+
+  try {
+    assert.equal(_constants.GATEWAY_REFRESH_INTERVAL_MS, 60000);
+    await Manager.Start(socket);
+    assert.equal(reads, 1, 'the first list carries its routers');
+    for (let i = 0; i < 30; i += 1) await poll(1000);
+    assert.equal(reads, 1, 'thirty unchanged seconds read nothing');
+    address = '10.0.0.3';
+    await poll(1000);
+    assert.equal(reads, 2, 'an interface change re-reads at once');
+    await poll(_constants.GATEWAY_REFRESH_INTERVAL_MS);
+    assert.equal(reads, 3, 'and the minute resync catches a router change on its own');
+    await Manager.Stop();
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+    Date.now = originalNow;
+  }
+});

@@ -81,8 +81,11 @@ function loadLogger({ level, nodeEnv, packaged = false } = {}) {
         fs: {
           existsSync: () => true,
           mkdirSync: () => {},
-          writeFileSync: () => {},
-          appendFileSync: (_target, content) => appended.push(String(content)),
+          openSync: () => 99,
+          closeSync: () => {},
+          readdirSync: () => [],
+          unlinkSync: () => {},
+          writeSync: (_fd, content) => appended.push(String(content)),
         },
         path,
       })
@@ -258,5 +261,66 @@ test('a logger created before configure() still honours the new level', () => {
     assert.equal(printed.length, 1);
   } finally {
     console.log = OriginalLog;
+  }
+});
+
+test('the file sink keeps one descriptor, rotates daily and keeps fourteen days', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'showtrak-logger-rotate-'));
+  const opens = [];
+  const writes = [];
+  const Mod = loadWithMocks(LOGGER_PATH, {
+    picocolors: IDENTITY_COLORS,
+    'electron-squirrel-startup': false,
+    '../AppData': { Manager: { GetLogsDirectory: () => root } },
+    fs: {
+      ...fs,
+      openSync: (target, flags) => {
+        opens.push(path.basename(target));
+        return fs.openSync(target, flags);
+      },
+      writeSync: (fd, content, position, encoding) => {
+        writes.push(fd);
+        return fs.writeSync(fd, content, position, encoding);
+      },
+      appendFileSync: () => {
+        throw new Error('no per-line open/append/close any more');
+      },
+    },
+    path,
+  });
+  try {
+    const { _internal } = Mod;
+    assert.equal(_internal.RETENTION_DAYS, 14);
+    // Old files: one outside the window ending 16 March, one inside, and
+    // someone else's file.
+    fs.writeFileSync(path.join(root, 'ShowTrakClient-2026-03-01.log'), 'old\n');
+    fs.writeFileSync(path.join(root, 'ShowTrakClient-2026-03-05.log'), 'recent\n');
+    fs.writeFileSync(path.join(root, 'notes.txt'), 'keep\n');
+    _internal.WriteAt('first', new Date(2026, 2, 15, 9, 0, 0));
+    _internal.WriteAt('second', new Date(2026, 2, 15, 9, 0, 1));
+    const sameDay = opens.filter((name) => name === 'ShowTrakClient-2026-03-15.log');
+    assert.equal(sameDay.length, 1, 'one open for any number of lines in a day');
+    assert.equal(new Set(writes).size, 1);
+
+    _internal.WriteAt('next day', new Date(2026, 2, 16, 0, 0, 1));
+    assert.equal(opens[opens.length - 1], 'ShowTrakClient-2026-03-16.log');
+    assert.match(
+      fs.readFileSync(path.join(root, 'ShowTrakClient-2026-03-16.log'), 'utf8'),
+      /next day/
+    );
+    assert.match(
+      fs.readFileSync(path.join(root, 'ShowTrakClient-2026-03-15.log'), 'utf8'),
+      /first[\s\S]*second/
+    );
+
+    const left = fs.readdirSync(root).sort();
+    assert.equal(left.includes('ShowTrakClient-2026-03-01.log'), false, 'past retention: deleted');
+    assert.equal(left.includes('ShowTrakClient-2026-03-05.log'), true, 'inside retention: kept');
+    assert.equal(left.includes('notes.txt'), true, 'only the client’s own files are touched');
+  } finally {
+    Mod._internal.Close();
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });

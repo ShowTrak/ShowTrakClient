@@ -10,8 +10,8 @@
 // Type-checking is performed separately by `tsc --noEmit` against
 // tsconfig.renderer.json; esbuild only transpiles+bundles.
 //
-// Vendor libraries (jQuery, Bootstrap) stay as external <script> globals for
-// offline use, so they are NOT imported/bundled.
+// The renderer has no vendor scripts: the config window paints itself through
+// src/UI/js/app/lib/dom.ts and styles itself from src/UI/bootstrap-subset.css.
 const esbuild = require('esbuild');
 const path = require('node:path');
 
@@ -45,6 +45,7 @@ async function buildBundle({ name, entry, outfile }) {
     target: 'es2022',
     platform: 'browser',
     sourcemap: true,
+    minify: true,
     legalComments: 'none',
     logLevel: 'info',
   });

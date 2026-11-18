@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakePowerShell } = require('./helpers/fake-powershell');
 
 // Exercises the per-platform resolvers in src/Modules/DisplayMonitor/identity.ts.
 //
@@ -47,22 +48,34 @@ function load({
   const commands = [];
   const hostRuns = [];
 
+  // The Windows lookup runs in the shared WMI PowerShell host. `host` scripts its
+  // answer; without one the host reports itself unavailable, which is the path
+  // that falls back to the one-shot spawn — recorded in `commands` like any
+  // other command, and answered by `command('powershell.exe', args)`.
+  const { PowerShell } = createFakePowerShell({
+    host: host
+      ? (script, { options }) => {
+          hostRuns.push({ script, timeoutMs: options.TimeoutMs });
+          return host(script);
+        }
+      : (script, { options }) => {
+          hostRuns.push({ script, timeoutMs: options.TimeoutMs });
+          return null;
+        },
+    oneShot: (script, args) => {
+      commands.push({
+        cmd: 'powershell.exe',
+        args,
+        options: { timeout: 10000, windowsHide: true },
+      });
+      const Result = command('powershell.exe', args);
+      return Result === undefined ? null : Result;
+    },
+  });
+
   const Mod = loadWithMocks(IDENTITY_PATH, {
     '../Logger': { CreateLogger: () => createSilentLogger() },
-    // The Windows lookup runs in a persistent PowerShell host. `host` scripts its
-    // answer; without one the host reports itself unavailable, which is the
-    // path that falls back to the one-shot spawn below.
-    '../ProcessMonitor/powershell-host': {
-      CreatePowerShellHost: () => ({
-        Run: async (script, timeoutMs) => {
-          hostRuns.push({ script, timeoutMs });
-          if (!host) return [new Error('PowerShell host unavailable'), null];
-          const Result = host(script);
-          return Result instanceof Error ? [Result, null] : [null, Result];
-        },
-        Dispose: () => {},
-      }),
-    },
+    '../PowerShell': PowerShell,
     'node:os': { platform: () => platform },
     'node:fs': {
       readdirSync: (dir) => {
@@ -644,14 +657,28 @@ test('Windows: an unavailable host falls back to the one-shot spawn with identic
   assert.deepEqual(identities, WINDOWS_EXPECTED);
   assert.equal(commands.length, 1);
   assert.equal(commands[0].cmd, 'powershell.exe');
-  assert.deepEqual(commands[0].args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-Command']);
-  assert.equal(commands[0].args[3], hostRuns[0].script, 'the same script either way');
+  assert.deepEqual(commands[0].args.slice(0, 2), ['-NoProfile', '-NonInteractive']);
+  assert.equal(
+    commands[0].args[commands[0].args.length - 1].endsWith(hostRuns[0].script),
+    true,
+    'the same script either way'
+  );
 });
 
-test('Windows: a failing host script also falls back; one monitor and no monitors both parse', async () => {
+test('Windows: a host that died falls back, a script that raised does not; one and no monitors parse', async () => {
+  const raised = load({
+    platform: 'win32',
+    host: () => Object.assign(new Error('Get-CimInstance : Access denied'), { code: 'ESCRIPT' }),
+    command: () => {
+      throw new Error('a script that raised must not be re-run in a cold powershell.exe');
+    },
+  });
+  assert.deepEqual(await raised.Mod.GetDisplayIdentities(), []);
+  assert.equal(raised.commands.length, 0);
+
   const single = load({
     platform: 'win32',
-    host: () => new Error('Get-CimInstance : Access denied'),
+    host: () => new Error('PowerShell host exited'),
     command: () =>
       JSON.stringify({
         Manufacturer: 'DEL',

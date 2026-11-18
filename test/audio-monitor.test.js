@@ -60,8 +60,9 @@ function loadMonitor({ collect, set } = {}) {
     _constants,
   } = loadWithMocks(path.join(DIST, 'index.js'), {
     './samplers': {
-      CollectAudio: async () => {
+      CollectAudio: async (_platform, options) => {
         state.collections += 1;
+        state.refreshes = (state.refreshes || 0) + (options && options.Refresh ? 1 : 0);
         if (state.collect) return state.collect();
         return state.next;
       },
@@ -324,6 +325,8 @@ test('RequestSample coalesces a burst of hotplugs into one sample after the sett
   assert.equal(state.collections, 2);
   assert.equal(socket.emits.length, 2);
   assert.equal(socket.emits[1][1].Endpoints.length, 2);
+  // Start and the hotplug both re-read the device list, not just the levels.
+  assert.equal(state.refreshes, 2);
   Manager.Stop();
 });
 

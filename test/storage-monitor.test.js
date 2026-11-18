@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakePowerShell } = require('./helpers/fake-powershell');
 
 // StorageMonitor: mounted volumes, reported as `StorageVolumes`.
 //
@@ -239,32 +240,23 @@ const SCRIPT_FAILED = 'ESCRIPT';
 const tagged = (message, code) => Object.assign(new Error(message), { code });
 
 // The Windows reader with a scripted host: `answer(script)` returns what the host
-// resolves with, and every one-shot powershell.exe call is recorded.
+// resolves with, and every one-shot powershell.exe call is recorded. Each load
+// starts with nothing cached.
 function loadWindows(answer, oneShot = () => [new Error('no one-shot expected'), null]) {
   const runs = [];
   const oneShots = [];
-  const mod = load('windows.js', {
-    '../ProcessMonitor/powershell-host': {
-      SCRIPT_TIMED_OUT,
-      IsScriptFailure: (error) =>
-        !!error && (error.code === SCRIPT_TIMED_OUT || error.code === SCRIPT_FAILED),
-      CreatePowerShellHost: () => ({
-        Run: async (script) => {
-          runs.push(script.includes('MSFT_') ? 'detail' : 'volumes');
-          return answer(script);
-        },
-        Dispose() {},
-      }),
+  const { PowerShell } = createFakePowerShell({
+    host: (script) => {
+      runs.push(script.includes('MSFT_') ? 'detail' : 'volumes');
+      return answer(script);
     },
-    '../AudioMonitor/shared': {
-      COMMAND_TIMEOUT_MS: 8000,
-      ErrorText: (error, fallback) => (error && error.message) || fallback,
-      RunCommand: async (command, args) => {
-        oneShots.push(args);
-        return oneShot(args);
-      },
+    oneShot: (script, args) => {
+      oneShots.push(args);
+      return oneShot(args);
     },
   });
+  const mod = load('windows.js', { '../PowerShell': PowerShell });
+  mod._internal.Reset();
   return { ...mod, runs, oneShots };
 }
 
@@ -473,6 +465,116 @@ function reading(FreeBytes = 400 * GB, Extra = {}) {
   };
 }
 
+// Between full listings, local drives' free space comes from statfs.
+const LOCAL_DRIVES = JSON.stringify([
+  { Drive: 'C:', Label: 'Windows', FileSystem: 'NTFS', Size: 500 * GB, Free: 120 * GB, Type: 3 },
+  { Drive: 'E:', Label: 'Media', FileSystem: 'exFAT', Size: 64 * GB, Free: 10 * GB, Type: 2 },
+]);
+
+function statfsFrom(table) {
+  const calls = [];
+  const statfs = async (where) => {
+    calls.push(where);
+    const entry = table[where];
+    if (!entry) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    return { bsize: 4096, blocks: entry.Size / 4096, bfree: entry.Free / 4096 };
+  };
+  return { statfs, calls };
+}
+
+test('Windows: between full listings, local free space is read with statfs, not WMI', async () => {
+  const { CollectWindowsStorage, runs, _internal } = loadWindows((script) =>
+    script.includes('MSFT_') ? [null, WIN_DETAIL] : [null, LOCAL_DRIVES]
+  );
+  const { statfs, calls } = statfsFrom({
+    'C:\\': { Size: 500 * GB, Free: 100 * GB },
+    'E:\\': { Size: 64 * GB, Free: 8 * GB },
+  });
+  const T0 = 1_000_000;
+  const [, First] = await CollectWindowsStorage({ Now: T0, StatFs: statfs });
+  assert.deepEqual(runs, ['volumes', 'detail']);
+  assert.equal(First[0].FreeBytes, 120 * GB);
+
+  const [Error_, Second] = await CollectWindowsStorage({ Now: T0 + 20_000, StatFs: statfs });
+  assert.equal(Error_, null);
+  assert.deepEqual(runs, ['volumes', 'detail'], 'no PowerShell, no WMI');
+  assert.deepEqual(calls, ['C:\\', 'E:\\']);
+  assert.equal(Second[0].FreeBytes, 100 * GB);
+  assert.equal(Second[1].FreeBytes, 8 * GB);
+  // Everything else is the listing's, health and read-only included.
+  assert.equal(Second[0].Name, 'Windows');
+  assert.equal(Second[0].Health, 'ok');
+  assert.equal(Second[1].ReadOnly, true);
+
+  // The listing is repeated on its own cadence…
+  // (the health lookup, on the same five minutes, comes due with it)…
+  await CollectWindowsStorage({ Now: T0 + _internal.FULL_LISTING_MS, StatFs: statfs });
+  assert.deepEqual(runs.slice(2), ['volumes', 'detail']);
+  // …and whenever asked to (a hotplug, a new connection).
+  await CollectWindowsStorage({
+    Now: T0 + _internal.FULL_LISTING_MS + 1,
+    StatFs: statfs,
+    Force: true,
+  });
+  assert.deepEqual(runs.slice(4), ['volumes']);
+});
+
+test('Windows: a drive statfs cannot read, or whose size changed, is relisted through WMI', async () => {
+  const { CollectWindowsStorage, runs } = loadWindows((script) =>
+    script.includes('MSFT_') ? [null, WIN_DETAIL] : [null, LOCAL_DRIVES]
+  );
+  const T0 = 1_000_000;
+  await CollectWindowsStorage({ Now: T0, StatFs: statfsFrom({}).statfs });
+  // E: was ejected.
+  const ejected = statfsFrom({ 'C:\\': { Size: 500 * GB, Free: 100 * GB } });
+  await CollectWindowsStorage({ Now: T0 + 1000, StatFs: ejected.statfs });
+  assert.deepEqual(runs, ['volumes', 'detail', 'volumes']);
+  // A different card in the same reader.
+  const swapped = statfsFrom({
+    'C:\\': { Size: 500 * GB, Free: 100 * GB },
+    'E:\\': { Size: 128 * GB, Free: 100 * GB },
+  });
+  await CollectWindowsStorage({ Now: T0 + 2000, StatFs: swapped.statfs });
+  assert.deepEqual(runs.slice(3), ['volumes']);
+});
+
+test('Windows: a machine with a mapped network drive is listed through WMI every poll', async () => {
+  // statfs on an unreachable share would tie up one of Node's I/O threads for the
+  // length of an SMB timeout; the WMI query is bounded, in a process of its own.
+  const { CollectWindowsStorage, runs } = loadWindows((script) =>
+    script.includes('MSFT_') ? [null, WIN_DETAIL] : [null, WIN_DRIVES]
+  );
+  const { statfs, calls } = statfsFrom({});
+  await CollectWindowsStorage({ Now: 1, StatFs: statfs });
+  await CollectWindowsStorage({ Now: 2, StatFs: statfs });
+  assert.deepEqual(runs, ['volumes', 'detail', 'volumes']);
+  assert.equal(calls.length, 0, 'statfs never touches a share');
+});
+
+test('RefreshFreeSpace never reports free space beyond the size, and gives up on a slow drive', async () => {
+  const { RefreshFreeSpace } = loadWindows(() => [null, '']);
+  const volume = {
+    MountPoint: 'C:',
+    Name: null,
+    FileSystem: 'NTFS',
+    Kind: 'internal',
+    TotalBytes: 100 * GB,
+    FreeBytes: 1,
+    ReadOnly: null,
+    Health: null,
+  };
+  const [clamped] = await RefreshFreeSpace([volume], async () => ({
+    bsize: 4096,
+    blocks: (100 * GB) / 4096,
+    bfree: (101 * GB) / 4096,
+  }));
+  assert.equal(clamped.FreeBytes, 100 * GB);
+  assert.equal(
+    await RefreshFreeSpace([volume], async () => ({ bsize: 0, blocks: 0, bfree: 0 })),
+    null
+  );
+});
+
 function loadMonitor() {
   const state = { next: reading(), disposals: 0 };
   const intervals = [];
@@ -494,7 +596,11 @@ function loadMonitor() {
   };
   const mod = load('index.js', {
     './samplers': {
-      CollectStorage: async () => state.next,
+      CollectStorage: async (_platform, options) => {
+        state.relists = (state.relists || 0) + (options && options.Force ? 1 : 0);
+        state.collections = (state.collections || 0) + 1;
+        return state.next;
+      },
       DisposeStorageSamplers: () => {
         state.disposals += 1;
       },
@@ -572,11 +678,13 @@ test('reports on start, then only on change or keepalive; stops cleanly', async 
     assert.equal(socket.emits.length, 1);
     assert.equal(socket.emits[0][0], 'StorageVolumes');
     assert.equal(H.intervals[0].ms, 20000);
+    assert.equal(H.state.relists, 1, 'a new connection lists the volumes afresh');
 
     now += 20_000;
     H.intervals[0].callback();
     await flush();
     assert.equal(socket.emits.length, 1, 'nothing changed');
+    assert.equal(H.state.relists, 1, 'an ordinary poll may refresh the last listing');
 
     H.state.next = reading(300 * GB);
     now += 20_000;
@@ -597,4 +705,27 @@ test('reports on start, then only on change or keepalive; stops cleanly', async 
     Date.now = realNow;
     H.restore();
   }
+});
+
+// The detail script is sent to the shared PowerShell host as ONE line, so every
+// statement must be ;-separated. Before 3.29 two assignments sat next to each
+// other with only spaces between them, the whole script failed to parse, and
+// Windows drives never reported health or read-only state. (Parsed with the
+// real PowerShell parser on Windows when this was fixed; this guards the
+// separators that fix added.)
+test('storage: Windows detail script separates every statement on its one line', () => {
+  const { WINDOWS_STORAGE_DETAIL_SCRIPT: Script } = load('windows.js');
+  assert.doesNotMatch(Script, /\n/);
+  for (const Statement of [
+    "$ns = 'root/Microsoft/Windows/Storage';",
+    '$health = @{};',
+    '$readOnly = @{};',
+    '$disks = @{};',
+  ]) {
+    assert.ok(Script.includes(Statement), `missing separator after: ${Statement}`);
+  }
+  // An assignment or block ending must never be followed straight by another
+  // statement with only whitespace between them.
+  assert.doesNotMatch(Script, /(?:'|\}|@\{\})\s+\$[A-Za-z]+\s*=/);
+  assert.doesNotMatch(Script, /\}\s+Get-CimInstance/);
 });

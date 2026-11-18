@@ -556,14 +556,19 @@ test('Stop releases the browser and every timer', async () => {
   assert.equal(Bonjour.instances.length, 1, 'the fallback fired after Stop');
 });
 
-test('Stop keeps the shared instance so the next browse can reuse it', async () => {
+test('Stop closes the shared instance, and the next browse opens a fresh one', async () => {
+  // A kept instance kept its multicast socket, decoding every mDNS packet on the
+  // LAN for as long as the process lived — weeks, on an adopted client.
   const { Manager, Bonjour } = load();
   Manager.OnFind(() => {});
   await Manager.Stop();
-  Manager.OnFind(() => {});
+  assert.equal(Bonjour.instances[0].destroyed, 1);
 
-  assert.equal(Bonjour.instances.length, 1);
-  assert.equal(Bonjour.instances[0].destroyed, 0);
+  Manager.OnFind(() => {});
+  assert.equal(Bonjour.instances.length, 2);
+  assert.equal(Bonjour.instances[1].destroyed, 0);
+  await Manager.Stop();
+  assert.equal(Bonjour.instances[1].destroyed, 1);
 });
 
 test('Stop clears the found latch so a later browse can still fire', async () => {

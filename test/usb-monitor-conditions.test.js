@@ -26,6 +26,12 @@ class FakeWebUSB {
     if (!this.listeners.has(event)) this.listeners.set(event, []);
     this.listeners.get(event).push(handler);
   }
+  removeEventListener(event, handler) {
+    this.listeners.set(
+      event,
+      (this.listeners.get(event) || []).filter((entry) => entry !== handler)
+    );
+  }
   emit(event, device) {
     for (const handler of this.listeners.get(event) || []) handler({ device });
   }
@@ -160,9 +166,13 @@ test('a plug-in or unplug of any device counts as a topology change', () => {
   Manager.OnUSBTopologyChange(() => {
     changes += 1;
   });
+  Manager.Start();
   FakeWebUSB.instance.emit('connect', webDevice());
   FakeWebUSB.instance.emit('disconnect', webDevice());
   assert.equal(changes, 2);
+  Manager.Stop();
+  FakeWebUSB.instance.emit('connect', webDevice());
+  assert.equal(changes, 2, 'nothing is watched once stopped');
 });
 
 // --- Windows: parsing ---------------------------------------------------------------
@@ -296,13 +306,42 @@ test('on Windows the full list carries states, and a hotplug the last known one'
   };
   FakeWebUSB.devices = [webDevice()];
   const [, devices] = await Manager.GetUSBDevices();
-  // (The module also samples once as it loads, so this is not the only query.)
-  assert.ok(queries >= 1);
+  assert.equal(queries, 1, 'nothing was queried at import');
   assert.equal(devices[0].DeviceState.ErrorCode, 43);
 
   // A hotplug cannot wait for PowerShell: it says what the last query said.
   assert.equal(Internal.FormatEventDevice(webDevice()).DeviceState.ErrorCode, 43);
   assert.equal(Internal.FormatEventDevice(webDevice({ serialNumber: 'NEW' })).DeviceState, null);
+});
+
+test('on Windows the PnP query is repeated after a hotplug or five minutes, not every list', async () => {
+  const { Manager, Internal } = loadMonitor();
+  const { _constants } = require(path.join(DIST, 'index.js'));
+  Internal.Platform = () => 'win32';
+  let now = 1_000_000;
+  Internal.Now = () => now;
+  let queries = 0;
+  Internal.QueryWindowsUSBStates = async () => {
+    queries += 1;
+    return [null, [entry({ ErrorCode: queries === 1 ? 0 : 43 })]];
+  };
+  FakeWebUSB.devices = [webDevice()];
+  Manager.Start();
+  await Manager.GetUSBDevices();
+  now += 60_000;
+  const [, cached] = await Manager.GetUSBDevices();
+  assert.equal(queries, 1, "the minute's resync reuses the last answer");
+  assert.equal(cached[0].DeviceState.ErrorCode, 0);
+
+  FakeWebUSB.instance.emit('connect', webDevice({ serialNumber: 'OTHER' }));
+  const [, afterPlug] = await Manager.GetUSBDevices();
+  assert.equal(queries, 2, 'a plug event makes the states stale');
+  assert.equal(afterPlug[0].DeviceState.ErrorCode, 43);
+
+  now += _constants.PNP_REFRESH_MS;
+  await Manager.GetUSBDevices();
+  assert.equal(queries, 3, 'and they are re-read now and then regardless');
+  Manager.Stop();
 });
 
 test('on Windows a failed query still reports the key, as unknown', async () => {

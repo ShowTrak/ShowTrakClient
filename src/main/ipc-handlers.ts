@@ -17,7 +17,7 @@ import { Manager as VariableStore } from '../Modules/Variables';
 import { Manager as IdentifyOverlay } from '../Modules/IdentifyOverlay';
 import { Manager as LaunchCountdownOverlay } from '../Modules/LaunchCountdownOverlay';
 import { Handle, assertNoArgs } from './rpc';
-import { getMainWindow, hasMainWindow } from './app-window';
+import { dismissMainWindow, getMainWindow, hasMainWindow } from './app-window';
 import { getRecoveryStatus } from './recovery-status';
 import { getAppUpdateStatus, checkForUpdatesFromRenderer, installUpdate } from './app-updater';
 import { restartService } from './service-lifecycle';
@@ -44,7 +44,7 @@ function registerIpcHandlers(): void {
     assertNoArgs('Minimise', args);
     const Window = getMainWindow();
     if (hasMainWindow() && Window?.isVisible()) {
-      Window.hide();
+      dismissMainWindow();
     }
     return [null, true];
   });

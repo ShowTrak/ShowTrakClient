@@ -10,9 +10,12 @@ export type AudioCollection =
   | { Ok: true; Sample: AudioSample & { Note?: string } }
   | { Ok: false; Unsupported: boolean; Error: unknown };
 
-export async function CollectAudio(Platform: string = process.platform): Promise<AudioCollection> {
+export async function CollectAudio(
+  Platform: string = process.platform,
+  Options: { Refresh?: boolean } = {}
+): Promise<AudioCollection> {
   let Outcome: Result<AudioSample & { Note?: string }>;
-  if (Platform === 'darwin') Outcome = await CollectMacAudio();
+  if (Platform === 'darwin') Outcome = await CollectMacAudio({ Refresh: !!Options.Refresh });
   else if (Platform === 'win32') Outcome = await CollectWindowsAudio();
   else if (Platform === 'linux') Outcome = await CollectLinuxAudio();
   else {

@@ -242,3 +242,39 @@ function fakeChild(code) {
   };
   return child;
 }
+
+test('the inherited environment answers the first reconcile without PowerShell', () => {
+  const { _internal } = loadExporter();
+  const { MatchesInheritedEnvironment } = _internal;
+  // No variables, none inherited: the common first connect.
+  assert.equal(MatchesInheritedEnvironment({}, { PATH: 'x' }), true);
+  assert.equal(
+    MatchesInheritedEnvironment({ SHOWTRAK_VAR_A: '1' }, { SHOWTRAK_VAR_A: '1', PATH: 'x' }),
+    true
+  );
+  assert.equal(
+    MatchesInheritedEnvironment({ SHOWTRAK_VAR_A: '2' }, { SHOWTRAK_VAR_A: '1' }),
+    false
+  );
+  assert.equal(MatchesInheritedEnvironment({}, { SHOWTRAK_VAR_OLD: '1' }), false, 'a stale one');
+  assert.equal(MatchesInheritedEnvironment({ SHOWTRAK_VAR_A: '1' }, {}), false);
+});
+
+test('a first connect whose variables are already in place starts no PowerShell', async () => {
+  await asWindows(async () => {
+    let spawns = 0;
+    const { Manager } = loadExporter(() => {
+      spawns += 1;
+      return fakeChild(0);
+    });
+    Manager.Reset();
+    await Manager.Reconcile({}, { PATH: 'C:\\Windows' });
+    assert.equal(spawns, 0, 'no show variables, none in the inherited environment');
+    await Manager.Reconcile({ SHOWTRAK_VAR_A: '1' }, { PATH: 'C:\\Windows' });
+    assert.equal(spawns, 1, 'a real change is still written');
+
+    Manager.Reset();
+    await Manager.Reconcile({}, { SHOWTRAK_VAR_GONE: 'x' });
+    assert.equal(spawns, 2, 'an inherited variable the show no longer has is removed');
+  });
+});

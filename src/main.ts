@@ -23,6 +23,19 @@
 // installProcessGuards() must run before anything that could throw or spawn.
 
 import { app } from 'electron';
+import nodeModule from 'node:module';
+import nodePath from 'node:path';
+
+// Cache V8's compiled code for every module loaded from here on, so later
+// launches skip re-parsing the main process (keyed by file content, so an update
+// invalidates it). Before the rest of the tree is required. Best-effort: startup
+// never depends on it. Same approach as ShowTrakServer.
+try {
+  nodeModule.enableCompileCache?.(nodePath.join(app.getPath('userData'), 'compile-cache'));
+} catch {
+  // An unavailable cache only costs the speed-up.
+}
+
 import squirrelStartup from 'electron-squirrel-startup';
 
 import { CreateLogger } from './Modules/Logger';
@@ -72,12 +85,14 @@ import {
   getMainWindow,
   hasMainWindow,
   setAppQuitRequested,
+  setDestroyOnDismiss,
 } from './main/app-window';
 import { performUpdateCheck } from './main/app-updater';
 import { registerBroadcastBridge } from './main/broadcast-bridge';
 import { registerIpcHandlers } from './main/ipc-handlers';
 import { Main, stopService } from './main/service-lifecycle';
 import { Manager as ScriptManager } from './Modules/ScriptManager';
+import { DisposeAll as DisposePowerShellHosts } from './Modules/PowerShell';
 import { Configure as ConfigureTray, createTray } from './main/tray';
 
 // Wired up front, before whenReady: the socket layer can emit a
@@ -103,6 +118,9 @@ app.whenReady().then(async () => {
   // desktops. If it fails, fall back to a minimized window so the app stays
   // reachable rather than running invisibly with no way to configure it.
   if (createTray()) {
+    // The tray can always open a fresh config window, so a dismissed one is
+    // destroyed rather than kept hidden.
+    setDestroyOnDismiss(true);
     if (process.platform === 'darwin' && app.dock) {
       // Hide the Dock icon only once the tray is confirmed available, so we never
       // end up with neither.
@@ -136,6 +154,15 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
 
   Main();
+
+  // Everything the client loads at startup is loaded by now. Node only writes
+  // the compile cache at a clean exit otherwise, which a power cut or a hard
+  // stop — routine on show hardware — skips.
+  try {
+    nodeModule.flushCompileCache?.();
+  } catch {
+    // Best-effort, like enabling it.
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -159,6 +186,13 @@ app.on('before-quit', () => {
     IdentifyOverlay.Hide();
   } catch (Err) {
     Logger.debug('Identify overlay hide failed during quit', String(Err));
+  }
+  // The samplers' resident powershell.exe hosts would exit on their own once our
+  // end of their stdin closes; stopping them here just makes it immediate.
+  try {
+    DisposePowerShellHosts();
+  } catch (Err) {
+    Logger.debug('PowerShell host shutdown failed during quit', String(Err));
   }
 });
 

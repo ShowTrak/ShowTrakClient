@@ -4,6 +4,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakePowerShell } = require('./helpers/fake-powershell');
 
 // PowerMonitor: battery, mains and sleep/resume, reported as `PowerStatus`.
 //
@@ -143,26 +144,22 @@ test('Win32_Battery: output that is not the battery list is an error', () => {
   assert.throws(() => ParseWin32Battery('Get-CimInstance : Access denied'));
 });
 
-test('Windows reads through the persistent host and falls back to a one-shot spawn', async () => {
+test('Windows reads through the shared WMI host and falls back to a one-shot spawn', async () => {
   const runs = [];
   const execs = [];
   let hostAnswer = [null, '[{"Percent":90,"Status":2,"RunTime":71582788}]'];
+  const { PowerShell } = createFakePowerShell({
+    host: (script, { name }) => {
+      runs.push([name, script]);
+      return hostAnswer;
+    },
+    oneShot: (script, args) => {
+      execs.push(['powershell.exe', args]);
+      return '[]';
+    },
+  });
   const { CollectWindowsPower, WINDOWS_BATTERY_SCRIPT } = loadSamplers({
-    '../ProcessMonitor/powershell-host': {
-      CreatePowerShellHost: () => ({
-        Run: async (script) => {
-          runs.push(script);
-          return hostAnswer;
-        },
-        Dispose: () => {},
-      }),
-    },
-    '../AudioMonitor/shared': {
-      RunCommand: async (command, args) => {
-        execs.push([command, args]);
-        return [null, '[]'];
-      },
-    },
+    '../PowerShell': PowerShell,
   });
   assert.doesNotMatch(WINDOWS_BATTERY_SCRIPT, /\n/);
   assert.match(WINDOWS_BATTERY_SCRIPT, /-ErrorAction Stop/);
@@ -171,6 +168,7 @@ test('Windows reads through the persistent host and falls back to a one-shot spa
   assert.equal(err, null);
   assert.equal(reading.Backend, 'wmi');
   assert.equal(reading.Battery.Percent, 90);
+  assert.equal(runs[0][0], 'PowerShell:WMI');
   assert.equal(execs.length, 0);
 
   hostAnswer = [new Error('PowerShell host unavailable'), null];
@@ -178,6 +176,74 @@ test('Windows reads through the persistent host and falls back to a one-shot spa
   assert.equal(err2, null);
   assert.equal(reading2.Battery, null);
   assert.equal(execs[0][0], 'powershell.exe');
+
+  // A WMI query that raised is not re-run in a cold powershell.exe.
+  hostAnswer = [Object.assign(new Error('Invalid class'), { code: 'ESCRIPT' }), null];
+  const [err3] = await CollectWindowsPower();
+  assert.match(err3.message, /Invalid class/);
+  assert.equal(execs.length, 1);
+});
+
+test('a machine with no battery is not asked again for half an hour, unless forced', async () => {
+  let answer = '[]';
+  const runs = [];
+  const { PowerShell } = createFakePowerShell({
+    host: (script) => {
+      runs.push(script);
+      return answer;
+    },
+  });
+  const { CollectPower, _internal } = loadSamplers({ '../PowerShell': PowerShell });
+  _internal.ResetNoBattery();
+  const T0 = 1_000_000;
+
+  const first = await CollectPower('win32', { Now: T0 });
+  assert.equal(first.Ok, true);
+  assert.equal(first.Reading.Battery, null);
+  assert.equal(runs.length, 1);
+
+  // The desktop case: the next half hour of 30-second polls costs nothing.
+  const again = await CollectPower('win32', { Now: T0 + 60_000 });
+  assert.deepEqual(again, first);
+  assert.equal(runs.length, 1);
+
+  // A power-source change (a UPS) is read at once.
+  answer = '[{"Percent":100,"Status":2,"RunTime":71582788}]';
+  const forced = await CollectPower('win32', { Now: T0 + 90_000, Force: true });
+  assert.equal(forced.Reading.Battery.Percent, 100);
+  assert.equal(runs.length, 2);
+
+  // With a battery, every poll reads it.
+  await CollectPower('win32', { Now: T0 + 120_000 });
+  assert.equal(runs.length, 3);
+
+  // And a remembered "no battery" expires.
+  answer = '[]';
+  await CollectPower('win32', { Now: T0 + 150_000 });
+  await CollectPower('win32', { Now: T0 + 150_000 + _internal.NO_BATTERY_RECHECK_MS - 1 });
+  assert.equal(runs.length, 4);
+  await CollectPower('win32', { Now: T0 + 150_000 + _internal.NO_BATTERY_RECHECK_MS });
+  assert.equal(runs.length, 5);
+  _internal.ResetNoBattery();
+});
+
+test('a failed read is never remembered as "no battery"', async () => {
+  let fail = true;
+  const runs = [];
+  const { PowerShell } = createFakePowerShell({
+    host: () => {
+      runs.push(1);
+      return fail ? Object.assign(new Error('WMI down'), { code: 'ESCRIPT' }) : '[]';
+    },
+  });
+  const { CollectPower, _internal } = loadSamplers({ '../PowerShell': PowerShell });
+  _internal.ResetNoBattery();
+  const failed = await CollectPower('win32', { Now: 1 });
+  assert.equal(failed.Ok, false);
+  fail = false;
+  await CollectPower('win32', { Now: 2 });
+  assert.equal(runs.length, 2, 'the next poll asks again');
+  _internal.ResetNoBattery();
 });
 
 // ---------------------------------------------------------------------------
@@ -300,8 +366,9 @@ function loadMonitor({ powerMonitor = fakePowerMonitor(), collect } = {}) {
   const mod = loadWithMocks(path.join(DIST, 'index.js'), {
     electron: { powerMonitor },
     './samplers': {
-      CollectPower: async () => {
+      CollectPower: async (_platform, options) => {
         state.collections += 1;
+        state.lastOptions = options;
         return collect ? collect() : state.next;
       },
       DisposePowerSamplers: () => {
@@ -506,11 +573,18 @@ test('mains/battery switches resample immediately', async () => {
   try {
     const socket = fakeSocket();
     await H.Manager.Start(socket);
+    assert.equal(
+      H.state.lastOptions.Force,
+      false,
+      'an ordinary sample may use a remembered answer'
+    );
     H.powerMonitor.onBattery = true;
     H.powerMonitor.emit('on-battery');
     await flush();
     assert.equal(socket.emits.length, 2);
     assert.equal(socket.emits[1][1].OnBattery, true);
+    // A UPS taking over may be the first battery this machine has ever had.
+    assert.equal(H.state.lastOptions.Force, true, 'a power-source change reads the platform');
     H.Manager.Dispose();
   } finally {
     H.restore();

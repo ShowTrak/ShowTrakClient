@@ -1,10 +1,9 @@
 import type { AudioDirection, AudioEndpoint } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { CreatePowerShellHost } from '../ProcessMonitor/powershell-host';
+import { Hosts, LastJsonLine, RunPowerShell, type PowerShellPrelude } from '../PowerShell';
 import {
   NormalizeVolume,
   PositiveInteger,
-  RunCommand,
   WASAPI_CAPABILITIES,
   type AudioLevelChange,
   type AudioSample,
@@ -17,10 +16,11 @@ import {
 // levels), so a small C# shim is compiled into the PowerShell session with
 // Add-Type and called from there.
 //
-// Compiling costs a second or two, once: the shim lives in a persistent host of
-// its own, and every later sample is a single method call. It is a separate host
-// from the running-applications sampler's because a host serves one request at a
-// time, and the two samplers run on unrelated timers.
+// Compiling costs a second or two, once per host process: the shim is a prelude
+// of the shared Desktop PowerShell host (see ../PowerShell), sent ahead of the
+// first request that needs it, and every later sample is a single method call.
+// It used to ride along with EVERY sample — 13.7 KB of base64 written to the
+// host every five seconds, only for the host to find the type already there.
 //
 // UNVERIFIED ON REAL WINDOWS at the time of writing: covered by unit tests
 // against a mocked host. The shim is deliberately C# 5 — Windows PowerShell 5.1
@@ -280,16 +280,26 @@ namespace ShowTrak
 const SHIM_BASE64 = Buffer.from(WINDOWS_AUDIO_SHIM, 'utf8').toString('base64');
 
 /**
- * Compile the shim into the session unless it is already there. The source rides
+ * Compiles the shim into the session, once per host process. The source rides
  * as base64 so the whole statement stays on one line (the host evaluates one line
- * per request) and so no quoting rules apply to it.
+ * per request) and so no quoting rules apply to it. A compile error is kept in a
+ * session variable, so the request that finds the type missing can say why.
  */
-const ENSURE_SHIM =
-  "if (-not ('ShowTrak.AudioEndpoints' -as [type])) { " +
-  `Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${SHIM_BASE64}'))) ` +
-  '}';
+export const WINDOWS_AUDIO_PRELUDE: PowerShellPrelude = {
+  Key: 'ShowTrak.AudioEndpoints',
+  Script:
+    "if (-not ('ShowTrak.AudioEndpoints' -as [type])) { try { " +
+    `Add-Type -ErrorAction Stop -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${SHIM_BASE64}'))) ` +
+    '} catch { $global:ShowTrakAudioShimError = $_.Exception.Message } }',
+  ExtraTimeoutMs: 15000,
+};
 
-export const WINDOWS_QUERY_SCRIPT = `${ENSURE_SHIM}; [ShowTrak.AudioEndpoints]::Query()`;
+/** Fails the request, with the compile error where there was one, when the shim is missing. */
+const REQUIRE_SHIM =
+  "if (-not ('ShowTrak.AudioEndpoints' -as [type])) { " +
+  "throw ('The Core Audio shim could not be compiled: ' + [string]$global:ShowTrakAudioShimError) }";
+
+export const WINDOWS_QUERY_SCRIPT = `${REQUIRE_SHIM}; [ShowTrak.AudioEndpoints]::Query()`;
 
 /**
  * The statement that applies a change. The endpoint id is passed as base64 for the
@@ -303,7 +313,7 @@ export function BuildWindowsLevelScript(EndpointID: string, Change: AudioLevelCh
     typeof Change.Volume === 'number' ? Math.max(0, Math.min(100, Math.round(Change.Volume))) : -1;
   const Mute = typeof Change.Muted === 'boolean' ? (Change.Muted ? 1 : 0) : -1;
   return (
-    `${ENSURE_SHIM}; [ShowTrak.AudioEndpoints]::SetLevel(` +
+    `${REQUIRE_SHIM}; [ShowTrak.AudioEndpoints]::SetLevel(` +
     `[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Id}')), ${Volume}, ${Mute})`
   );
 }
@@ -320,10 +330,7 @@ export function ParseWindowsAudio(Text: string): AudioEndpoint[] {
   // The shim writes the list as one line. Anything else (a compile error, a
   // warning) must fail the sample: reading it as an empty list would report
   // every critical device as missing.
-  const Line = String(Text || '')
-    .split(/\r?\n/)
-    .map((Entry) => Entry.trim())
-    .find((Entry) => Entry.startsWith('[') && Entry.endsWith(']'));
+  const Line = LastJsonLine(Text, ['[']);
   if (!Line) throw new Error('Audio query returned no device list');
   const Rows: unknown = JSON.parse(Line);
   if (!Array.isArray(Rows)) throw new Error('Audio query returned no device list');
@@ -355,27 +362,20 @@ export function ParseWindowsAudio(Text: string): AudioEndpoint[] {
   return Endpoints;
 }
 
-// The first call compiles the shim; every later one is a method call.
-const HOST_TIMEOUT_MS = 20000;
+// A warm host answers in milliseconds; the request that carries the shim's
+// compile gets the prelude's allowance on top.
+const HOST_TIMEOUT_MS = 10000;
 
-const Host = CreatePowerShellHost('AudioPowerShellHost');
-
-/** Run in the persistent host, falling back to a one-shot powershell.exe. */
-async function RunPowerShell(Script: string): Promise<Result<string>> {
-  const [HostError, Output] = await Host.Run(Script, HOST_TIMEOUT_MS);
-  if (!HostError && Output !== null) return [null, Output];
-  return RunCommand('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    `$ErrorActionPreference = 'Stop'; ${Script}`,
-  ]);
+/** Run in the shared Desktop host, under the shared fallback policy. */
+function RunAudioScript(Script: string): Promise<Result<string>> {
+  return RunPowerShell(Hosts.Desktop, Script, {
+    TimeoutMs: HOST_TIMEOUT_MS,
+    Prelude: WINDOWS_AUDIO_PRELUDE,
+  });
 }
 
 export async function CollectWindowsAudio(): Promise<Result<AudioSample>> {
-  const [Error_, Output] = await RunPowerShell(WINDOWS_QUERY_SCRIPT);
+  const [Error_, Output] = await RunAudioScript(WINDOWS_QUERY_SCRIPT);
   if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
   try {
     return [
@@ -397,13 +397,15 @@ export async function SetWindowsAudioLevel(
 ): Promise<Result<true>> {
   const DeviceID = ToWindowsDeviceID(Endpoint.EndpointID);
   if (!DeviceID) return [new Error('Not a Windows audio endpoint'), null];
-  const [Error_] = await RunPowerShell(BuildWindowsLevelScript(DeviceID, Change));
+  const [Error_] = await RunAudioScript(BuildWindowsLevelScript(DeviceID, Change));
   if (Error_) return [Error_, null];
   return [null, true];
 }
 
-export function DisposeWindowsAudio(): void {
-  Host.Dispose();
-}
+/**
+ * Nothing to release: the Desktop host is shared, and left to its idle shutdown
+ * so a reconnect within a few minutes keeps the compiled shim.
+ */
+export function DisposeWindowsAudio(): void {}
 
-export const _internal = { Host, HOST_TIMEOUT_MS };
+export const _internal = { HOST_TIMEOUT_MS };

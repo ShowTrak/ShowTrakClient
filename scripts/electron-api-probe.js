@@ -188,18 +188,16 @@ app.whenReady().then(async () => {
     bridge,
   ]);
 
-  // jQuery + Bootstrap are loaded as plain <script> globals by index.html.
+  // The window styles itself from the purged Bootstrap subset; no vendor scripts.
   const vendors = await win.webContents
     .executeJavaScript(
       `(() => {
-         const out = [];
-         out.push('jQuery=' + (typeof window.jQuery === 'function' ? window.jQuery.fn.jquery : 'MISSING'));
-         out.push('bootstrap=' + (window.bootstrap ? 'present' : 'MISSING'));
-         return out.join(' ');
+         const sheet = [...document.styleSheets].find((s) => /bootstrap-subset\\.css$/.test(s.href || ''));
+         return 'bootstrap-subset=' + (sheet && sheet.cssRules.length ? sheet.cssRules.length + ' rules' : 'MISSING');
        })()`
     )
     .catch((e) => 'executeJavaScript threw: ' + e.message);
-  results.push([vendors.includes('MISSING') ? 'FAIL' : 'ok', 'renderer vendor globals', vendors]);
+  results.push([vendors.includes('MISSING') ? 'FAIL' : 'ok', 'renderer stylesheet', vendors]);
 
   // Any renderer-side console errors during that load?
   record('screen.getAllDisplays', () => `${screen.getAllDisplays().length} display(s)`);

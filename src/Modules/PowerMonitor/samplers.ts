@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { BatteryStatus } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { CreatePowerShellHost } from '../ProcessMonitor/powershell-host';
+import { Hosts, LastJsonLine, RunPowerShell } from '../PowerShell';
 import { RunCommand } from '../AudioMonitor/shared';
 
 // Battery and mains, per platform. Each reader answers the same three questions
@@ -78,10 +78,7 @@ export interface Win32BatteryRow {
 export function ParseWin32Battery(Output: string): Win32BatteryRow[] {
   const Text = String(Output || '').trim();
   if (!Text) return [];
-  const Line = Text.split(/\r?\n/)
-    .map((Entry) => Entry.trim())
-    .reverse()
-    .find((Entry) => Entry.startsWith('[') || Entry.startsWith('{'));
+  const Line = LastJsonLine(Text);
   if (!Line) throw new Error('Battery query returned no battery list');
   const Parsed: unknown = JSON.parse(Line);
   const Rows = Array.isArray(Parsed) ? Parsed : [Parsed];
@@ -150,24 +147,11 @@ export function MapWin32Battery(Rows: Win32BatteryRow[]): Omit<PowerReading, 'Ba
 }
 
 const HOST_TIMEOUT_MS = 15000;
-const Host = CreatePowerShellHost('PowerPowerShellHost');
-
-/** Run in the persistent host, falling back to a one-shot powershell.exe. */
-async function RunPowerShell(Script: string): Promise<Result<string>> {
-  const [HostError, Output] = await Host.Run(Script, HOST_TIMEOUT_MS);
-  if (!HostError && Output !== null) return [null, Output];
-  return RunCommand('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    `$ErrorActionPreference = 'Stop'; ${Script}`,
-  ]);
-}
 
 export async function CollectWindowsPower(): Promise<Result<PowerReading>> {
-  const [Error_, Output] = await RunPowerShell(WINDOWS_BATTERY_SCRIPT);
+  const [Error_, Output] = await RunPowerShell(Hosts.Wmi, WINDOWS_BATTERY_SCRIPT, {
+    TimeoutMs: HOST_TIMEOUT_MS,
+  });
   if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
   try {
     return [null, { Backend: 'wmi', ...MapWin32Battery(ParseWin32Battery(Output)) }];
@@ -372,7 +356,37 @@ export async function CollectLinuxPower(): Promise<Result<PowerReading>> {
 
 // ---------------------------------------------------------------------------
 
-export async function CollectPower(Platform: string = process.platform): Promise<PowerCollection> {
+/**
+ * A machine that reported no battery is not asked again for this long. Most show
+ * machines are desktops: polling WMI (or pmset) every 30 seconds to learn, again,
+ * that there is no battery was the whole of this monitor's cost there. A UPS can
+ * appear as a battery, so the answer is re-checked now and then — and at once
+ * whenever Electron reports the power source changing (see Force).
+ */
+const NO_BATTERY_RECHECK_MS = 30 * 60 * 1000;
+
+const NoBattery = {
+  Reading: null as PowerReading | null,
+  RecheckAt: 0,
+};
+
+export interface CollectOptions {
+  /** Read the platform even if it recently reported no battery. */
+  Force?: boolean;
+  Now?: number;
+}
+
+export async function CollectPower(
+  Platform: string = process.platform,
+  Options: CollectOptions = {}
+): Promise<PowerCollection> {
+  const Now = Options.Now ?? Date.now();
+  // Linux reads sysfs files, which costs nothing worth saving.
+  const Remembers = Platform === 'win32' || Platform === 'darwin';
+  if (Remembers && !Options.Force && NoBattery.Reading && Now < NoBattery.RecheckAt) {
+    return { Ok: true, Reading: NoBattery.Reading };
+  }
+
   let Outcome: Result<PowerReading>;
   if (Platform === 'win32') Outcome = await CollectWindowsPower();
   else if (Platform === 'darwin') Outcome = await CollectMacPower();
@@ -385,13 +399,31 @@ export async function CollectPower(Platform: string = process.platform): Promise
     };
   }
   const [Error_, Reading] = Outcome;
-  if (!Error_ && Reading) return { Ok: true, Reading };
+  if (!Error_ && Reading) {
+    if (Remembers && Reading.Battery === null) {
+      NoBattery.Reading = Reading;
+      NoBattery.RecheckAt = Now + NO_BATTERY_RECHECK_MS;
+    } else {
+      NoBattery.Reading = null;
+    }
+    return { Ok: true, Reading };
+  }
   return { Ok: false, Unsupported: false, Error: Error_ || new Error('Power sample failed') };
 }
 
-/** Release resident sampler state (the Windows PowerShell host). */
-export function DisposePowerSamplers(): void {
-  Host.Dispose();
-}
+/**
+ * Nothing resident to release: the WMI PowerShell host is shared, and left to
+ * its idle shutdown so a reconnect within a few minutes stays warm.
+ */
+export function DisposePowerSamplers(): void {}
 
-export const _internal = { Host, HOST_TIMEOUT_MS, WIN32_RUNTIME_UNKNOWN };
+export const _internal = {
+  HOST_TIMEOUT_MS,
+  WIN32_RUNTIME_UNKNOWN,
+  NO_BATTERY_RECHECK_MS,
+  /** Test seam: forget a remembered "no battery". */
+  ResetNoBattery(): void {
+    NoBattery.Reading = null;
+    NoBattery.RecheckAt = 0;
+  },
+};

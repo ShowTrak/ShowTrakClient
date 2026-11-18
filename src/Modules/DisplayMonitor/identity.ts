@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 
-import { CreatePowerShellHost } from '../ProcessMonitor/powershell-host';
+import { Hosts, RunPowerShell } from '../PowerShell';
 import { parseEdid, fingerprintFromEdid } from './edid';
 
 /** A physical monitor as reported by one of the per-platform resolvers. */
@@ -238,30 +238,25 @@ const WINDOWS_PS_SCRIPT = [
 // The lookup used to spawn a fresh powershell.exe on every identity-cache miss —
 // on connect, on every display hotplug burst and on the minute's resync once the
 // 30-second cache had lapsed — paying PowerShell's ~0.5s cold start each time.
-// A persistent host of its own (a host serves one request at a time, and the
-// other samplers run on unrelated timers) makes a repeat lookup a stdin write.
+// It now runs in the shared WMI PowerShell host (see ../PowerShell), so a repeat
+// lookup is a stdin write, and DisplayMonitor caches the answer until a screen
+// change invalidates it.
 const WINDOWS_HOST_TIMEOUT_MS = 10000;
-const WindowsHost = CreatePowerShellHost('DisplayPowerShellHost');
 
 /**
- * Run the WMI query in the persistent host, falling back to the original
- * one-shot spawn when the host is unavailable or fails, exactly as the
- * application sampler degrades. Null when neither produced output.
+ * Run the WMI query in the shared host, falling back to a one-shot spawn when
+ * the host is unavailable or died. Null when neither produced output.
  */
 async function runWindowsIdentityQuery(): Promise<string | null> {
-  const [hostError, output] = await WindowsHost.Run(WINDOWS_PS_SCRIPT, WINDOWS_HOST_TIMEOUT_MS);
-  if (!hostError && output !== null) return output;
-  return runCommand(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', WINDOWS_PS_SCRIPT],
-    { timeout: 10000 }
-  );
+  const [error, output] = await RunPowerShell(Hosts.Wmi, WINDOWS_PS_SCRIPT, {
+    TimeoutMs: WINDOWS_HOST_TIMEOUT_MS,
+    FallbackTimeoutMs: 10000,
+  });
+  return error || output === null ? null : output;
 }
 
-/** Stop the Windows identity host. The next lookup starts a fresh one. */
-export function DisposeIdentityHost(): void {
-  WindowsHost.Dispose();
-}
+/** Nothing to release: the WMI host is shared and stops itself when idle. */
+export function DisposeIdentityHost(): void {}
 
 interface WindowsMonitorRow {
   Manufacturer?: unknown;
@@ -277,7 +272,7 @@ async function getWindowsIdentities(): Promise<DisplayIdentity[]> {
 
   let parsed: WindowsMonitorRow | WindowsMonitorRow[];
   try {
-    parsed = JSON.parse(stdout);
+    parsed = JSON.parse(stdout.trim().split(/\r?\n/).pop() || '');
   } catch (_error) {
     return [];
   }
@@ -410,5 +405,4 @@ export const _internal = {
   physicalWidth,
   physicalHeight,
   WINDOWS_PS_SCRIPT,
-  WindowsHost,
 };

@@ -4,6 +4,7 @@ const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakePowerShell } = require('./helpers/fake-powershell');
 
 // TemperatureMonitor: sensor readings and macOS thermal pressure, reported as
 // `Temperatures`.
@@ -194,31 +195,126 @@ test('Windows: the script tries each source in order, each on its own', () => {
   assert.equal((WINDOWS_TEMPERATURE_SCRIPT.match(/-ErrorAction Stop/g) || []).length >= 4, true);
 });
 
-test('Windows: reads through the persistent host, falling back to a one-shot spawn', async () => {
-  let hostAnswer = [null, '{"Source":"acpi","Rows":[{"Name":"TZ00_0","Value":3000}]}'];
+function loadWindowsWith(host, oneShot = () => '{"Source":null,"Rows":[]}') {
+  const runs = [];
   const execs = [];
-  const { CollectWindowsTemperatures } = loadWindows({
-    '../ProcessMonitor/powershell-host': {
-      CreatePowerShellHost: () => ({ Run: async () => hostAnswer, Dispose: () => {} }),
+  const { PowerShell } = createFakePowerShell({
+    host: (script, { name }) => {
+      runs.push({ host: name, script });
+      return host(script);
     },
-    '../AudioMonitor/shared': {
-      RunCommand: async (command, args) => {
-        execs.push([command, args]);
-        return [null, '{"Source":null,"Rows":[]}'];
-      },
+    oneShot: (script, args) => {
+      execs.push(['powershell.exe', args]);
+      return oneShot(script);
     },
   });
-  const [err, reading] = await CollectWindowsTemperatures();
+  const mod = loadWindows({ '../PowerShell': PowerShell });
+  mod._internal.ResetSourceMemory();
+  return { ...mod, runs, execs };
+}
+
+test('Windows: reads through the shared WMI host, falling back to a one-shot spawn', async () => {
+  let hostAnswer = [null, '{"Source":"acpi","Rows":[{"Name":"TZ00_0","Value":3000}]}'];
+  const H = loadWindowsWith(() => hostAnswer);
+  const [err, reading] = await H.CollectWindowsTemperatures(1);
   assert.equal(err, null);
   assert.equal(reading.Backend, 'acpi');
   assert.equal(reading.Sensors.length, 1);
-  assert.equal(execs.length, 0);
+  assert.equal(H.runs[0].host, 'PowerShell:WMI');
+  assert.equal(H.execs.length, 0);
 
+  H._internal.ResetSourceMemory();
   hostAnswer = [new Error('PowerShell host unavailable'), null];
-  const [err2, reading2] = await CollectWindowsTemperatures();
+  const [err2, reading2] = await H.CollectWindowsTemperatures(2);
   assert.equal(err2, null);
   assert.equal(reading2.Backend, null);
-  assert.equal(execs[0][0], 'powershell.exe');
+  assert.equal(H.execs[0][0], 'powershell.exe');
+});
+
+test('Windows: the source that answered is remembered; the ladder is not walked every sample', async () => {
+  const answers = {
+    librehardwaremonitor: null,
+    'thermalzone-perf': { Name: '\\_TZ.CPUZ', Value: 3200 },
+  };
+  const H = loadWindowsWith((script) => {
+    // Answer as the real ladder would: the first listed source with rows wins.
+    for (const source of [
+      'librehardwaremonitor',
+      'openhardwaremonitor',
+      'thermalzone-perf',
+      'acpi',
+    ]) {
+      const probed = source.endsWith('hardwaremonitor')
+        ? script.includes(
+            source === 'librehardwaremonitor' ? 'LibreHardwareMonitor' : 'OpenHardwareMonitor'
+          )
+        : script.includes(source === 'acpi' ? 'MSAcpi' : 'ThermalZoneInformation');
+      if (probed && answers[source]) {
+        return JSON.stringify({ Source: source, Rows: [answers[source]] });
+      }
+    }
+    return '{"Source":null,"Rows":[]}';
+  });
+  const { REPROBE_MS, SOURCE_ORDER } = H._internal;
+  const T0 = 1_000_000;
+
+  const [, first] = await H.CollectWindowsTemperatures(T0);
+  assert.equal(first.Backend, 'thermalzone-perf');
+  assert.equal(H.runs[0].script, H.WINDOWS_TEMPERATURE_SCRIPT, 'the first sample walks the ladder');
+
+  await H.CollectWindowsTemperatures(T0 + 30_000);
+  assert.equal(H.runs[1].script, H.BuildTemperatureScript(['thermalzone-perf']));
+  assert.doesNotMatch(H.runs[1].script, /LibreHardwareMonitor|MSAcpi/);
+
+  // LibreHardwareMonitor started: noticed at the next re-probe, not before.
+  answers.librehardwaremonitor = {
+    Name: 'CPU Package',
+    Value: 61,
+    Identifier: '/intelcpu/0/temperature/0',
+  };
+  const [, stillZone] = await H.CollectWindowsTemperatures(T0 + REPROBE_MS - 1);
+  assert.equal(stillZone.Backend, 'thermalzone-perf');
+  const [, upgraded] = await H.CollectWindowsTemperatures(T0 + REPROBE_MS);
+  assert.equal(upgraded.Backend, 'librehardwaremonitor');
+
+  // The best source is never re-probed while it answers…
+  await H.CollectWindowsTemperatures(T0 + 10 * REPROBE_MS);
+  assert.equal(H.runs[H.runs.length - 1].script, H.BuildTemperatureScript([SOURCE_ORDER[0]]));
+
+  // …and when it stops answering (closed), the ladder runs at once.
+  answers.librehardwaremonitor = null;
+  const before = H.runs.length;
+  const [, fellBack] = await H.CollectWindowsTemperatures(T0 + 10 * REPROBE_MS + 30_000);
+  assert.equal(fellBack.Backend, 'thermalzone-perf');
+  assert.equal(H.runs.length, before + 2);
+  assert.equal(H.runs[before + 1].script, H.WINDOWS_TEMPERATURE_SCRIPT);
+});
+
+test('Windows: a machine with no readable source is not asked again until the re-probe', async () => {
+  const H = loadWindowsWith(() => '{"Source":null,"Rows":[]}');
+  const T0 = 1_000_000;
+  await H.CollectWindowsTemperatures(T0);
+  const [err, reading] = await H.CollectWindowsTemperatures(T0 + 30_000);
+  assert.equal(err, null);
+  assert.deepEqual(reading, { Backend: null, Sensors: [] });
+  assert.equal(H.runs.length, 1);
+  await H.CollectWindowsTemperatures(T0 + H._internal.REPROBE_MS);
+  assert.equal(H.runs.length, 2);
+});
+
+test('Windows: a failed run says nothing about which sources exist', async () => {
+  let fail = false;
+  const H = loadWindowsWith(() =>
+    fail
+      ? Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' })
+      : '{"Source":"acpi","Rows":[{"Name":"TZ00_0","Value":3000}]}'
+  );
+  await H.CollectWindowsTemperatures(1);
+  fail = true;
+  const [err] = await H.CollectWindowsTemperatures(2);
+  assert.match(err.message, /timed out/);
+  assert.equal(H._internal.SourceMemory.Source, 'acpi');
+  assert.equal(H.execs.length, 0, 'a timed-out WMI query is not re-run in a cold powershell.exe');
 });
 
 // ---------------------------------------------------------------------------
@@ -507,11 +603,10 @@ test('macOS: a thermal state change is reported at once; the listener never stac
 function loadSamplers({
   windows,
   thermalState = 'nominal',
-  nvidia = '0, NVIDIA GeForce RTX 3080, 55\n',
-  nvidiaPath = 'nvidia-smi.exe',
+  nvidia = [{ Name: 'GPU 0 (NVIDIA GeForce RTX 3080)', Kind: 'gpu', Celsius: 55 }],
 } = {}) {
   const runs = [];
-  const lookups = [];
+  const stops = [];
   const mod = loadWithMocks(path.join(DIST, 'samplers.js'), {
     '../Logger': loggerStub,
     electron: {
@@ -525,21 +620,17 @@ function loadSamplers({
       CollectWindowsTemperatures: async () => windows,
       DisposeWindowsTemperatures: () => {},
     },
-    '../Utils': {
-      FindOnPath: (command) => {
-        lookups.push(command);
-        return command === 'nvidia-smi' ? nvidiaPath : null;
+    './nvidia': {
+      Nvidia: {
+        Read: async () => {
+          runs.push('read');
+          return [null, nvidia];
+        },
+        Stop: () => stops.push('stop'),
       },
-    },
-    '../AudioMonitor/shared': {
-      RunCommand: async (command, args) => {
-        runs.push([command, args]);
-        return [null, nvidia];
-      },
-      ErrorText: (error, fallback) => (error && error.message) || fallback,
     },
   });
-  return { ...mod, runs, lookups };
+  return { ...mod, runs, stops };
 }
 
 test('nvidia-smi GPUs are added when the source has none, and skipped when it has one', async () => {
@@ -559,12 +650,6 @@ test('nvidia-smi GPUs are added when the source has none, and skipped when it ha
       ['GPU 0 (NVIDIA GeForce RTX 3080)', 'gpu'],
     ]
   );
-  assert.deepEqual(withoutGpu.runs[0][1], [
-    '--query-gpu=index,name,temperature.gpu',
-    '--format=csv,noheader,nounits',
-  ]);
-  await withoutGpu.CollectTemperatures('win32');
-  assert.deepEqual(withoutGpu.lookups, ['nvidia-smi'], 'PATH is searched once per process');
 
   const withGpu = loadSamplers({
     windows: [
@@ -578,6 +663,7 @@ test('nvidia-smi GPUs are added when the source has none, and skipped when it ha
   const second = await withGpu.CollectTemperatures('win32');
   assert.equal(second.Reading.Backend, 'librehardwaremonitor');
   assert.equal(withGpu.runs.length, 0, 'the same card is not listed twice');
+  assert.deepEqual(withGpu.stops, ['stop'], 'and the resident nvidia-smi is not kept for it');
 });
 
 test('nvidia-smi alone is enough to report; without it, nothing is unsupported, not an error', async () => {
@@ -585,14 +671,118 @@ test('nvidia-smi alone is enough to report; without it, nothing is unsupported, 
   const reading = await gpuOnly.CollectTemperatures('win32');
   assert.equal(reading.Reading.Backend, 'nvidia-smi');
 
-  const nothing = loadSamplers({
-    windows: [null, { Backend: null, Sensors: [] }],
-    nvidiaPath: null,
-  });
+  const nothing = loadSamplers({ windows: [null, { Backend: null, Sensors: [] }], nvidia: [] });
   const empty = await nothing.CollectTemperatures('win32');
   assert.equal(empty.Ok, true);
   assert.deepEqual(empty.Reading.Sensors, []);
-  assert.equal(nothing.runs.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// The resident nvidia-smi
+// ---------------------------------------------------------------------------
+
+function fakeNvidia({ path: exe = 'nvidia-smi', onSpawn, runOnce } = {}) {
+  const spawned = [];
+  const onces = [];
+  let now = 1_000_000;
+  const { CreateNvidiaReader } = loadWithMocks(path.join(DIST, 'nvidia.js'), {
+    '../Logger': loggerStub,
+    '../Utils/process-priority': { LowerChildPriority() {} },
+  });
+  const reader = CreateNvidiaReader({
+    Find: () => exe,
+    Now: () => now,
+    Spawn: (command, args) => {
+      const child = new EventEmitter();
+      child.args = args;
+      child.stdout = new EventEmitter();
+      child.stdout.setEncoding = () => {};
+      child.stderr = new EventEmitter();
+      child.stderr.resume = () => {};
+      child.kill = () => {
+        child.killed = true;
+      };
+      spawned.push(child);
+      if (onSpawn) onSpawn(child);
+      return child;
+    },
+    RunOnce: async (command, args) => {
+      onces.push(args);
+      return runOnce ? runOnce() : [null, '0, NVIDIA RTX A4000, 50\n'];
+    },
+  });
+  return { reader, spawned, onces, advance: (ms) => (now += ms) };
+}
+
+test('nvidia-smi runs once, in its loop mode, and samples read its latest rows', async () => {
+  const N = fakeNvidia({
+    onSpawn: (child) =>
+      setImmediate(() =>
+        child.stdout.emit('data', '0, NVIDIA RTX A4000, 51\n1, NVIDIA RTX A4000, 6')
+      ),
+  });
+  const [err, first] = await N.reader.Read();
+  assert.equal(err, null);
+  assert.deepEqual(first, [{ Name: 'GPU 0 (NVIDIA RTX A4000)', Kind: 'gpu', Celsius: 51 }]);
+  assert.deepEqual(N.spawned[0].args.slice(-2), ['-l', '30']);
+
+  // The rest of the second row, then the loop's next print.
+  N.spawned[0].stdout.emit('data', '2\n0, NVIDIA RTX A4000, 53\n');
+  const [, second] = await N.reader.Read();
+  assert.deepEqual(
+    second.map((sensor) => sensor.Celsius),
+    [53, 62]
+  );
+  assert.equal(N.spawned.length, 1, 'no process per sample');
+  assert.equal(N.onces.length, 0);
+
+  N.reader.Stop();
+  assert.equal(N.spawned[0].killed, true);
+  assert.equal(N.reader.IsRunning(), false);
+});
+
+test('a loop that prints nothing drops back to the one-shot query', async () => {
+  const N = fakeNvidia({
+    onSpawn: (child) => setImmediate(() => child.emit('exit', 9)),
+  });
+  const [err, gpus] = await N.reader.Read();
+  assert.equal(err, null);
+  assert.equal(gpus[0].Celsius, 50);
+  assert.equal(N.onces.length, 1);
+  await N.reader.Read();
+  assert.equal(N.spawned.length, 1, 'the loop is not retried once it proved unusable');
+  assert.equal(N.onces.length, 2);
+});
+
+test('a failing nvidia-smi is not asked again for ten minutes', async () => {
+  const N = fakeNvidia({
+    onSpawn: (child) => setImmediate(() => child.emit('exit', 9)),
+    runOnce: () => [new Error('NVIDIA-SMI has failed'), null],
+  });
+  const [err] = await N.reader.Read();
+  assert.match(err.message, /failed/);
+  assert.deepEqual(await N.reader.Read(), [null, []]);
+  assert.equal(N.onces.length, 1);
+  N.advance(10 * 60 * 1000);
+  await N.reader.Read();
+  assert.equal(N.onces.length, 2);
+});
+
+test('stale rows restart the loop; no nvidia-smi installed means no GPUs and no spawn', async () => {
+  const N = fakeNvidia({
+    onSpawn: (child) => setImmediate(() => child.stdout.emit('data', '0, GPU, 40\n')),
+  });
+  await N.reader.Read();
+  N.advance(5 * 60 * 1000);
+  const [, gpus] = await N.reader.Read();
+  assert.equal(N.spawned.length, 2, 'a wedged loop is replaced');
+  assert.equal(N.spawned[0].killed, true);
+  assert.equal(gpus[0].Celsius, 40);
+  N.reader.Stop();
+
+  const none = fakeNvidia({ path: null });
+  assert.deepEqual(await none.reader.Read(), [null, []]);
+  assert.equal(none.spawned.length, 0);
 });
 
 test('macOS reads thermal pressure from Electron; "unknown" is null; other platforms never', async () => {

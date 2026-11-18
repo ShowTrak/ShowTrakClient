@@ -83,6 +83,11 @@ function clearIntervals(): void {
   }
 }
 
+/** The failures worth a warning: the first, then every twelfth (about once a minute). */
+export function shouldWarnConnectError(ConsecutiveErrors: number): boolean {
+  return ConsecutiveErrors <= 1 || ConsecutiveErrors % 12 === 0;
+}
+
 function markConnected(IP: string, Port: number): void {
   consecutiveConnectErrors = 0;
   connectFailureReported = false;
@@ -117,7 +122,7 @@ function markConnectionError(IP: string, Port: number, Error: unknown): void {
 
 async function UpdateDeviceList(): Promise<void> {
   if (!Socket || !Socket.connected) {
-    Logger.warn('Socket not connected, aborting UpdateDeviceList');
+    Logger.debug('Socket not connected, aborting UpdateDeviceList');
     return;
   }
   const [Err, DeviceList] = await USBMonitorManager.GetUSBDevices();
@@ -142,6 +147,24 @@ function disposeDisplayIdentity(): void {
   }
 }
 
+// The USB hotplug watcher runs only while this client is adopted and talking to
+// (or trying to reach) its server: an unadopted client has nobody to tell.
+function startUSBWatcher(): void {
+  try {
+    if (typeof USBMonitorManager.Start === 'function') USBMonitorManager.Start();
+  } catch (error) {
+    Logger.warn('Failed to start the USB hotplug watcher', error);
+  }
+}
+
+function stopUSBWatcher(): void {
+  try {
+    if (typeof USBMonitorManager.Stop === 'function') USBMonitorManager.Stop();
+  } catch (error) {
+    Logger.warn('Failed to stop the USB hotplug watcher', error);
+  }
+}
+
 function registerUSBListeners(): void {
   if (usbListenersRegistered) return;
 
@@ -156,7 +179,7 @@ function registerUSBListeners(): void {
     // A USB drive is mounted a moment after it enumerates.
     StorageMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
-      Logger.warn('Socket not connected, aborting OnUSBConnect');
+      Logger.debug('Socket not connected, aborting OnUSBConnect');
       return;
     }
     Socket.emit('USBDeviceConnected', Device);
@@ -166,7 +189,7 @@ function registerUSBListeners(): void {
     AudioMonitor.RequestSample();
     StorageMonitor.RequestSample();
     if (!Socket || !Socket.connected) {
-      Logger.warn('Socket not connected, aborting OnUSBDisconnect');
+      Logger.debug('Socket not connected, aborting OnUSBDisconnect');
       return;
     }
     Socket.emit('USBDeviceDisconnected', Device);
@@ -214,7 +237,7 @@ function displaySignature(Display: ClientDisplay): string {
  */
 async function UpdateDisplayList(Force = false): Promise<void> {
   if (!Socket || !Socket.connected) {
-    Logger.warn('Socket not connected, aborting UpdateDisplayList');
+    Logger.debug('Socket not connected, aborting UpdateDisplayList');
     return;
   }
   const [Err, DisplayList] = await DisplayMonitorManager.GetDisplays();
@@ -264,7 +287,7 @@ function registerDisplayListeners(): void {
 
   DisplayMonitorManager.OnDisplayChange(async () => {
     if (!Socket || !Socket.connected) {
-      Logger.warn('Socket not connected, aborting OnDisplayChange');
+      Logger.debug('Socket not connected, aborting OnDisplayChange');
       return;
     }
     await UpdateDisplayList();
@@ -384,6 +407,7 @@ export const Manager = {
       Logger.warn('Failed to stop storage monitor during termination');
     }
     disposeDisplayIdentity();
+    stopUSBWatcher();
     if (Socket) {
       Socket.disconnect();
       Socket = null;
@@ -407,6 +431,7 @@ export const Manager = {
 
     registerUSBListeners();
     registerDisplayListeners();
+    startUSBWatcher();
 
     // Create a Socket.IO client instance
     Socket = io(`http://${IP}:${Port}`, {
@@ -541,13 +566,18 @@ export const Manager = {
     });
 
     ActiveSocket.on('connect_error', (Error) => {
-      Logger.warn(
-        `Connection error to ${IP}:${Port}`,
-        Error && Error.message ? Error.message : Error
-      );
       // Treat connection failures as link loss for identify UI purposes.
       BroadcastManager.emit('HideIdentifyOverlay');
       markConnectionError(IP, Port, Error);
+      // socket.io retries every few seconds for as long as the server is away.
+      // The first failure, and one a minute after that, is what the log file
+      // needs; the rest is debug detail.
+      const Log = shouldWarnConnectError(consecutiveConnectErrors) ? Logger.warn : Logger.debug;
+      Log.call(
+        Logger,
+        `Connection error to ${IP}:${Port} (attempt ${consecutiveConnectErrors})`,
+        Error && Error.message ? Error.message : Error
+      );
     });
 
     ActiveSocket.on('UpdateSoftware', async (RequestID) => {

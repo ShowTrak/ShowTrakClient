@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakePowerShell } = require('./helpers/fake-powershell');
 
 // The Windows audio backend.
 //
@@ -44,31 +45,26 @@ const ROWS = [
 function loadWindows({ hostRun, execFile } = {}) {
   const hostCalls = [];
   const execCalls = [];
-  let disposed = 0;
+  const { PowerShell } = createFakePowerShell({
+    host: (script, { name, options }) => {
+      hostCalls.push({
+        host: name,
+        script,
+        timeout: options.TimeoutMs,
+        prelude: options.Prelude || null,
+      });
+      return hostRun ? hostRun(script) : [null, JSON.stringify(ROWS)];
+    },
+    oneShot: (script, args) => {
+      execCalls.push({ command: 'powershell.exe', args });
+      return execFile ? execFile('powershell.exe', args) : [null, ''];
+    },
+  });
   const mod = loadWithMocks(path.join(DIST, 'windows.js'), {
-    '../ProcessMonitor/powershell-host': {
-      CreatePowerShellHost: (name) => ({
-        name,
-        Run: async (script, timeout) => {
-          hostCalls.push({ script, timeout });
-          return hostRun ? hostRun(script) : [null, JSON.stringify(ROWS)];
-        },
-        Dispose: () => {
-          disposed += 1;
-        },
-        _reset: () => {},
-      }),
-    },
-    child_process: {
-      execFile: (command, args, options, callback) => {
-        execCalls.push({ command, args });
-        const [error, stdout] = execFile ? execFile(command, args) : [null, ''];
-        callback(error, stdout);
-      },
-    },
+    '../PowerShell': PowerShell,
     '../Logger': { CreateLogger: () => createSilentLogger() },
   });
-  return { mod, hostCalls, execCalls, disposedCount: () => disposed };
+  return { mod, hostCalls, execCalls };
 }
 
 const decodeBase64Args = (script) =>
@@ -96,13 +92,21 @@ test('the shim stays inside C# 5 and declares COM methods without PreserveSig', 
   }
 });
 
-test('the query script carries the shim as base64 and compiles it only once per session', () => {
+test('the shim rides in a prelude, sent once per host process, not with every sample', () => {
   const { mod } = loadWindows();
   const script = mod.WINDOWS_QUERY_SCRIPT;
+  const prelude = mod.WINDOWS_AUDIO_PRELUDE;
   assert.equal(script.includes('\n'), false, 'the host evaluates one line per request');
-  assert.match(script, /if \(-not \('ShowTrak\.AudioEndpoints' -as \[type\]\)\)/);
+  assert.equal(prelude.Script.includes('\n'), false);
   assert.match(script, /\[ShowTrak\.AudioEndpoints\]::Query\(\)$/);
-  assert.deepEqual(decodeBase64Args(script), [mod.WINDOWS_AUDIO_SHIM]);
+  // The 13.7 KB shim is no longer part of the per-sample script.
+  assert.deepEqual(decodeBase64Args(script), []);
+  assert.ok(script.length < 400, `the per-sample script is small (${script.length} chars)`);
+  assert.deepEqual(decodeBase64Args(prelude.Script), [mod.WINDOWS_AUDIO_SHIM]);
+  assert.match(prelude.Script, /if \(-not \('ShowTrak\.AudioEndpoints' -as \[type\]\)\)/);
+  // A failed compile is remembered, so the sample can say why the type is missing.
+  assert.match(prelude.Script, /ShowTrakAudioShimError/);
+  assert.match(script, /ShowTrakAudioShimError/);
 });
 
 test('BuildWindowsLevelScript passes the id as base64 and encodes skipped values as -1', () => {
@@ -110,7 +114,7 @@ test('BuildWindowsLevelScript passes the id as base64 and encodes skipped values
   const hostile = "{0.0.0}.{x}'); Remove-Item C:\\ -Recurse; ('\u2019";
   const both = mod.BuildWindowsLevelScript(hostile, { Volume: 64.6, Muted: true });
   assert.equal(both.includes('Remove-Item'), false);
-  assert.equal(decodeBase64Args(both)[1], hostile);
+  assert.equal(decodeBase64Args(both)[0], hostile);
   assert.match(both, /, 65, 1\)$/);
   assert.match(mod.BuildWindowsLevelScript('id', { Volume: 140 }), /, 100, -1\)$/);
   assert.match(mod.BuildWindowsLevelScript('id', { Volume: -2 }), /, 0, -1\)$/);
@@ -167,17 +171,18 @@ test('ParseWindowsAudio skips rows without an id and names nameless endpoints by
   assert.throws(() => mod.ParseWindowsAudio('[oops]'), SyntaxError);
 });
 
-test('CollectWindowsAudio uses its own host with a deadline that allows the first compile', async () => {
+test('CollectWindowsAudio uses the shared Desktop host, allowing the first compile time', async () => {
   const { mod, hostCalls, execCalls } = loadWindows();
-  assert.equal(mod._internal.Host.name, 'AudioPowerShellHost');
   const [error, sample] = await mod.CollectWindowsAudio();
   assert.equal(error, null);
   assert.equal(sample.Backend, 'wasapi');
   assert.equal(sample.Capabilities.OutputVolume, 'device');
   assert.equal(sample.Capabilities.Transport, false);
   assert.equal(sample.Endpoints.length, 2);
+  assert.equal(hostCalls[0].host, 'PowerShell:Desktop');
   assert.equal(hostCalls[0].script, mod.WINDOWS_QUERY_SCRIPT);
-  assert.ok(hostCalls[0].timeout >= 15000);
+  assert.equal(hostCalls[0].prelude, mod.WINDOWS_AUDIO_PRELUDE);
+  assert.ok(hostCalls[0].timeout + hostCalls[0].prelude.ExtraTimeoutMs >= 15000);
   assert.equal(execCalls.length, 0);
 });
 
@@ -192,7 +197,23 @@ test('CollectWindowsAudio falls back to a one-shot powershell.exe when the host 
   assert.equal(execCalls[0].command, 'powershell.exe');
   const command = execCalls[0].args[execCalls[0].args.length - 1];
   assert.ok(command.startsWith("$ErrorActionPreference = 'Stop'; "));
+  // A cold powershell.exe has to compile the shim itself.
+  assert.ok(command.includes(mod.WINDOWS_AUDIO_PRELUDE.Script));
   assert.ok(command.endsWith(mod.WINDOWS_QUERY_SCRIPT));
+});
+
+test('CollectWindowsAudio does not re-run a script that raised in a cold powershell.exe', async () => {
+  const { mod, execCalls } = loadWindows({
+    hostRun: () => [
+      Object.assign(new Error('The Core Audio shim could not be compiled: blocked'), {
+        code: 'ESCRIPT',
+      }),
+      null,
+    ],
+  });
+  const [error] = await mod.CollectWindowsAudio();
+  assert.match(error.message, /could not be compiled: blocked/);
+  assert.equal(execCalls.length, 0);
 });
 
 test('CollectWindowsAudio reports the failure when both paths fail, or the output is junk', async () => {
@@ -217,7 +238,8 @@ test('SetWindowsAudioLevel sends the change for the raw device id', async () => 
     { Volume: 30 }
   );
   assert.deepEqual(result, [null, true]);
-  assert.equal(decodeBase64Args(hostCalls[0].script)[1], '{0.0.0}.{x}');
+  assert.equal(decodeBase64Args(hostCalls[0].script)[0], '{0.0.0}.{x}');
+  assert.equal(hostCalls[0].prelude, mod.WINDOWS_AUDIO_PRELUDE);
   assert.match(hostCalls[0].script, /, 30, -1\)$/);
 });
 
@@ -241,8 +263,8 @@ test('SetWindowsAudioLevel rejects foreign ids and surfaces a shim failure', asy
   assert.equal(error.message, 'Element not found');
 });
 
-test('DisposeWindowsAudio stops the audio host', () => {
-  const { mod, disposedCount } = loadWindows();
-  mod.DisposeWindowsAudio();
-  assert.equal(disposedCount(), 1);
+test('DisposeWindowsAudio leaves the shared host to its idle shutdown', () => {
+  // A reconnect within a few minutes must not pay the shim compile again.
+  const { mod } = loadWindows();
+  assert.doesNotThrow(() => mod.DisposeWindowsAudio());
 });

@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { EventEmitter } = require('node:events');
 
 const { loadWithMocks, createSilentLogger } = require('./test-helpers');
+const { createFakeChild } = require('./helpers/fake-powershell');
 
 // The platform samplers behind ProcessMonitor.
 //
@@ -26,15 +26,6 @@ const SAMPLERS_PATH = path.join(
   'ProcessMonitor',
   'samplers.js'
 );
-const HOST_PATH = path.join(
-  __dirname,
-  '..',
-  'dist',
-  'Modules',
-  'ProcessMonitor',
-  'powershell-host.js'
-);
-
 const loggerStub = { CreateLogger: () => createSilentLogger() };
 
 /** Set (or, with undefined, delete) environment variables; returns the undo. */
@@ -55,214 +46,7 @@ function withEnv(values) {
   };
 }
 
-/** A stand-in for a spawned powershell.exe that the test drives by hand. */
-function createFakeChild() {
-  const child = new EventEmitter();
-  child.writes = [];
-  child.killed = false;
-  child.stdout = new EventEmitter();
-  child.stdout.setEncoding = () => {};
-  child.stderr = new EventEmitter();
-  child.stderr.resume = () => {};
-  child.stdin = {
-    write: (chunk) => {
-      child.writes.push(String(chunk));
-      return true;
-    },
-  };
-  child.kill = () => {
-    child.killed = true;
-  };
-  // Reply to the most recent script the way a real host would: the payload
-  // wrapped in whatever sentinels the module wrote around it.
-  child.respond = (payload) => {
-    const last = child.writes[child.writes.length - 1] || '';
-    const tokens = [...last.matchAll(/Write-Output '([^']+)'/g)].map((m) => m[1]);
-    const begin = tokens[0];
-    const end = tokens[tokens.length - 1];
-    child.stdout.emit('data', `${begin}${payload}${end}\n`);
-  };
-  return child;
-}
-
-function loadHost({ onSpawn } = {}) {
-  const spawned = [];
-  const { Manager, CreatePowerShellHost } = loadWithMocks(HOST_PATH, {
-    child_process: {
-      spawn: (...args) => {
-        const child = createFakeChild();
-        child.spawnArgs = args;
-        spawned.push(child);
-        if (onSpawn) onSpawn(child);
-        return child;
-      },
-    },
-    '../Logger': loggerStub,
-  });
-  return { Manager, CreatePowerShellHost, spawned };
-}
-
-test('PowerShell host reuses one process across samples', async () => {
-  const { Manager, spawned } = loadHost();
-
-  const first = Manager.Run('Get-Process', 1000);
-  assert.equal(spawned.length, 1, 'the host spawns on first use');
-  spawned[0].respond('Safari\nCode\n');
-  const [err, out] = await first;
-  assert.equal(err, null);
-  assert.deepEqual(
-    out.split(/\r?\n/).filter(Boolean),
-    ['Safari', 'Code'],
-    'the payload is returned without the sentinels'
-  );
-
-  // The point of the host: a second sample must NOT pay another cold start.
-  const second = Manager.Run('Get-Process', 1000);
-  assert.equal(spawned.length, 1, 'a second sample reuses the running host');
-  spawned[0].respond('Safari\n');
-  const [err2, out2] = await second;
-  assert.equal(err2, null);
-  assert.equal(out2.trim(), 'Safari');
-
-  Manager.Dispose();
-  assert.equal(spawned[0].killed, true);
-});
-
-test('hosts from CreatePowerShellHost are independent: one busy host never blocks another', async () => {
-  // The audio sampler and the application sampler run on unrelated timers. A
-  // shared host would answer one of them "busy" whenever their samples overlapped.
-  const { Manager, CreatePowerShellHost, spawned } = loadHost();
-  const audio = CreatePowerShellHost('AudioPowerShellHost');
-
-  const apps = Manager.Run('Get-Process', 1000);
-  const sound = audio.Run('[ShowTrak.AudioEndpoints]::Query()', 1000);
-  assert.equal(spawned.length, 2, 'each host has its own process');
-  spawned[1].respond('[]');
-  spawned[0].respond('Safari\n');
-  assert.deepEqual(await sound, [null, '[]']);
-  assert.equal((await apps)[1].trim(), 'Safari');
-
-  audio.Dispose();
-  assert.equal(spawned[1].killed, true);
-  assert.equal(spawned[0].killed, false, 'disposing one host leaves the other running');
-  Manager.Dispose();
-});
-
-test('PowerShell host initialises UTF-8 output before any script', async () => {
-  const { Manager, spawned } = loadHost();
-  const pending = Manager.Run('Get-Process', 1000);
-  // Without this the sampler mojibakes any process name containing non-ASCII
-  // characters on a machine that is not already on a UTF-8 codepage.
-  assert.match(spawned[0].writes[0], /OutputEncoding/);
-  spawned[0].respond('');
-  await pending;
-  Manager.Dispose();
-});
-
-test('PowerShell host surfaces a failing script without dying', async () => {
-  const { Manager, spawned } = loadHost();
-
-  const pending = Manager.Run('Get-Process', 1000);
-  const last = spawned[0].writes[spawned[0].writes.length - 1];
-  // The wrapper must catch, so one bad script does not cost us the host.
-  assert.match(last, /try \{/);
-  assert.match(last, /catch \{/);
-  const errorToken = /Write-Output \('([^']+)' \+ \$_\.Exception\.Message\)/.exec(last)[1];
-  spawned[0].respond(`${errorToken}Access is denied`);
-
-  const [err, out] = await pending;
-  assert.equal(out, null);
-  assert.match(String(err.message), /Access is denied/);
-
-  // Still the same host: a script-level failure is not a host-level one.
-  const next = Manager.Run('Get-Process', 1000);
-  assert.equal(spawned.length, 1);
-  spawned[0].respond('Safari\n');
-  assert.equal((await next)[0], null);
-  Manager.Dispose();
-});
-
-test('PowerShell host tears down and respawns after a timeout', async () => {
-  const { Manager, spawned } = loadHost();
-
-  // Never responds, so the deadline is what resolves this.
-  const pending = Manager.Run('Get-Process', 5);
-  const [err, out] = await pending;
-  assert.equal(out, null);
-  assert.match(String(err.message), /timed out/);
-  assert.equal(spawned[0].killed, true, 'a wedged host is killed rather than left running');
-
-  // A wedged host must not poison every later sample.
-  const next = Manager.Run('Get-Process', 1000);
-  assert.equal(spawned.length, 2, 'the next sample spawns a fresh host');
-  spawned[1].respond('Safari\n');
-  assert.equal((await next)[0], null);
-  Manager.Dispose();
-});
-
-test('PowerShell host fails the in-flight sample when the process exits', async () => {
-  const { Manager, spawned } = loadHost();
-  const pending = Manager.Run('Get-Process', 1000);
-  spawned[0].emit('exit', 1, null);
-  const [err, out] = await pending;
-  assert.equal(out, null);
-  assert.match(String(err.message), /exited/);
-  Manager.Dispose();
-});
-
-test('PowerShell host reassembles a response split across stdout chunks', async () => {
-  const { Manager, spawned } = loadHost();
-  const pending = Manager.Run('Get-Process', 1000);
-
-  const last = spawned[0].writes[spawned[0].writes.length - 1];
-  const tokens = [...last.matchAll(/Write-Output '([^']+)'/g)].map((m) => m[1]);
-  const [begin, , end] = [tokens[0], tokens[1], tokens[tokens.length - 1]];
-  // A pipe hands over whatever it has; a sentinel can land across a boundary.
-  const framed = `${begin}Safari\nCode\n${end}`;
-  spawned[0].stdout.emit('data', framed.slice(0, 9));
-  spawned[0].stdout.emit('data', framed.slice(9, 30));
-  spawned[0].stdout.emit('data', framed.slice(30));
-
-  const [err, out] = await pending;
-  assert.equal(err, null);
-  assert.deepEqual(out.split(/\r?\n/).filter(Boolean), ['Safari', 'Code']);
-  Manager.Dispose();
-});
-
-test('PowerShell host discards banner noise written before a response', async () => {
-  const { Manager, spawned } = loadHost();
-  const pending = Manager.Run('Get-Process', 1000);
-  spawned[0].stdout.emit('data', 'Windows PowerShell\nCopyright (C) Microsoft\nPS C:\\> ');
-  spawned[0].respond('Safari\n');
-  const [err, out] = await pending;
-  assert.equal(err, null);
-  assert.equal(out.trim(), 'Safari');
-  Manager.Dispose();
-});
-
-test('PowerShell host refuses to interleave two samples', async () => {
-  const { Manager, spawned } = loadHost();
-  const first = Manager.Run('Get-Process', 1000);
-  const [busyErr] = await Manager.Run('Get-Process', 1000);
-  assert.match(String(busyErr.message), /busy/);
-  spawned[0].respond('Safari\n');
-  await first;
-  Manager.Dispose();
-});
-
-test('PowerShell host reports unavailable when powershell.exe cannot be spawned', async () => {
-  const { Manager } = loadWithMocks(HOST_PATH, {
-    child_process: {
-      spawn: () => {
-        throw new Error('spawn powershell.exe ENOENT');
-      },
-    },
-    '../Logger': loggerStub,
-  });
-  const [err, out] = await Manager.Run('Get-Process', 1000);
-  assert.equal(out, null);
-  assert.match(String(err.message), /unavailable/);
-});
+// The shared PowerShell host itself is covered by powershell-host.test.js.
 
 // ---------------------------------------------------------------------------
 
@@ -508,28 +292,34 @@ test('Windows host sample: anything but the expected object is an error, not an 
 test('Windows sampler reads hung and focus state through the persistent host in one round trip', async () => {
   const spawned = [];
   const execCalls = [];
-  const { collectWindowsApplications, WINDOWS_HOST_QUERY } = loadWithMocks(SAMPLERS_PATH, {
-    child_process: {
-      spawn: () => {
-        const child = createFakeChild();
-        spawned.push(child);
-        return child;
+  const { collectWindowsApplications, WINDOWS_HOST_QUERY, WINDOWS_WINDOW_PRELUDE } = loadWithMocks(
+    SAMPLERS_PATH,
+    {
+      child_process: {
+        spawn: () => {
+          const child = createFakeChild();
+          spawned.push(child);
+          return child;
+        },
+        execFile: (command, args, _opts, callback) => {
+          execCalls.push([command, args]);
+          setImmediate(() => callback(null, ''));
+        },
       },
-      execFile: (command, args, _opts, callback) => {
-        execCalls.push([command, args]);
-        setImmediate(() => callback(null, ''));
-      },
-    },
-    os: { userInfo: () => ({ username: 'tester' }) },
-    '../Logger': loggerStub,
-  });
+      os: { userInfo: () => ({ username: 'tester' }) },
+      '../Logger': loggerStub,
+    }
+  );
 
-  // The shim is compiled at most once per host, and hung detection uses the
+  // The shim is compiled at most once per host (it is the request's prelude,
+  // which the host sends once per powershell.exe), and hung detection uses the
   // window manager's verdict rather than .Responding's 5-second probe.
-  assert.match(WINDOWS_HOST_QUERY, /ShowTrakWindowShimTried/);
-  assert.match(WINDOWS_HOST_QUERY, /Add-Type/);
+  assert.match(WINDOWS_WINDOW_PRELUDE.Script, /Add-Type/);
+  assert.doesNotMatch(WINDOWS_HOST_QUERY, /Add-Type/);
+  assert.match(WINDOWS_HOST_QUERY, /\[ShowTrak\.ApplicationWindows\]::Query\(\)/);
   assert.doesNotMatch(WINDOWS_HOST_QUERY, /\.Responding\b/);
   assert.doesNotMatch(WINDOWS_HOST_QUERY, /\n/, 'the host evaluates one line per request');
+  assert.doesNotMatch(WINDOWS_WINDOW_PRELUDE.Script, /\n/);
 
   const pending = collectWindowsApplications();
   assert.equal(spawned.length, 1);
@@ -545,6 +335,15 @@ test('Windows sampler reads hung and focus state through the persistent host in 
   assert.equal(sample.Foreground, 'explorer');
   assert.deepEqual(sample.Processes, [{ Name: 'QLab', Responding: false }]);
   assert.equal(execCalls.length, 0, 'no process is spawned per sample');
+  assert.match(spawned[0].writes[1], /Add-Type/, 'the first request carries the shim compile');
+
+  // The second sample is the method call alone: the shim is not sent again.
+  const second = collectWindowsApplications();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(spawned.length, 1, 'the same host answers');
+  assert.doesNotMatch(spawned[0].writes[2], /Add-Type/);
+  spawned[0].respond(JSON.stringify({ Processes: [], Foreground: null, Shim: true }));
+  assert.equal((await second)[0], null);
 });
 
 test('Windows sampler falls back to one-shot names when the host answers with garbage', async () => {

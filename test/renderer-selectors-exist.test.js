@@ -33,12 +33,13 @@ const ENTRY_POINTS = [
   },
 ];
 
-/** IDs referenced as $('#FOO') or $("#FOO"), and via getElementById('FOO'). */
+/** IDs referenced as byId('FOO') (lib/dom.ts), $('#FOO'), or getElementById('FOO'). */
 function extractReferencedIds(source) {
   const ids = new Set();
   const jqueryIdSelector = /\$\(\s*(['"`])#([A-Za-z0-9_-]+)\1\s*\)/g;
   const getElementById = /getElementById\(\s*(['"`])([A-Za-z0-9_-]+)\1\s*\)/g;
-  for (const re of [jqueryIdSelector, getElementById]) {
+  const byId = /\bbyId(?:<[^>]+>)?\(\s*(['"`])([A-Za-z0-9_-]+)\1\s*\)/g;
+  for (const re of [jqueryIdSelector, getElementById, byId]) {
     let match;
     while ((match = re.exec(source)) !== null) ids.add(match[2]);
   }

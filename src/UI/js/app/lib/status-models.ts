@@ -2,7 +2,7 @@
 //
 // Extracted from main.ts so the rules that decide what the operator sees on a
 // client machine can be tested without a DOM. Each function takes plain state
-// and returns a plain model; main.ts keeps the jQuery that paints it.
+// and returns a plain model; main.ts keeps the DOM code that paints it.
 //
 // This window is often the ONLY thing a venue tech looks at on a client PC. If
 // it says "Adopted, Connected" while the socket is down, or hides an

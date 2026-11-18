@@ -282,7 +282,7 @@ export const Manager = {
     // Periodically refresh to catch late announcements.
     if (updateTimer) clearInterval(updateTimer);
     updateTimer = setInterval(() => {
-      Logger.log('Bonjour update tick');
+      Logger.debug('Bonjour update tick');
       attempt('Periodic browser update', () => browser?.update());
     }, BROWSER_REFRESH_INTERVAL_MS);
 
@@ -308,11 +308,19 @@ export const Manager = {
     }, DISCOVERY_TIMEOUT_MS);
   },
 
-  // Release the browsers and timers but keep the shared instance, so a following
-  // OnFind can reuse it.
+  // Release everything discovery opened, the shared instance included.
+  //
+  // This used to keep the instance for the next OnFind to reuse — and with it
+  // its multicast socket, joined to the mDNS group. Every caller stops a
+  // discovery because it is over (a server was found, the search timed out, the
+  // service restarted), and an adopted client may not search again for weeks, so
+  // the socket stayed open decoding every mDNS packet on the LAN for the life of
+  // the process. Opening a fresh one for the next search costs next to nothing.
   Stop: async (): Promise<void> => {
-    Logger.log('Bonjour.Stop called');
-    Teardown({ resetFound: true });
+    Logger.debug('Bonjour.Stop called');
+    const hadInstance = !!instance;
+    Teardown({ destroyInstance: true, resetFound: true });
+    if (hadInstance) Logger.log('Bonjour discovery stopped; mDNS socket closed.');
   },
 
   // Release everything, including the shared instance.

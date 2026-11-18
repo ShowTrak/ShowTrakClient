@@ -49,13 +49,15 @@ const Listeners = CreateListenerSet({
   resume: () => {
     lastResumeAt = Date.now();
     Logger.log('System resumed');
-    if (activeSocket) void RunSample({ ForceEmit: true, Queue: true });
+    if (activeSocket) void RunSample({ ForceEmit: true, Queue: true, ForceRead: true });
   },
+  // A power-source change is also the moment a battery (a UPS) may have
+  // appeared, so these read the platform even if it last said "no battery".
   'on-ac': () => {
-    if (activeSocket) void RunSample({ Queue: true });
+    if (activeSocket) void RunSample({ Queue: true, ForceRead: true });
   },
   'on-battery': () => {
-    if (activeSocket) void RunSample({ Queue: true });
+    if (activeSocket) void RunSample({ Queue: true, ForceRead: true });
   },
 });
 
@@ -195,8 +197,12 @@ function EmitImmediately(): void {
   }
 }
 
-async function SampleAndReport(ForceEmit: boolean, Generation: number): Promise<void> {
-  const Collection = await CollectPower();
+async function SampleAndReport(
+  ForceEmit: boolean,
+  Generation: number,
+  ForceRead = false
+): Promise<void> {
+  const Collection = await CollectPower(process.platform, { Force: ForceRead });
   if (Generation !== generation) return;
   if (!Collection.Ok && !Collection.Unsupported) {
     Logger.warn(`Power sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
@@ -219,6 +225,8 @@ interface SampleOptions {
   ForceEmit?: boolean;
   /** Run a fresh sample after any in-flight one rather than sharing its result. */
   Queue?: boolean;
+  /** Read the platform even if it recently reported no battery. */
+  ForceRead?: boolean;
 }
 
 function RunSample(Options: SampleOptions = {}): Promise<void> {
@@ -226,7 +234,7 @@ function RunSample(Options: SampleOptions = {}): Promise<void> {
     if (!Options.Queue) return inFlight;
     return inFlight.then(() => RunSample(Options));
   }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation)
+  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.ForceRead)
     .catch((error: unknown) => {
       Logger.warn(`Power sample threw: ${ErrorText(error, 'unknown error')}`);
     })

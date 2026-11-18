@@ -62,7 +62,6 @@
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.3",
     "@types/auto-launch": "^5.0.5",
-    "@types/jquery": "^4.0.1",
     "@types/node": "^26.6.5",
     "c8": "^12.0.0",
     "electron": "^45.0.0",

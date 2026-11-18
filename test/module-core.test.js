@@ -323,6 +323,10 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
       this.listeners.set(event, handler);
     }
 
+    removeEventListener(event, handler) {
+      if (this.listeners.get(event) === handler) this.listeners.delete(event);
+    }
+
     emit(event, device) {
       const handler = this.listeners.get(event);
       if (handler) handler({ device });
@@ -339,10 +343,18 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
     },
   });
 
+  // Importing the module watches nothing and queries nothing.
+  assert.equal(lastInstance, null, 'no WebUSB (and so no hotplug watcher) at import');
+
   const [err, devices] = await Manager.GetUSBDevices();
   assert.equal(err, null);
   assert.equal(devices.length, 1);
   assert.equal(devices[0].VendorID, 10);
+  assert.equal(lastInstance.listeners.size, 0, 'listing devices does not start the watcher');
+
+  Manager.Start();
+  Manager.Start();
+  assert.equal(lastInstance.listeners.size, 2, 'Start is idempotent');
 
   let connected = null;
   let disconnected = null;
@@ -366,6 +378,10 @@ test('USBMonitor formats connected devices and emits callbacks', async () => {
 
   assert.equal(connected.ProductID, 33);
   assert.equal(disconnected.SerialNumber, 'S2');
+
+  // Stopping removes the listeners, which is what stops usb's native watcher.
+  Manager.Stop();
+  assert.equal(lastInstance.listeners.size, 0);
 });
 
 test('DisplayMonitor formats displays and registers change listeners', async () => {
@@ -492,7 +508,11 @@ test('DisplayMonitor coalesces a burst of screen events into one callback', asyn
       fired += 1;
     });
     // Seed the identity cache so the invalidation is observable.
-    mod._internal.identityCache = { at: Date.now(), value: [{ Fingerprint: 'edid:X' }] };
+    mod._internal.identityCache = {
+      at: Date.now(),
+      value: [{ Fingerprint: 'edid:X' }],
+      valid: true,
+    };
 
     handlers['display-added']();
     handlers['display-metrics-changed']();
@@ -513,9 +533,73 @@ test('DisplayMonitor coalesces a burst of screen events into one callback', asyn
     handlers['display-removed']();
     scheduled.callback();
     assert.equal(fired, 2);
+
+    // The dock or taskbar moving changes only the work area: nothing reported
+    // or identified changed, so it costs neither a lookup nor a report.
+    mod._internal.identityCache = {
+      at: Date.now(),
+      value: [{ Fingerprint: 'edid:X' }],
+      valid: true,
+    };
+    scheduled = null;
+    handlers['display-metrics-changed']({}, { id: 1 }, ['workArea']);
+    assert.equal(scheduled, null);
+    assert.equal(mod._internal.identityCache.value.length, 1);
+    handlers['display-metrics-changed']({}, { id: 1 }, ['workArea', 'bounds']);
+    assert.equal(mod._internal.identityCache.value.length, 0);
+    scheduled.callback();
+    assert.equal(fired, 3);
   } finally {
     global.setTimeout = originalSetTimeout;
     global.clearTimeout = originalClearTimeout;
+  }
+});
+
+test('DisplayMonitor keeps hardware identities until a screen change, not for 30 seconds', async () => {
+  const fakeScreen = {
+    getAllDisplays: () => [{ id: 7, size: { width: 1920, height: 1080 }, bounds: {} }],
+    getPrimaryDisplay: () => ({ id: 7 }),
+    on: () => {},
+  };
+  const modulePath = path.join(__dirname, '..', 'dist', 'Modules', 'DisplayMonitor', 'index.js');
+  const mod = loadWithMocks(modulePath, {
+    '../Logger': { CreateLogger: () => createSilentLogger() },
+    electron: { screen: fakeScreen },
+  });
+  let lookups = 0;
+  let answer = [{ Fingerprint: 'edid:DEL:1:2', Width: 1920, Height: 1080, Primary: true }];
+  mod._internal.GetDisplayIdentities = async () => {
+    lookups += 1;
+    return answer;
+  };
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    await mod.Manager.GetDisplays();
+    now += 60_000; // the minute's forced resync
+    const [, displays] = await mod.Manager.GetDisplays();
+    assert.equal(lookups, 1, 'the resync does not repeat the OS lookup');
+    assert.equal(displays[0].DisplayID, 'edid:DEL:1:2');
+    mod._internal.InvalidateIdentityCache();
+    await mod.Manager.GetDisplays();
+    assert.equal(lookups, 2, 'a screen change does');
+    now += mod._constants.IDENTITY_CACHE_TTL_MS;
+    await mod.Manager.GetDisplays();
+    assert.equal(lookups, 3, 'and the safety-net TTL does');
+
+    // An empty answer is cached too, for less long.
+    answer = [];
+    mod._internal.InvalidateIdentityCache();
+    await mod.Manager.GetDisplays();
+    now += 60_000;
+    await mod.Manager.GetDisplays();
+    assert.equal(lookups, 4);
+    now += mod._constants.EMPTY_IDENTITY_CACHE_TTL_MS;
+    await mod.Manager.GetDisplays();
+    assert.equal(lookups, 5);
+  } finally {
+    Date.now = realNow;
   }
 });
 
@@ -551,13 +635,16 @@ test('Logger writes file lines and supports all log levels', async () => {
         fs.mkdirSync(target, options);
         createdFiles.add(target);
       },
-      writeFileSync: (target, content) => {
-        fs.writeFileSync(target, content, 'utf8');
+      openSync: (target, flags) => {
         createdFiles.add(target);
+        return fs.openSync(target, flags);
       },
-      appendFileSync: (target, content) => {
-        appended.push([target, content]);
-        fs.appendFileSync(target, content, 'utf8');
+      closeSync: (fd) => fs.closeSync(fd),
+      readdirSync: (target) => fs.readdirSync(target),
+      unlinkSync: (target) => fs.unlinkSync(target),
+      writeSync: (fd, content, position, encoding) => {
+        appended.push([fd, content]);
+        return fs.writeSync(fd, content, position, encoding);
       },
     },
     path,
@@ -571,6 +658,7 @@ test('Logger writes file lines and supports all log levels', async () => {
 
   try {
     const logger = CreateLogger('Unit');
+    assert.equal(createdFiles.size >= 1, true, "the day's file exists from load");
     logger.log('log');
     logger.info('info');
     logger.silent('silent');

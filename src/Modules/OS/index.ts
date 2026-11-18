@@ -16,8 +16,15 @@ interface CpuTimesSnapshot {
 
 let CPUUsage = 0.0;
 let __prevCpuTimes: CpuTimesSnapshot | null = null;
+let __prevCpuAt = 0;
 const __cpuWindow: number[] = [];
 const __CPU_WINDOW_SIZE = 3; // 2–3s smoothing
+// The heartbeat reads vitals every second while connected, and that read is now
+// what advances the CPU figure: a sample is taken at most this often…
+const CPU_MIN_SAMPLE_MS = 900;
+// …and a gap longer than this (the client was disconnected, so nobody asked)
+// starts the smoothing window afresh rather than averaging across the outage.
+const CPU_WINDOW_RESET_MS = 5000;
 
 function snapshotCpuTimes(): CpuTimesSnapshot {
   const list = os.cpus();
@@ -32,10 +39,18 @@ function snapshotCpuTimes(): CpuTimesSnapshot {
   return { idle, total };
 }
 
-function sampleCPU(): void {
+/**
+ * Advance the CPU figure, if a sample is due. Called from GetVitals rather than
+ * from a timer of its own: the old 1-second sampler ran from import until the
+ * process exited, connected or not, adopted or not, and its only reader is the
+ * once-a-second heartbeat of a connected client.
+ */
+function sampleCPU(Now: number = Date.now()): void {
   try {
+    if (__prevCpuTimes && Now - __prevCpuAt < CPU_MIN_SAMPLE_MS) return;
     const curr = snapshotCpuTimes();
     if (__prevCpuTimes) {
+      if (Now - __prevCpuAt > CPU_WINDOW_RESET_MS) __cpuWindow.length = 0;
       const idleDelta = curr.idle - __prevCpuTimes.idle;
       const totalDelta = curr.total - __prevCpuTimes.total;
       if (totalDelta > 0) {
@@ -49,14 +64,14 @@ function sampleCPU(): void {
       }
     }
     __prevCpuTimes = curr;
+    __prevCpuAt = Now;
   } catch (_error) {
     // Best-effort CPU sampling should never crash runtime flow.
   }
 }
 
-// Initialize snapshot and start a 1s sampler; this aligns with Task Manager more closely on Windows
-__prevCpuTimes = snapshotCpuTimes();
-setInterval(sampleCPU, 1000);
+// The baseline the first heartbeat measures from.
+sampleCPU();
 
 // --- macOS memory ------------------------------------------------------------
 //
@@ -68,14 +83,17 @@ setInterval(sampleCPU, 1000);
 // Activity Monitor's "Memory Used" is app memory + wired + compressed, which
 // vm_stat exposes as page counts:
 //   (Anonymous pages - Pages purgeable) + Pages wired down + Pages occupied by compressor
-// Heartbeat reads vitals every second, so vm_stat is NOT run per call: a slow
-// background sampler keeps the last figure, and GetVitals falls back to
-// `total - free` until it has one (or whenever it fails).
-const MAC_MEMORY_SAMPLE_INTERVAL_MS = 5000;
+// Heartbeat reads vitals every second, so vm_stat is NOT run per call: GetVitals
+// reports the last figure and starts a fresh vm_stat in the background when that
+// figure is MAC_MEMORY_SAMPLE_INTERVAL_MS old. It used to run every 5 seconds
+// from a timer of its own, connected or not. Until the first figure arrives (or
+// whenever a sample fails) GetVitals falls back to `total - free`.
+const MAC_MEMORY_SAMPLE_INTERVAL_MS = 15000;
 const MAC_MEMORY_TIMEOUT_MS = 4000;
 
 let MacUsedMemory: number | null = null;
 let MacMemorySampleInFlight = false;
+let MacMemorySampledAt = -Infinity;
 
 /**
  * Bytes in use as Activity Monitor counts them, from `vm_stat` output, or null
@@ -105,9 +123,10 @@ export function ParseVmStat(Output: unknown): number | null {
   return Number.isFinite(Used) ? Used : null;
 }
 
-function sampleMacMemory(): void {
+function sampleMacMemory(Now: number = Date.now()): void {
   if (MacMemorySampleInFlight) return;
   MacMemorySampleInFlight = true;
+  MacMemorySampledAt = Now;
   try {
     execFile(
       'vm_stat',
@@ -126,11 +145,12 @@ function sampleMacMemory(): void {
   }
 }
 
-if (process.platform === 'darwin') {
-  sampleMacMemory();
-  const MacMemoryTimer = setInterval(sampleMacMemory, MAC_MEMORY_SAMPLE_INTERVAL_MS);
-  // Never the reason the app cannot quit.
-  if (MacMemoryTimer && typeof MacMemoryTimer.unref === 'function') MacMemoryTimer.unref();
+// One sample at start, so the first heartbeat already has a figure.
+if (process.platform === 'darwin') sampleMacMemory();
+
+function refreshMacMemoryIfDue(Now: number = Date.now()): void {
+  if (process.platform !== 'darwin') return;
+  if (Now - MacMemorySampledAt >= MAC_MEMORY_SAMPLE_INTERVAL_MS) sampleMacMemory(Now);
 }
 
 /**
@@ -232,6 +252,8 @@ export const Manager = {
   },
 
   async GetVitals(): Promise<Vitals> {
+    sampleCPU();
+    refreshMacMemoryIfDue();
     const TotalMemory = os.totalmem();
     const UsedMemory = ComputeUsedMemory(TotalMemory, os.freemem(), MacUsedMemory);
     const Uptime = os.uptime();
@@ -306,4 +328,10 @@ export const Manager = {
       return [];
     }
   },
+};
+
+export const _constants = {
+  CPU_MIN_SAMPLE_MS,
+  CPU_WINDOW_RESET_MS,
+  MAC_MEMORY_SAMPLE_INTERVAL_MS,
 };

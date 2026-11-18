@@ -51,6 +51,29 @@ let LastAppliedSignature: string | null = null;
  */
 let Unavailable = false;
 
+/**
+ * Whether the user environment this process inherited already holds exactly
+ * `Environment`'s show variables. The client is started from the Run key by
+ * Explorer, which hands it the user environment as it stood at login — so on the
+ * first connect after a reboot this answers "is the registry already right?"
+ * without starting PowerShell. It used to start one on every first connect, even
+ * for a show with no variables at all.
+ *
+ * Only a positive answer is trusted, and only for the first reconcile: any
+ * difference (including an inherited block that is stale because the client was
+ * restarted by an update) falls through to the real reconcile, which is safe to
+ * repeat.
+ */
+export function MatchesInheritedEnvironment(
+  Environment: VariableEnvironment,
+  Inherited: NodeJS.ProcessEnv
+): boolean {
+  const Wanted = Object.keys(Environment).filter((Name) => VARIABLE_NAME_PATTERN.test(Name));
+  const Present = Object.keys(Inherited).filter((Name) => /^SHOWTRAK_VAR_/i.test(Name));
+  if (Wanted.length !== Present.length) return false;
+  return Wanted.every((Name) => Inherited[Name] === Environment[Name]);
+}
+
 function BuildSignature(Environment: VariableEnvironment): string {
   return JSON.stringify(
     Object.keys(Environment)
@@ -174,7 +197,10 @@ export const Manager = {
    * Never throws: a failure here must not stop scripts from running, since they
    * get their variables through the injected environment either way.
    */
-  async Reconcile(Environment: VariableEnvironment): Promise<void> {
+  async Reconcile(
+    Environment: VariableEnvironment,
+    Inherited: NodeJS.ProcessEnv = process.env
+  ): Promise<void> {
     if (!Manager.IsSupported()) return;
     if (Unavailable) return;
 
@@ -183,6 +209,11 @@ export const Manager = {
     // Definition changes fan out to every client, so without this every client
     // would rewrite its registry whenever any variable anywhere was edited.
     if (Signature === LastAppliedSignature) return;
+    if (LastAppliedSignature === null && MatchesInheritedEnvironment(Environment, Inherited)) {
+      LastAppliedSignature = Signature;
+      Logger.debug('Windows environment already matches the show variables; nothing to write');
+      return;
+    }
 
     try {
       await RunPowerShell(BuildReconcileScript(Environment));
@@ -205,4 +236,9 @@ export const Manager = {
   },
 };
 
-export const _internal = { BuildReconcileScript, QuoteForPowerShell, BuildSignature };
+export const _internal = {
+  BuildReconcileScript,
+  QuoteForPowerShell,
+  BuildSignature,
+  MatchesInheritedEnvironment,
+};

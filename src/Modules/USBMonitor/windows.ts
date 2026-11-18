@@ -16,8 +16,7 @@
 // fixture tests only.
 import type { USBDevice, USBDeviceState } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { CreatePowerShellHost } from '../ProcessMonitor/powershell-host';
-import { RunCommand } from '../AudioMonitor/shared';
+import { Hosts, LastJsonLine, RunPowerShell } from '../PowerShell';
 
 /** One USB device as Windows enumerates it. */
 export interface PnPUSBEntry {
@@ -88,7 +87,8 @@ export function ParsePnPDeviceID(
 export function ParsePnPEntries(Output: string): PnPUSBEntry[] {
   const Text = Output.trim();
   if (!Text) return [];
-  const Parsed: unknown = JSON.parse(Text);
+  // The last line: anything before it is PowerShell noise (a warning).
+  const Parsed: unknown = JSON.parse(LastJsonLine(Text) ?? Text);
   const Rows = Array.isArray(Parsed) ? Parsed : [Parsed];
   const Entries: PnPUSBEntry[] = [];
   for (const Row of Rows as Array<Record<string, unknown> | null>) {
@@ -181,25 +181,12 @@ export const WINDOWS_PNP_SCRIPT = [
 ].join(' ');
 
 const HOST_TIMEOUT_MS = 15000;
-const Host = CreatePowerShellHost('USBPowerShellHost');
-
-/** Run in the persistent host, falling back to a one-shot powershell.exe. */
-async function RunPowerShell(Script: string): Promise<Result<string>> {
-  const [HostError, Output] = await Host.Run(Script, HOST_TIMEOUT_MS);
-  if (!HostError && Output !== null) return [null, Output];
-  return RunCommand('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    `$ErrorActionPreference = 'Stop'; ${Script}`,
-  ]);
-}
 
 /** Every present USB device's PnP state; an error when it could not be read. */
 export async function QueryWindowsUSBStates(): Promise<Result<PnPUSBEntry[]>> {
-  const [Error_, Output] = await RunPowerShell(WINDOWS_PNP_SCRIPT);
+  const [Error_, Output] = await RunPowerShell(Hosts.Wmi, WINDOWS_PNP_SCRIPT, {
+    TimeoutMs: HOST_TIMEOUT_MS,
+  });
   if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
   try {
     return [null, ParsePnPEntries(Output)];
@@ -208,8 +195,4 @@ export async function QueryWindowsUSBStates(): Promise<Result<PnPUSBEntry[]>> {
   }
 }
 
-export function DisposeWindowsUSB(): void {
-  Host.Dispose();
-}
-
-export const _internal = { Host, HOST_TIMEOUT_MS };
+export const _internal = { HOST_TIMEOUT_MS };

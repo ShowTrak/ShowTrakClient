@@ -2,7 +2,8 @@ import type { ThermalState } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
 import { GetPowerMonitor } from '../PowerMonitor/electron-power';
 import { ReadLinuxTemperatures } from './linux';
-import { ReadNvidiaTemperatures, SanitizeSensors, type TemperatureReading } from './sensors';
+import { Nvidia } from './nvidia';
+import { SanitizeSensors, type TemperatureReading } from './sensors';
 import { CollectWindowsTemperatures, DisposeWindowsTemperatures } from './windows';
 
 /** A reading, or why there is none. */
@@ -36,14 +37,15 @@ export function ReadThermalState(Platform: string = process.platform): ThermalSt
 /**
  * Append nvidia-smi's GPUs to a reading, unless the reading already has a GPU
  * (LibreHardwareMonitor reports the same card, and listing it twice under two
- * names would only confuse). A failing nvidia-smi costs the GPUs, not the reading.
+ * names would only confuse — so the resident nvidia-smi is stopped then). A
+ * failing nvidia-smi costs the GPUs, not the reading.
  */
-async function WithNvidia(
-  Reading: TemperatureReading,
-  Platform: string
-): Promise<TemperatureReading> {
-  if (Reading.Sensors.some((Sensor) => Sensor.Kind === 'gpu')) return Reading;
-  const [Error_, Gpus] = await ReadNvidiaTemperatures(Platform);
+async function WithNvidia(Reading: TemperatureReading): Promise<TemperatureReading> {
+  if (Reading.Sensors.some((Sensor) => Sensor.Kind === 'gpu')) {
+    Nvidia.Stop();
+    return Reading;
+  }
+  const [Error_, Gpus] = await Nvidia.Read();
   if (Error_ || !Gpus || !Gpus.length) return Reading;
   return {
     Backend: Reading.Backend ? `${Reading.Backend}+nvidia-smi` : 'nvidia-smi',
@@ -78,8 +80,7 @@ export async function CollectTemperatures(
 
   const [Error_, Raw] = Outcome;
   if (Error_ || !Raw) return { Ok: false, Error: Error_ || new Error('Temperature sample failed') };
-  const Reading =
-    Platform === 'win32' || Platform === 'linux' ? await WithNvidia(Raw, Platform) : Raw;
+  const Reading = Platform === 'win32' || Platform === 'linux' ? await WithNvidia(Raw) : Raw;
   return {
     Ok: true,
     Reading: {
@@ -90,7 +91,8 @@ export async function CollectTemperatures(
   };
 }
 
-/** Release resident sampler state (the Windows PowerShell host). */
+/** Release resident sampler state: the nvidia-smi loop. */
 export function DisposeTemperatureSamplers(): void {
+  Nvidia.Stop();
   DisposeWindowsTemperatures();
 }

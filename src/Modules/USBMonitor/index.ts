@@ -13,9 +13,23 @@ import {
 
 const Logger = CreateLogger('USBMonitor');
 
-const WebUSBInstance = new WebUSB({
-  allowAllDevices: true,
-});
+// Windows Plug and Play state is a WMI query, so it is not re-read on every
+// device-list send (the list is resent every minute as a reconciliation channel).
+// It is read when anything was plugged or unplugged since the last read, and at
+// least this often otherwise — which is how a driver that fails without a plug
+// event (code 43 after a crash) still reaches the server.
+const PNP_REFRESH_MS = 5 * 60 * 1000;
+
+// Created on Start(), not at import. Constructing WebUSB is cheap, but listening
+// to it starts usb's native hotplug watcher, and the module used to do both — and
+// run the Windows PnP query — the moment anything imported it, on a client that
+// was not even adopted yet.
+let WebUSBInstance: WebUSB | null = null;
+
+function Instance(): WebUSB {
+  if (!WebUSBInstance) WebUSBInstance = new WebUSB({ allowAllDevices: true });
+  return WebUSBInstance;
+}
 
 /**
  * The subset of a usb 3.x `UsbDevice` this module reads — from `getDevices()` and
@@ -126,6 +140,11 @@ const Internal = {
   // Windows only: the last PnP snapshot, so a hotplug event (which cannot wait
   // for a PowerShell query) still says what is known. Null until the first one.
   LastWindowsStates: null as PnPUSBEntry[] | null,
+  // When the PnP snapshot was taken, and whether anything was plugged or
+  // unplugged since.
+  WindowsStatesAt: -Infinity,
+  WindowsStatesStale: true,
+  Now: (): number => Date.now(),
 
   Platform: (): NodeJS.Platform => os.platform(),
   QueryWindowsUSBStates,
@@ -155,20 +174,98 @@ const Internal = {
 
 export { DescribeProblem };
 
+type Listener = (device: USBDevicePayload) => void;
+
+const Subscribers = {
+  Connect: [] as Listener[],
+  Disconnect: [] as Listener[],
+  Topology: [] as Array<() => void>,
+};
+
+function Dispatch<T extends unknown[]>(Handlers: Array<(...Args: T) => void>, ...Args: T): void {
+  for (const Handler of Handlers) {
+    try {
+      Handler(...Args);
+    } catch (error) {
+      Logger.error('USB listener failed:', error);
+    }
+  }
+}
+
+function HandleConnect(Event: USBConnectionEvent): void {
+  Internal.WindowsStatesStale = true;
+  Logger.log('USB device connected');
+  const Device = Internal.FormatEventDevice(Event.device);
+  Dispatch(Subscribers.Connect, Device);
+  Dispatch(Subscribers.Topology);
+}
+
+function HandleDisconnect(Event: USBConnectionEvent): void {
+  Internal.WindowsStatesStale = true;
+  Logger.log('USB device disconnected');
+  const Device = Internal.FormatEventDevice(Event.device);
+  Dispatch(Subscribers.Disconnect, Device);
+  Dispatch(Subscribers.Topology);
+}
+
+let Watching = false;
+
+/** The Windows PnP states to report with this list: cached unless due. */
+async function WindowsStates(): Promise<PnPUSBEntry[] | null> {
+  const Due =
+    Internal.WindowsStatesStale ||
+    Internal.LastWindowsStates === null ||
+    Internal.Now() - Internal.WindowsStatesAt >= PNP_REFRESH_MS;
+  if (!Due) return Internal.LastWindowsStates;
+  // Cleared before the query: an event during it marks the result stale again.
+  Internal.WindowsStatesStale = false;
+  const [StateError, States] = await Internal.QueryWindowsUSBStates();
+  if (StateError) Logger.warn('Could not read USB device states:', StateError);
+  Internal.LastWindowsStates = StateError ? null : States;
+  Internal.WindowsStatesAt = Internal.Now();
+  // A failed read is retried at the next send rather than after the full interval.
+  if (StateError) Internal.WindowsStatesStale = true;
+  return Internal.LastWindowsStates;
+}
+
 export const Manager = {
+  /**
+   * Start watching for hotplugs. Idempotent. Called when the client starts its
+   * server connection; an unadopted client never watches.
+   */
+  Start(): void {
+    if (Watching) return;
+    Watching = true;
+    Internal.WindowsStatesStale = true;
+    const Usb = Instance();
+    Usb.addEventListener('connect', HandleConnect);
+    Usb.addEventListener('disconnect', HandleDisconnect);
+  },
+
+  /** Stop watching. Removing the last listener stops usb's native hotplug watcher. */
+  Stop(): void {
+    if (!Watching) return;
+    Watching = false;
+    const Usb = WebUSBInstance;
+    if (!Usb) return;
+    try {
+      Usb.removeEventListener('connect', HandleConnect);
+      Usb.removeEventListener('disconnect', HandleDisconnect);
+    } catch (error) {
+      Logger.debug('Stopping the USB hotplug watcher failed', error);
+    }
+  },
+
   async GetUSBDevices(): Promise<Result<USBDevicePayload[]>> {
     try {
-      const Devices = await WebUSBInstance.getDevices();
+      const Devices = await Instance().getDevices();
       let FormattedDevices = Devices.filter((Device) => !IsRootHub(Device)).map(
         Internal.FormatDevice
       );
       if (Internal.Platform() === 'win32') {
-        const [StateError, States] = await Internal.QueryWindowsUSBStates();
-        if (StateError) Logger.warn('Could not read USB device states:', StateError);
-        Internal.LastWindowsStates = StateError ? null : States;
-        FormattedDevices = ApplyWindowsStates(FormattedDevices, Internal.LastWindowsStates);
+        FormattedDevices = ApplyWindowsStates(FormattedDevices, await WindowsStates());
       }
-      Logger.log(`Found ${FormattedDevices.length} USB devices`);
+      Logger.debug(`Found ${FormattedDevices.length} USB devices`);
       return [null, FormattedDevices];
     } catch (error) {
       Logger.error('Error getting USB devices:', error);
@@ -177,15 +274,11 @@ export const Manager = {
   },
 
   OnUSBConnect(callback: USBDeviceListener): void {
-    WebUSBInstance.addEventListener('connect', function (Event) {
-      callback(Internal.FormatEventDevice((Event as USBConnectionEvent).device));
-    });
+    Subscribers.Connect.push(callback);
   },
 
   OnUSBDisconnect(callback: USBDeviceListener): void {
-    WebUSBInstance.addEventListener('disconnect', function (Event) {
-      callback(Internal.FormatEventDevice((Event as USBConnectionEvent).device));
-    });
+    Subscribers.Disconnect.push(callback);
   },
 
   /**
@@ -196,19 +289,9 @@ export const Manager = {
    * these (2.x needed libusb's attach/detach for devices it could not open).
    */
   OnUSBTopologyChange(callback: () => void): void {
-    WebUSBInstance.addEventListener('connect', () => callback());
-    WebUSBInstance.addEventListener('disconnect', () => callback());
+    Subscribers.Topology.push(callback);
   },
 };
 
 export const _internal = Internal;
-
-Manager.OnUSBConnect(() => {
-  Logger.log('USB device connected');
-});
-
-Manager.OnUSBDisconnect(() => {
-  Logger.log('USB device disconnected');
-});
-
-void Manager.GetUSBDevices();
+export const _constants = { PNP_REFRESH_MS };
