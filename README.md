@@ -1,48 +1,61 @@
-<br />
 <div align="center">
 
-<a href="https://github.com/ShowTrak/ShowTrakClient">
-    <img src="https://tkw.bz/img/ShowTrak.png" alt="Logo" width="120" height="120">
-</a>
+<a href="https://showtrak.co.uk/software/client"><img src=".github/readme/logo.png" alt="ShowTrak Client logo" width="128" height="128"></a>
 
-<h3 align="center">ShowTrak Client</h3>
-  <p align="center">
-    Simple, Free LAN PC Monitoring for arcade style environments.
-    <br />
-    <a href="https://github.com/ShowTrak"><strong>View ShowTrak Server (Main Project) »</strong></a>
-    <br />
-    <br />
-    <a href="https://github.com/ShowTrak/ShowTrakClient/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
-    &middot;
-    <a href="https://github.com/ShowTrak/ShowTrakClient/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
-  </p>
+# ShowTrak Client
+
+**The lightweight app that lets ShowTrak Server watch and control a computer.**
+
+[Website](https://showtrak.co.uk/software/client) · [Download](https://showtrak.co.uk/software/client/downloads) · [Documentation](https://showtrak.co.uk/docs/client) · [Discord](https://discord.gg/DACmwsbSGW)
+
+[![Windows][badge-windows]](https://showtrak.co.uk/software/client/downloads) [![macOS][badge-macos]](https://showtrak.co.uk/software/client/downloads) [![Linux][badge-linux]](https://showtrak.co.uk/software/client/downloads) [![Raspberry Pi][badge-raspberrypi]](https://showtrak.co.uk/software/client/downloads)
+
 </div>
 
-## About The Project
+Install ShowTrak Client on every computer in your show: media playback machines, game PCs,
+kiosks, control computers. It reports their health to
+[ShowTrak Server](https://github.com/ShowTrak/ShowTrakServer) and carries out the actions you send
+from it, so you can look after the whole rig from one screen.
 
-Please see the ShowTrak repo <a href="https://github.com/ShowTrak"><strong>here</strong></a>
+## Key features
+
+- **Set and forget**: runs quietly in the background, starts with the computer and reconnects by itself. Built to run unattended for weeks, with a small footprint.
+- **Finds the server for you**: discovers ShowTrak Server on the local network, so there is nothing to type in.
+- **Reports what matters**: CPU, memory, temperatures, storage, displays, audio devices, USB devices, network connections, battery and power, and which applications are running or not responding.
+- **Runs your scripts**: restart an app, reboot, shut down or anything else you script, with the output streamed back live.
+- **Run on startup, safely**: run a script when the computer boots, after an on-screen countdown you can cancel.
+- **Identify**: flash a full-screen message on every display so you can find the machine in the rack.
+- **No desktop needed**: on Linux it can run as a background service on machines without a screen.
+- **Automatic updates**: choose the Stable or Beta channel and stay up to date.
+
+## Getting started
+
+1. Set up [ShowTrak Server](https://showtrak.co.uk/software/server/downloads) first.
+2. [Download ShowTrak Client](https://showtrak.co.uk/software/client/downloads) and install it on each computer you want to monitor.
+3. It appears in ShowTrak Server automatically. Adopt it with one click.
+
+See the [ShowTrak Client guide](https://showtrak.co.uk/docs/client) for more.
+
+## Part of ShowTrak
+
+| App                                                           | What it does                                                                |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| **[ShowTrak Server](https://showtrak.co.uk/software/server)** | Monitor and control every computer and show device from one screen.         |
+| **[ShowTrak Client](https://showtrak.co.uk/software/client)** | The lightweight app that lets ShowTrak Server watch and control a computer. |
+| **[ShowTrak Timers](https://showtrak.co.uk/software/timers)** | Show timers run from the desk, a Stream Deck, QLab or any browser.          |
+| **[ShowTrak Portal](https://showtrak.co.uk)**                 | Show reports, schedules and team collaboration for live productions.        |
+
+Find everything at **[showtrak.co.uk](https://showtrak.co.uk)**.
 
 ## Support
 
-Join our [Discord Server](https://discord.gg/DACmwsbSGW) for support
+Questions, ideas or problems? Join the [ShowTrak Discord](https://discord.gg/DACmwsbSGW) or [open an issue](https://github.com/ShowTrak/ShowTrakClient/issues).
 
-## Built With
+## Licence
 
-[![Electron][Electronjs.org]][Electron-url] [![Bootstrap][Bootstrap.com]][Bootstrap-url]
-[![JQuery][JQuery.com]][JQuery-url]
+ShowTrak Client is free and open source under the [GNU AGPL-3.0](LICENSE).
 
-## Getting Started
-
-The following instructions are for installing ShowTrak Client, To install the Server application please visit [ShowTrak Server](https://github.com/ShowTrak/ShowTrakServer)
-
-### Installation
-
-1. Download the installer from the releases page
-2. Run the installer.
-
-[Electronjs.org]: https://img.shields.io/badge/Electron-563D7C?style=for-the-badge&logo=electron&logoColor=white
-[Electron-url]: https://www.electronjs.org/
-[Bootstrap.com]: https://img.shields.io/badge/Bootstrap-563D7C?style=for-the-badge&logo=bootstrap&logoColor=white
-[Bootstrap-url]: https://getbootstrap.com
-[JQuery.com]: https://img.shields.io/badge/jQuery-0769AD?style=for-the-badge&logo=jquery&logoColor=white
-[JQuery-url]: https://jquery.com
+[badge-windows]: https://img.shields.io/badge/Windows-0078D4?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTAgMy40NDkgOS43NSAyLjF2OS40NTFIMG0xMC45NDktOS42MDJMMjQgMHYxMS40SDEwLjk0OU0wIDEyLjZoOS43NXY5LjQ1MUwwIDIwLjY5OU0xMC45NDkgMTIuNkgyNFYyNGwtMTIuOS0xLjgwMSIvPjwvc3ZnPg%3D%3D
+[badge-macos]: https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white
+[badge-linux]: https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black
+[badge-raspberrypi]: https://img.shields.io/badge/Raspberry%20Pi-A22846?style=for-the-badge&logo=raspberrypi&logoColor=white
