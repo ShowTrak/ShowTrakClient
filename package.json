@@ -62,17 +62,17 @@
     "@eslint/js": "^10.0.1",
     "@eslint/markdown": "^8.0.3",
     "@types/auto-launch": "^5.0.5",
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "c8": "^12.0.0",
-    "electron": "^45.0.0",
+    "electron": "^45.3.2",
     "esbuild": "^0.28.2",
-    "eslint": "^10.13.0",
+    "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
-    "globals": "^17.13.0",
+    "globals": "^17.14.0",
     "husky": "^9.1.7",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "typescript": "~5.9",
-    "typescript-eslint": "^8.72.0"
+    "typescript-eslint": "^8.72.2"
   },
   "dependencies": {
     "@showtrak/protocol": "file:./shared",
@@ -82,7 +82,7 @@
     "electron-updater": "^6.8.11",
     "picocolors": "^1.1.1",
     "socket.io-client": "^4.8.4",
-    "usb": "^3.2.1",
+    "usb": "^3.3.0",
     "uuid": "^11.1.1"
   }
 }
