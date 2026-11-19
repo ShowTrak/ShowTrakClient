@@ -63,3 +63,34 @@ jobs:
       - name: Coverage (reported, non-gating)
         run: npm run test:coverage --ignore-scripts
         continue-on-error: true
+
+  # The Raspberry Pi build runs this code on ARM64 Linux, with the linux-arm64
+  # usb binary; the job above tests on x64 only.
+  test-arm64:
+    name: Test (ARM64 Linux)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev
+
+      - name: Install dependencies
+        run: npm ci
+
+      # pretest runs the full build, so this also covers `npm run build`.
+      - name: Test
+        run: npm test

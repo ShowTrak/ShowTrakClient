@@ -114,7 +114,12 @@ jobs:
         # Linux is pinned, not ubuntu-latest: any native addon compiled here
         # needs the runner's glibc or newer on the user's machine, so a newer
         # image would quietly raise the oldest distro the packages run on.
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        #
+        # ubuntu-22.04-arm builds the ARM64 Linux packages (Raspberry Pi and other
+        # ARM boards). It is older than the x64 image on purpose: Raspberry Pi OS 12
+        # (Bookworm) has glibc 2.36, so packages built against 24.04's 2.39 would not
+        # load there; 22.04's 2.35 covers Bookworm, Trixie and Ubuntu 22.04+.
+        os: [ubuntu-24.04, ubuntu-22.04-arm, macos-latest, windows-latest]
 
     runs-on: ${{ matrix.os }}
     env:
@@ -134,11 +139,14 @@ jobs:
           node-version: 24
           cache: npm
 
+      # rpm for the rpm maker, zip for the zip maker (it runs the zip command),
+      # binutils for readelf in the package check. The x64 image already has
+      # the last two; the ARM64 image carries fewer tools, so they are named.
       - name: Install Linux packaging tools
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm libudev-dev
+          sudo apt-get install -y rpm libudev-dev zip binutils
 
       - name: Install dependencies
         run: npm ci
@@ -280,6 +288,14 @@ jobs:
           rm -f "$RUNNER_TEMP/signing-cert.p12"
           rm -f "$RUNNER_TEMP/AuthKey_${{ secrets.APPLE_API_KEY_ID }}.p8"
           security delete-keychain "$RUNNER_TEMP/app-signing.keychain-db" || true
+
+      # The ARM64 packages are the Raspberry Pi builds. A native addon for the
+      # wrong machine, or one needing a newer glibc than Raspberry Pi OS has,
+      # packages without complaint and only fails on the Pi, so check every
+      # binary before anything is uploaded (scripts/check-linux-packages.sh).
+      - name: Check the Linux packages
+        if: runner.os == 'Linux'
+        run: bash scripts/check-linux-packages.sh
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
