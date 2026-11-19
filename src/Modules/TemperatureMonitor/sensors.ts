@@ -64,8 +64,9 @@ export function KindFromDriver(Driver: unknown): TemperatureSensorKind {
   }
   if (/^(amdgpu|nouveau|radeon|i915|xe|gpu[_-]thermal)/.test(Name)) return 'gpu';
   if (/^(nvme|drivetemp)/.test(Name)) return 'storage';
-  // The ACPI thermal zone and the chipset (PCH) both speak for the board.
-  if (/^(acpitz|pch_)/.test(Name)) return 'system';
+  // The ACPI thermal zone and the chipset (Intel's PCH, the Raspberry Pi 5's
+  // RP1 I/O chip) all speak for the board.
+  if (/^(acpitz|pch_|rp1_adc)/.test(Name)) return 'system';
   if (/^bat/.test(Name)) return 'battery';
   return 'other';
 }

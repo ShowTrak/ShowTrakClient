@@ -60,6 +60,7 @@ test('KindFromDriver maps Linux drivers and zones', () => {
   for (const driver of ['nvme', 'drivetemp'])
     assert.equal(KindFromDriver(driver), 'storage', driver);
   assert.equal(KindFromDriver('acpitz'), 'system');
+  assert.equal(KindFromDriver('rp1_adc'), 'system');
   assert.equal(KindFromDriver('BAT0'), 'battery');
   assert.equal(KindFromDriver('iwlwifi_1'), 'other');
 });
@@ -369,6 +370,45 @@ test('Linux: hwmon and thermal zones, with labels, kinds and no double-counted z
     { Name: 'x86_pkg_temp', Kind: 'cpu', Celsius: 62 },
   ]);
   assert.deepEqual(Backends, ['hwmon', 'thermal']);
+});
+
+test('Linux (Raspberry Pi 5): the CPU zone is not listed twice under its hwmon spelling', () => {
+  const { ReadLinuxTemperatures } = loadLinux();
+  // A Pi 5 with the Active Cooler, on Raspberry Pi OS. The zone is "cpu-thermal"
+  // (from the device tree) and the kernel publishes it through hwmon as
+  // "cpu_thermal"; rpi_volt (the under-voltage alarm) and pwmfan carry no
+  // temperature.
+  const reader = sysfs({
+    '/sys/class/hwmon/hwmon0/name': 'cpu_thermal',
+    '/sys/class/hwmon/hwmon0/temp1_input': '52650',
+    '/sys/class/hwmon/hwmon1/name': 'rp1_adc',
+    '/sys/class/hwmon/hwmon1/in1_input': '1489',
+    '/sys/class/hwmon/hwmon1/temp1_input': '47120',
+    '/sys/class/hwmon/hwmon2/name': 'rpi_volt',
+    '/sys/class/hwmon/hwmon2/in0_lcrit_alarm': '0',
+    '/sys/class/hwmon/hwmon3/name': 'pwmfan',
+    '/sys/class/hwmon/hwmon3/fan1_input': '2989',
+    '/sys/class/thermal/thermal_zone0/type': 'cpu-thermal',
+    '/sys/class/thermal/thermal_zone0/temp': '52650',
+    '/sys/class/thermal/cooling_device0/type': 'pwm-fan',
+  });
+  assert.deepEqual(ReadLinuxTemperatures(reader), {
+    Sensors: [
+      { Name: 'cpu_thermal temp1', Kind: 'cpu', Celsius: 52.65 },
+      { Name: 'rp1_adc temp1', Kind: 'system', Celsius: 47.12 },
+    ],
+    Backends: ['hwmon'],
+  });
+
+  // A kernel built without hwmon for thermal zones still reports the zone.
+  const zoneOnly = sysfs({
+    '/sys/class/thermal/thermal_zone0/type': 'cpu-thermal',
+    '/sys/class/thermal/thermal_zone0/temp': '48300',
+  });
+  assert.deepEqual(ReadLinuxTemperatures(zoneOnly), {
+    Sensors: [{ Name: 'cpu-thermal', Kind: 'cpu', Celsius: 48.3 }],
+    Backends: ['thermal'],
+  });
 });
 
 test('Linux: a machine with neither class reads as no sensors, not an error', () => {

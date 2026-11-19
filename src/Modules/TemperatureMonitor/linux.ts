@@ -9,7 +9,10 @@
 // Both are world-readable, so no tool or privilege is needed. Most thermal zones
 // are also published through hwmon under the same name (acpitz is the usual
 // one), so a zone whose type an hwmon driver already reported is skipped rather
-// than listed twice.
+// than listed twice. "The same name" allows for one rewrite: hwmon names may not
+// contain "-", so the kernel publishes a zone typed "cpu-thermal" as hwmon
+// "cpu_thermal". That is how every Raspberry Pi (and most ARM boards, whose
+// zone types come from the device tree) names its CPU sensor.
 
 import path from 'node:path';
 
@@ -37,6 +40,11 @@ function ListDir(Reader: SysfsReader, Directory: string): string[] {
     // A missing class directory is a machine without that kind of sensor.
     return [];
   }
+}
+
+/** A driver or zone name as hwmon would spell it: lower case, "-" as "_". */
+function HwmonKey(Name: string): string {
+  return Name.toLowerCase().replace(/-/g, '_');
 }
 
 /** Natural order, so hwmon10 follows hwmon9 and temp10 follows temp9. */
@@ -78,7 +86,7 @@ export function ReadLinuxTemperatures(
       });
       Found = true;
     }
-    if (Found) Drivers.add(Driver.toLowerCase());
+    if (Found) Drivers.add(HwmonKey(Driver));
   }
   if (Sensors.length) Backends.push('hwmon');
 
@@ -88,7 +96,7 @@ export function ReadLinuxTemperatures(
     .sort(ByNumber)) {
     const Directory = path.posix.join(ThermalRoot, Entry);
     const Type = ReadTrimmed(Reader, path.posix.join(Directory, 'type')) || Entry;
-    if (Drivers.has(Type.toLowerCase())) continue;
+    if (Drivers.has(HwmonKey(Type))) continue;
     const Celsius = Millidegrees(ReadTrimmed(Reader, path.posix.join(Directory, 'temp')));
     if (Celsius === null) continue;
     Sensors.push({ Name: Type, Kind: KindFromDriver(Type), Celsius });
