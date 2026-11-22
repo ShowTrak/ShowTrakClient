@@ -1,16 +1,15 @@
 // IdentifyOverlay
 // Renders a full-screen, always-on-top "identify" overlay on every connected
-// display so an operator can physically locate this machine. The overlay is a
-// borderless BrowserWindow per display (not true fullscreen/kiosk) so it never
-// forces a Space switch or crashes other full-screen apps. Esc or a click
-// dismisses it.
-import { BrowserWindow, screen, type Display, type WebPreferences } from 'electron';
+// display so an operator can physically locate this machine: one overlay window
+// (see OverlayWindow) per display. Esc or a click dismisses it.
+import { screen, type BrowserWindow, type Display, type WebPreferences } from 'electron';
 import path from 'path';
 import os from 'os';
 
 import type { IdentifyOverlayDetails, IdentifyOverlayQuery } from '@showtrak/protocol/client';
 import type { IdentifyOverlayPayload } from '../../types/client';
 import { CreateLogger } from '../Logger';
+import { CreateOverlayWindow, DEFAULT_OVERLAY_WEB_PREFERENCES } from '../OverlayWindow';
 import { ToQueryString } from '../Utils';
 
 const Logger = CreateLogger('IdentifyOverlay');
@@ -28,12 +27,7 @@ interface ConfigureOptions {
 }
 
 let overlayWindows: BrowserWindow[] = [];
-let baseWebPreferences: WebPreferences = {
-  contextIsolation: true,
-  sandbox: true,
-  nodeIntegration: false,
-  webSecurity: true,
-};
+let baseWebPreferences: WebPreferences = DEFAULT_OVERLAY_WEB_PREFERENCES;
 let onUserClose: (() => void) | null = null;
 
 const OVERLAY_HTML = path.join(__dirname, '..', '..', 'UI', 'identify-overlay.html');
@@ -110,43 +104,13 @@ export const Manager = {
         const WindowBounds = WorkAreaBounds;
         const ScreenIndex = displayIndex + 1;
         const ResolutionLabel = `Screen ${ScreenIndex} (${NativeWidth}x${NativeHeight})`;
-        const win = new BrowserWindow({
-          x: WindowBounds.x,
-          y: WindowBounds.y,
-          width: WindowBounds.width,
-          height: WindowBounds.height,
-          frame: false,
-          transparent: false,
-          backgroundColor: '#05070d',
-          resizable: false,
-          movable: false,
-          minimizable: false,
-          maximizable: false,
-          fullscreenable: false,
-          skipTaskbar: true,
-          hasShadow: false,
-          show: false,
-          alwaysOnTop: true,
-          focusable: true,
-          webPreferences: {
-            ...baseWebPreferences,
-            preload: OVERLAY_PRELOAD,
-            devTools: false,
-          },
+        const win = CreateOverlayWindow({
+          Bounds: WindowBounds,
+          HasShadow: false,
+          WebPreferences: baseWebPreferences,
+          Preload: OVERLAY_PRELOAD,
+          Logger,
         });
-
-        // Float above everything, including other apps' full-screen windows,
-        // without stealing the current Space.
-        try {
-          win.setAlwaysOnTop(true, 'screen-saver');
-        } catch (e) {
-          Logger.warn('setAlwaysOnTop failed', e);
-        }
-        try {
-          win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-        } catch (_err) {
-          // Ignore platform-specific failures here; the overlay still works.
-        }
 
         // What the overlay page reads (src/UI/js/app/identify-overlay.ts).
         win.loadFile(OVERLAY_HTML, {

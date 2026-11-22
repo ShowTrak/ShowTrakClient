@@ -5,11 +5,12 @@
 // (Cancel button, Esc, Shift, or clicking the window). This is the safety net
 // against a destructive script (e.g. shutdown) trapping an auto-launching
 // machine in a boot loop.
-import { BrowserWindow, screen, type WebPreferences } from 'electron';
+import { screen, type BrowserWindow, type WebPreferences } from 'electron';
 import path from 'path';
 
 import type { LaunchCountdownQuery } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Logger';
+import { CreateOverlayWindow, DEFAULT_OVERLAY_WEB_PREFERENCES } from '../OverlayWindow';
 import { ToQueryString } from '../Utils';
 
 const Logger = CreateLogger('LaunchCountdownOverlay');
@@ -25,12 +26,7 @@ interface ShowOptions {
 let overlayWindow: BrowserWindow | null = null;
 let currentResolve: ((outcome: LaunchCountdownOutcome) => void) | null = null;
 let expiryTimer: NodeJS.Timeout | null = null;
-let baseWebPreferences: WebPreferences = {
-  contextIsolation: true,
-  sandbox: true,
-  nodeIntegration: false,
-  webSecurity: true,
-};
+let baseWebPreferences: WebPreferences = DEFAULT_OVERLAY_WEB_PREFERENCES;
 
 const OVERLAY_HTML = path.join(__dirname, '..', '..', 'UI', 'launch-countdown-overlay.html');
 const OVERLAY_PRELOAD = path.join(__dirname, '..', '..', 'launch-countdown-preload.js');
@@ -95,29 +91,12 @@ export const Manager = {
       }
 
       try {
-        overlayWindow = new BrowserWindow({
-          x: bounds.x,
-          y: bounds.y,
-          width: bounds.width,
-          height: bounds.height,
-          frame: false,
-          transparent: false,
-          backgroundColor: '#05070d',
-          resizable: false,
-          movable: false,
-          minimizable: false,
-          maximizable: false,
-          fullscreenable: false,
-          skipTaskbar: true,
-          hasShadow: true,
-          show: false,
-          alwaysOnTop: true,
-          focusable: true,
-          webPreferences: {
-            ...baseWebPreferences,
-            preload: OVERLAY_PRELOAD,
-            devTools: false,
-          },
+        overlayWindow = CreateOverlayWindow({
+          Bounds: bounds,
+          HasShadow: true,
+          WebPreferences: baseWebPreferences,
+          Preload: OVERLAY_PRELOAD,
+          Logger,
         });
       } catch (Err) {
         Logger.error('Failed to create launch countdown window', Err);
@@ -126,17 +105,6 @@ export const Manager = {
         // script, so treat inability to show the overlay as a cancellation.
         currentResolve = null;
         return resolve('cancelled');
-      }
-
-      try {
-        overlayWindow.setAlwaysOnTop(true, 'screen-saver');
-      } catch (Err) {
-        Logger.warn(`setAlwaysOnTop failed: ${(Err as Error).message}`);
-      }
-      try {
-        overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-      } catch (_err) {
-        // Ignore platform-specific failures; the overlay still works.
       }
 
       // What the countdown page reads (src/UI/js/app/launch-countdown.ts).
