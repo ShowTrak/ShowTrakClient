@@ -113,7 +113,7 @@ const config: ForgeConfig = {
       /^\/\.vscode($|\/)/,
       // Config & docs.
       /^\/tsconfig.*\.json$/,
-      /^\/eslint\.config\.mjs$/,
+      /^\/eslint\.config\.ts$/,
       /^\/\.prettier/,
       /^\/\.gitignore$/,
       /^\/\.gitattributes$/,

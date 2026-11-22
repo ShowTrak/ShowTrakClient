@@ -1,14 +1,14 @@
-// Typechecks forge.config.ts, the TypeScript config at the repo root. Nothing
-// here is compiled: Electron Forge loads the config through jiti, which
-// transpiles it on the fly, so this program is typecheck-only (noEmit) and part
-// of `npm run typecheck`.
+// Typechecks the TypeScript configs at the repo root: forge.config.ts and
+// eslint.config.ts. Nothing here is compiled. Electron Forge and ESLint each load
+// their config through jiti, which transpiles it on the fly, so this program is
+// typecheck-only (noEmit) and part of `npm run typecheck`.
 //
-// `module: preserve` + bundler resolution model how jiti actually loads the
-// file: ESM syntax in a package without "type": "module", importing CommonJS
-// and ESM-only packages alike. Under node16 rules TypeScript would treat it as
-// CommonJS and reject the ESM-only imports (@electron/fuses,
-// @electron-forge/plugin-fuses) that jiti handles fine. isolatedModules matches
-// jiti transpiling the file on its own.
+// `module: preserve` + bundler resolution model how jiti actually loads these
+// files: ESM syntax in a package without "type": "module", importing CommonJS
+// and ESM-only packages alike. Under node16 rules TypeScript would treat both
+// files as CommonJS and reject the ESM-only imports (@electron/fuses,
+// @electron-forge/plugin-fuses, @eslint/markdown) that jiti handles fine.
+// isolatedModules matches jiti transpiling each file on its own.
 {
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -20,5 +20,5 @@
     "sourceMap": false,
     "types": ["node"]
   },
-  "include": ["forge.config.ts"]
+  "include": ["forge.config.ts", "eslint.config.ts"]
 }

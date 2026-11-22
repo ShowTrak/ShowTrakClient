@@ -3,8 +3,13 @@ import globals from 'globals';
 import markdown from '@eslint/markdown';
 import prettier from 'eslint-config-prettier';
 import tseslint from 'typescript-eslint';
+import type { Linter } from 'eslint';
 
 import { defineConfig } from 'eslint/config';
+
+// ESLint loads this file through jiti (the `jiti` devDependency), which
+// transpiles it on the fly. tsconfig.tooling.json typechecks it as part of
+// `npm run typecheck`.
 
 // A catch binding named after a built-in error constructor shadows that
 // constructor for the whole block, so a `throw new Error(...)` inside the
@@ -14,7 +19,7 @@ import { defineConfig } from 'eslint/config';
 // undefined/NaN/Infinity/eval/arguments — and `no-shadow` with
 // builtinGlobals:true is far too broad here, so this is targeted at the exact
 // shape. `Err` is the convention used everywhere else in the codebase.
-const NoShadowedErrorCatch = {
+const NoShadowedErrorCatch: Linter.RulesRecord = {
   'no-restricted-syntax': [
     'error',
     {
@@ -39,7 +44,6 @@ export default defineConfig([
       'out/**',
       // Types-only protocol submodule; linted in its own repo.
       'shared/**',
-      'forge.config.mjs',
       '.vscode/**',
     ],
   },
