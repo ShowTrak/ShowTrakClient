@@ -225,6 +225,18 @@ function extrasOf(
   };
 }
 
+/** The whole list, as a resync, or a change to a server without deltas, reports it. */
+function fullReport(snapshot: ApplicationsSnapshot): RunningApplicationsSnapshot {
+  return {
+    SampledAt: snapshot.SampledAt,
+    TotalCount: snapshot.TotalCount,
+    Truncated: snapshot.Truncated,
+    Items: snapshot.Items,
+    Status: currentStatus,
+    ...extrasOf(snapshot),
+  };
+}
+
 function normalizeStatus(status: { State?: unknown; Message?: unknown }): ProcessMonitorStatus {
   const rawState =
     typeof status?.State === 'string' && status.State.trim().length > 0
@@ -311,14 +323,7 @@ async function emitSnapshot(force = false): Promise<void> {
     if (now - lastFullEmitAt >= FULL_RESYNC_INTERVAL_MS) {
       lastEmitAt = now;
       lastFullEmitAt = now;
-      activeSocket.emit('RunningApplications', {
-        SampledAt: snapshot.SampledAt,
-        TotalCount: snapshot.TotalCount,
-        Truncated: snapshot.Truncated,
-        Items: snapshot.Items,
-        Status: currentStatus,
-        ...extrasOf(snapshot),
-      });
+      activeSocket.emit('RunningApplications', fullReport(snapshot));
       return;
     }
     if (now - lastEmitAt >= KEEPALIVE_INTERVAL_MS) {
@@ -372,14 +377,7 @@ async function emitSnapshot(force = false): Promise<void> {
   lastItems = snapshot.Items;
   lastEmitAt = now;
   lastFullEmitAt = now;
-  activeSocket.emit('RunningApplications', {
-    SampledAt: snapshot.SampledAt,
-    TotalCount: snapshot.TotalCount,
-    Truncated: snapshot.Truncated,
-    Items: snapshot.Items,
-    Status: currentStatus,
-    ...extrasOf(snapshot),
-  });
+  activeSocket.emit('RunningApplications', fullReport(snapshot));
 }
 
 // A sample that overruns the poll interval must not queue another behind it.
