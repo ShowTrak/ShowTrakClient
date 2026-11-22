@@ -6,7 +6,8 @@ import type { VariablesState } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Logger';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as WindowsEnvironment } from '../WindowsEnvironment';
-import { IsRecord, type Unverified } from '../Utils';
+import type { Unverified } from '../Utils';
+import { IsRecord } from '@showtrak/protocol/common';
 
 const Logger = CreateLogger('Variables');
 

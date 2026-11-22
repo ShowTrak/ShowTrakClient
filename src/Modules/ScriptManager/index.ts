@@ -14,8 +14,9 @@ import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as VariableStore } from '../Variables';
-import { ErrorMessage, IsRecord, type Unverified } from '../Utils';
+import { ErrorMessage, type Unverified } from '../Utils';
 import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
+import { IsRecord, ParseArgumentString } from '@showtrak/protocol/common';
 
 const Logger = CreateLogger('ScriptManager');
 
@@ -304,73 +305,6 @@ const Internal = {
       RelativePath,
       ScriptPath: TargetFile,
     };
-  },
-
-  // Parse a shell-like argument string into argv tokens.
-  // Supports spaces, single/double quotes, and backslash escaping.
-  ParseArgumentString(value: unknown): string[] {
-    const input = String(value || '').trim();
-    if (!input) return [];
-
-    const args: string[] = [];
-    let current = '';
-    let inSingle = false;
-    let inDouble = false;
-    let escaping = false;
-
-    const pushCurrent = () => {
-      if (current.length > 0) {
-        args.push(current);
-        current = '';
-      }
-    };
-
-    for (let i = 0; i < input.length; i += 1) {
-      const ch = input[i] as string;
-
-      if (escaping) {
-        current += ch;
-        escaping = false;
-        continue;
-      }
-
-      if (ch === '\\') {
-        escaping = true;
-        continue;
-      }
-
-      if (inSingle) {
-        if (ch === "'") inSingle = false;
-        else current += ch;
-        continue;
-      }
-
-      if (inDouble) {
-        if (ch === '"') inDouble = false;
-        else current += ch;
-        continue;
-      }
-
-      if (ch === "'") {
-        inSingle = true;
-        continue;
-      }
-      if (ch === '"') {
-        inDouble = true;
-        continue;
-      }
-
-      if (/\s/.test(ch)) {
-        pushCurrent();
-        continue;
-      }
-
-      current += ch;
-    }
-
-    if (escaping) current += '\\';
-    pushCurrent();
-    return args;
   },
 
   // Resolve how to launch a script based on its file extension and the current
@@ -816,7 +750,10 @@ export const Manager = {
         return [LaunchState.DisabledReason, false];
       }
       const PlatformArgString = Internal.ResolvePlatformArguments(Script);
-      const PlatformArgs = Internal.ParseArgumentString(PlatformArgString);
+      // Split the same way the Server splits a script it runs on its own
+      // machine (@showtrak/protocol/common), so a script gets the same argv
+      // wherever it runs.
+      const PlatformArgs = ParseArgumentString(PlatformArgString);
       Report(30, 'Launching');
       await Internal.RunScriptFile(
         LaunchState.ScriptPath,

@@ -8,7 +8,8 @@ import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
-import { IsRecord, ReadIdentityToken, type Unverified } from '../Utils';
+import { ReadIdentityToken, type Unverified } from '../Utils';
+import { IsRecord } from '@showtrak/protocol/common';
 
 const Logger = CreateLogger('ProfileManager');
 

@@ -47,33 +47,13 @@ export function ErrorMessage(Err: unknown, Fallback = 'Unknown error'): string {
 }
 
 /**
- * Whether a value is an object that is not null and not an array: the shape a
- * JSON object parses to.
- *
- * For reading parsed JSON, which is `any` until something says otherwise. This
- * narrows to Record<string, unknown>, so every field read off the result is
- * `unknown` and still has to be checked before use, where reading the parse
- * result directly would hand each field on as `any`.
- */
-export function IsRecord(Value: unknown): Value is Record<string, unknown> {
-  return typeof Value === 'object' && Value !== null && !Array.isArray(Value);
-}
-
-/**
  * A parsed file or payload that should have the shape `T` but has not been
  * checked: `T`'s keys, every one optional and `unknown`. A record from IsRecord
- * assigns to it, so reads are spelled with the contract's own key names (a typo
- * fails to compile) while each value is still checked before use.
+ * (@showtrak/protocol/common) assigns to it, so reads are spelled with the
+ * contract's own key names (a typo fails to compile) while each value is still
+ * checked before use.
  */
 export type Unverified<T> = { [K in keyof T]?: unknown };
-
-/**
- * Array.isArray, narrowing to unknown[] rather than any[], so the elements of an
- * array that came from parsed JSON are checked before use too.
- */
-export function IsArray(Value: unknown): Value is unknown[] {
-  return Array.isArray(Value);
-}
 
 /**
  * `?name=value&...` for a window's `loadFile({ search })`, in the object's key

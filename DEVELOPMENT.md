@@ -65,7 +65,8 @@ Everything under `src/` is TypeScript; the tests and build scripts are JavaScrip
 `eslint.config.ts` lints the TypeScript with type information, and allows no `any`:
 neither written (`no-explicit-any`) nor arriving untyped from `JSON.parse`, an IPC
 payload or a library (the `no-unsafe-*` rules). Narrow such a value from `unknown`;
-`IsRecord`, `IsArray` and `Unverified<T>` in `src/Modules/Utils` help.
+`IsRecord` and `IsArray` (`@showtrak/protocol/common`) and `Unverified<T>` (in
+`src/Modules/Utils`) help.
 
 ### Where the Types Live
 
@@ -80,8 +81,10 @@ in `shared/`. Its two type entry points are imported with `import type`:
   strings, and the files it keeps in its profile directory (`ClientProfile`,
   `ManualServer` and the state files beside them).
 
-Its third, `@showtrak/protocol/runtime`, is real code shared with ShowTrak Server
-(logging, checksums, the update channel), built by `npm run build:shared`.
+The rest is real code shared with ShowTrak Server and Timers, built by
+`npm run build:shared`: `@showtrak/protocol/runtime` (logging, checksums, the update
+channel, the process guards), `@showtrak/protocol/common` (type guards, script
+argument parsing) and `@showtrak/protocol/electron-main` (the window guards).
 
 `src/types/` holds only what stays inside the main process: the Broadcast bus, the
 managers' results, the typed Socket.IO socket and declarations for untyped packages.

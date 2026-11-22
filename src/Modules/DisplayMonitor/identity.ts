@@ -16,7 +16,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 
 import { Hosts, RunPowerShell } from '../PowerShell';
-import { IsArray, IsRecord } from '../Utils';
+import { IsArray, IsRecord } from '@showtrak/protocol/common';
 import { parseEdid, fingerprintFromEdid } from './edid';
 
 /** A physical monitor as reported by one of the per-platform resolvers. */
