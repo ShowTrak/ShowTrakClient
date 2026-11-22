@@ -1,14 +1,19 @@
-// Client-internal shapes. These are NOT wire types — anything exchanged with
-// the server over Socket.IO belongs in the @showtrak/protocol submodule instead.
+// Client-internal shapes: the module-to-module wiring inside the main process.
+//
+// Anything that crosses a process or network boundary is NOT here. The Socket.IO
+// wire to the server is in @showtrak/protocol; the preload bridges, IPC results
+// and the persisted profile are in @showtrak/protocol/client.
+
+import type { ClientProfile } from '@showtrak/protocol/client';
 
 /**
  * Go-style `[error, value]` tuple returned by the client's async managers.
  * The error slot is `null` on success; the value slot is `null` on failure.
+ *
+ * Looser than the shared `Result` on purpose: these managers hand back whatever
+ * they caught (an Error, a string), and the caller decides how to report it.
  */
 export type Result<T> = [error: unknown, value: T | null];
-
-/** Source tier a hardware identity was resolved from, best first. */
-export type IdentitySource = 'firmware' | 'mac' | 'random';
 
 /**
  * A resolved hardware identity. Discriminated on `Source` so the MAC branch can
@@ -16,55 +21,13 @@ export type IdentitySource = 'firmware' | 'mac' | 'random';
  *
  * `Witness` is the evidence the UUID was derived from (a lower-cased firmware
  * id, or physical MACs joined by `|`), re-checked against live hardware on
- * every boot to detect a cloned disk image.
+ * every boot to detect a cloned disk image. Persisted as the profile's
+ * ProfileIdentity.
  */
 export type ResolvedIdentity =
   | { UUID: string; Source: 'firmware'; Witness: string }
   | { UUID: string; Source: 'mac'; Witness: string }
   | { UUID: string; Source: 'random'; Witness: null };
-
-/** Identity block persisted inside Profile.json. */
-export interface ProfileIdentity {
-  Version: number;
-  Source: IdentitySource;
-  Witness: string | null;
-  ResolvedAt: number;
-}
-
-/** Server endpoint the client is adopted to. */
-export interface ProfileServer {
-  IP?: string | null;
-  Port?: number | null;
-  ServerIdentity?: string | null;
-  AdoptionTime?: number;
-  /** Set when recovery re-pointed the client at a rediscovered server. */
-  LastRecoveredAt?: number;
-}
-
-/**
- * Operator-defined server endpoint, stored separately from Profile.json in
- * ManualServer.json so a factory reset of the profile does not lose it.
- * `Host` may be an IPv4/IPv6 literal or a DNS name.
- */
-export interface ManualServer {
-  Host: string;
-  Port: number;
-}
-
-/** Contents of Profile.json, plus the manual endpoint attached on read. */
-export interface ClientProfile {
-  UUID?: string;
-  Adopted?: boolean;
-  Server?: ProfileServer | null;
-  Identity?: ProfileIdentity;
-  ManualServer?: ManualServer;
-  /**
-   * Survives an unadopt so the client only re-adopts to the same server it was
-   * previously locked to.
-   */
-  ServerIdentityLock?: string;
-  [key: string]: unknown;
-}
 
 /**
  * A profile as returned by `ProfileManager.GetProfile()`.
@@ -75,19 +38,6 @@ export interface ClientProfile {
  */
 export interface ResolvedClientProfile extends ClientProfile {
   UUID: string;
-}
-
-/**
- * Health of the running-applications monitor, as broadcast to the renderer.
- * Mirrors the wire type `RunningApplicationsStatus` but with `Platform`
- * required, since the client always fills it in.
- */
-export type ProcessMonitorState = 'unknown' | 'ok' | 'error' | 'permission_denied';
-
-export interface ProcessMonitorStatus {
-  State: ProcessMonitorState;
-  Message: string | null;
-  Platform: string;
 }
 
 /** Connection state broadcast by MainClient as the socket comes and goes. */
@@ -185,7 +135,11 @@ export interface LanUpdateRequest {
   ReleaseVersion: string | null;
 }
 
-/** Payload driving the on-screen Identify overlay. */
+/**
+ * Payload driving the on-screen Identify overlay, from MainClient to the
+ * IdentifyOverlay module. The overlay window itself receives the normalised
+ * IdentifyOverlayDetails in its query string.
+ */
 export interface IdentifyOverlayPayload {
   Hostname?: string | null;
   Nickname?: string | null;

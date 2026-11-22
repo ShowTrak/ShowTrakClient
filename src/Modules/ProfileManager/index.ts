@@ -1,13 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 
-import type {
-  ClientProfile,
-  ManualServer,
-  ProfileIdentity,
-  ResolvedClientProfile,
-  ResolvedIdentity,
-} from '../../types/client';
+import type { ClientProfile, ManualServer, ProfileIdentity } from '@showtrak/protocol/client';
+import type { ResolvedClientProfile, ResolvedIdentity } from '../../types/client';
 import { CreateLogger } from '../Logger';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';

@@ -28,7 +28,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import type { AppUpdateStatus } from '../types/preload';
+import type { AppUpdateStatus } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Modules/Logger';
 import { Config } from '../Modules/Config';
 import { Manager as UpdateChannel } from '../Modules/UpdateChannel';

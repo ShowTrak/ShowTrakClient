@@ -25,6 +25,7 @@ import {
   IsLevelEnabled as IsLevelEnabledFor,
   Pad,
   ResolveDefaultLevel,
+  type LoggerConfigureOptions,
 } from '@showtrak/protocol/runtime';
 import { Manager as AppDataManager } from '../AppData';
 
@@ -138,12 +139,12 @@ function IsLevelEnabled(Level: string): boolean {
   return IsLevelEnabledFor(Level, Settings.level, DefaultLevel);
 }
 
-interface LoggerConfigureOptions {
-  level?: string;
-}
-
-/** Change the active level at runtime (e.g. from a setting). */
-export function configure(options: LoggerConfigureOptions = {}): void {
+/**
+ * Change the active level at runtime (e.g. from a setting). The level is the
+ * only option this sink honours: it always writes to both the console and the
+ * daily file.
+ */
+export function configure(options: Pick<LoggerConfigureOptions, 'level'> = {}): void {
   if (options.level) Settings.level = String(options.level).toLowerCase();
 }
 

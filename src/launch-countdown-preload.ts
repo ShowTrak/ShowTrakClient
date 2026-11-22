@@ -3,10 +3,14 @@
 // pending run-on-launch script.
 import { contextBridge, ipcRenderer } from 'electron';
 
-import type { LaunchCountdownPreloadAPI } from './types/preload';
+import type { LaunchCountdownPreloadAPI, OverlayInvokeMap } from '@showtrak/protocol/client';
 
 const API: LaunchCountdownPreloadAPI = {
-  Cancel: () => ipcRenderer.invoke('LaunchCountdown:Cancel'),
+  // Answered by the 'LaunchCountdown:Cancel' handler in src/main/ipc-handlers.ts.
+  Cancel: () =>
+    ipcRenderer.invoke('LaunchCountdown:Cancel') as Promise<
+      OverlayInvokeMap['LaunchCountdown:Cancel']['Result']
+    >,
 };
 
 contextBridge.exposeInMainWorld('LaunchCountdownAPI', API);

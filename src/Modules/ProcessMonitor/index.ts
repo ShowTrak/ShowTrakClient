@@ -3,7 +3,7 @@ import type {
   RunningApplicationsCapabilities,
   RunningApplicationsSnapshot,
 } from '@showtrak/protocol';
-import type { ProcessMonitorState, ProcessMonitorStatus } from '../../types/client';
+import type { ProcessMonitorState, ProcessMonitorStatus } from '@showtrak/protocol/client';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';

@@ -13,13 +13,17 @@
 // anything thrown becomes an [error, null] tuple so a rejected request never
 // throws across the contextBridge.
 //
-// NOTE the return type is deliberately `unknown` rather than a tuple: most
-// channels answer with a Go-style [error, value] tuple, but `GetVersion` returns
-// a bare version string (the preload reads it as `string`), and that asymmetry
-// is pre-existing wire behaviour the renderer depends on.
+// Each handler answers its channel's declared result: InvokeMap (the config
+// window) and OverlayInvokeMap (the overlay windows) in
+// @showtrak/protocol/client, the maps the preloads are typed through. Most
+// channels answer with an [error, value] tuple, but `GetVersion` answers with a
+// bare version string, a pre-existing asymmetry the renderer depends on; the map
+// declares it that way. The arguments stay `unknown[]` whatever the map says,
+// because the renderer is untrusted: every handler narrows its own.
 
 import { ipcMain } from 'electron';
 
+import type { InvokeMap, OverlayInvokeMap } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Modules/Logger';
 
 const Logger = CreateLogger('RPC');
@@ -32,6 +36,10 @@ function assertNoArgs(handlerName: string, args: unknown[]): void {
     throw new Error(`${handlerName} does not accept arguments`);
   }
 }
+
+/** Every channel the main process answers, from any of its windows. */
+type HandledMap = InvokeMap & OverlayInvokeMap;
+type HandledChannel = keyof HandledMap;
 
 function validationErrorPayload(error: unknown): [string, null] {
   const asError = error as { message?: unknown } | null | undefined;
@@ -49,10 +57,12 @@ interface HandleOptions {
 }
 
 // Register an IPC channel. The handler validates its own arguments (via
-// assertNoArgs, or by narrowing them itself) and may throw to reject.
-function Handle(
-  channel: string,
-  handler: (args: unknown[]) => unknown,
+// assertNoArgs, or by narrowing them itself) and may throw to reject; a throw
+// answers [message, null] (only `GetVersion` declares no such answer, and it
+// throws only when called with arguments, which its preload method never passes).
+function Handle<C extends HandledChannel>(
+  channel: C,
+  handler: (args: unknown[]) => HandledMap[C]['Result'] | Promise<HandledMap[C]['Result']>,
   options: HandleOptions = {}
 ): void {
   ipcMain.handle(channel, async (_event, ...args: unknown[]) => {

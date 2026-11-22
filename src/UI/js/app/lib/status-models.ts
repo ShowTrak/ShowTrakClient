@@ -9,8 +9,12 @@
 // application-monitoring permission failure, the machine looks healthy while
 // silently not doing its job.
 
-import type { ClientProfile, ProcessMonitorStatus } from '../../../../types/client';
-import type { AppUpdateStatus, ServerRecoveryStatus } from '../../../../types/preload';
+import type {
+  AppUpdateStatus,
+  ClientProfile,
+  ProcessMonitorStatus,
+  ServerRecoveryStatus,
+} from '@showtrak/protocol/client';
 
 export const DEFAULT_SERVER_PORT = 3000;
 

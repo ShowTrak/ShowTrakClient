@@ -1,14 +1,14 @@
 // Globals available to the renderer windows.
 //
 // Each preload exposes exactly one bridge object, and the interfaces come from
-// src/types/preload.d.ts — the same file the preloads implement — so a channel
-// added on one side and not the other fails to compile.
+// @showtrak/protocol/client — the same contract the preloads implement — so a
+// channel added on one side and not the other fails to compile.
 
 import type {
   ClientPreloadAPI,
   IdentifyPreloadAPI,
   LaunchCountdownPreloadAPI,
-} from '../../types/preload';
+} from '@showtrak/protocol/client';
 
 declare global {
   interface Window {

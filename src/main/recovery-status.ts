@@ -11,7 +11,7 @@
 // thing they see — so "what is the client doing about the server being gone" has
 // to be answerable from here alone.
 
-import type { ServerRecoveryStatus } from '../types/preload';
+import type { ServerRecoveryMetrics, ServerRecoveryStatus } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Modules/Logger';
 import { PushToRenderer } from './renderer-bus';
 
@@ -19,14 +19,11 @@ const Logger = CreateLogger('Recovery');
 
 const RECOVERY_COOLDOWN_MS = 15000;
 
-/** Running totals shown in the recovery status panel. */
-interface RecoveryMetrics {
-  Attempts: number;
-  LastAttemptAt: number;
-  LastFailureAt: number;
-  LastFailureReason: string | null;
-  LastRecoveredAt: number;
-}
+/**
+ * The running totals behind the recovery status panel: every metric the pushed
+ * status carries except the two constants, which are added when it is sent.
+ */
+type RecoveryMetrics = Omit<ServerRecoveryMetrics, 'MaxAttempts' | 'CooldownMs'>;
 
 // A shared mutable record rather than exported `let`s: the fields are written by
 // recovery.ts and read here when decorating a status push, and an object keeps

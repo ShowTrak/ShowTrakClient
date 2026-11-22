@@ -11,8 +11,13 @@
  *
  * Plain DOM through ./lib/dom: no jQuery, no Bootstrap JavaScript.
  */
-import type { ClientProfile, ProcessMonitorStatus } from '../../../types/client';
-import type { AppUpdateStatus, ServerRecoveryStatus } from '../../../types/preload';
+import type {
+  AppUpdateStatus,
+  ClientProfile,
+  ProcessMonitorStatus,
+  ServerRecoveryStatus,
+  UpdateChannel,
+} from '@showtrak/protocol/client';
 import {
   ADOPTION_BADGE_CLASSES,
   DEFAULT_SERVER_PORT,
@@ -36,7 +41,7 @@ import {
 } from './lib/dom';
 
 let Profile: ClientProfile = {};
-let UpdateChannelState: 'stable' | 'beta' = 'stable';
+let UpdateChannelState: UpdateChannel = 'stable';
 
 const UPDATE_CHANNEL_HINTS = {
   stable: 'Full releases only.',

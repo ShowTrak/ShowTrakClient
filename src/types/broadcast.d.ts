@@ -6,13 +6,12 @@
 // every channel now has to appear here to compile.
 
 import type { LaunchConfigPayload } from '@showtrak/protocol';
+import type { ClientProfile, ProcessMonitorStatus } from '@showtrak/protocol/client';
 import type {
-  ClientProfile,
   ClientScript,
   LanUpdateRequest,
   IdentifyOverlayPayload,
   MainClientConnectionStatus,
-  ProcessMonitorStatus,
   ServerAdoptionRejectedInfo,
   ServerConnectFailedInfo,
 } from './client';
