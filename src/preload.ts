@@ -21,8 +21,8 @@ import type {
   Unsubscribe,
 } from '@showtrak/protocol/client';
 
-// Inlined rather than imported: this preload is all the renderer can reach, and
-// the checks below prove each list names exactly the channels the contract
+// Inlined, because a sandboxed preload cannot require the app's other modules.
+// The checks below prove each list names exactly the channels the contract
 // declares, so one added on either side and not the other fails to compile.
 const INVOKE_CHANNEL_LIST = [
   'Loaded',
