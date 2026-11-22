@@ -208,7 +208,8 @@ const config: ForgeConfig = {
   hooks: {
     // Drop Chromium's UI translations (~45 MB) before the app is copied in and
     // signed; the UI is English and Chromium falls back to en-US. See
-    // scripts/trim-electron-locales.js.
+    // scripts/trim-electron-locales.js, which runs the one shared with
+    // ShowTrak Server and Timers (shared/scripts/).
     packageAfterExtract: async (_forgeConfig, buildPath) => {
       // scripts/ stays JavaScript, outside any TypeScript program, so the one
       // export used here is declared rather than inferred.

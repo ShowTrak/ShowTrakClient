@@ -84,7 +84,9 @@ in `shared/`. Its two type entry points are imported with `import type`:
 The rest is real code shared with ShowTrak Server and Timers, built by
 `npm run build:shared`: `@showtrak/protocol/runtime` (logging, checksums, the update
 channel, the process guards), `@showtrak/protocol/common` (type guards, script
-argument parsing) and `@showtrak/protocol/electron-main` (the window guards).
+argument parsing) and `@showtrak/protocol/electron-main` (the window guards). The
+release, renderer-bundle and locale-trim scripts come from `shared/scripts/`, through
+this app's `scripts/` wrappers.
 
 `src/types/` holds only what stays inside the main process: the Broadcast bus, the
 managers' results, the typed Socket.IO socket and declarations for untyped packages.

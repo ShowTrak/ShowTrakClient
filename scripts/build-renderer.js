@@ -12,54 +12,36 @@
 //
 // The renderer has no vendor scripts: the config window paints itself through
 // src/UI/js/app/lib/dom.ts and styles itself from src/UI/bootstrap-subset.css.
-const esbuild = require('esbuild');
+//
+// How a bundle is built is shared with ShowTrak Server and Timers
+// (shared/scripts/build-renderer.js); which bundles there are is this list.
+// keepNames stays off, as this app has always built them: on, it would add a
+// __name() call for every function to each bundle.
 const path = require('node:path');
+const Renderer = require('../shared/scripts/build-renderer');
 
 const ROOT = path.resolve(__dirname, '..');
 
-/** @type {Array<{name: string, entry: string, outfile: string}>} */
+/** @type {Array<{name: string, entry: string, outfile: string, keepNames: boolean}>} */
 const BUNDLES = [
   {
     name: 'Config window',
     entry: path.join(ROOT, 'src', 'UI', 'js', 'app', 'main.ts'),
     outfile: path.join(ROOT, 'dist', 'UI', 'js', 'app', 'main.js'),
+    keepNames: false,
   },
   {
     name: 'Identify overlay',
     entry: path.join(ROOT, 'src', 'UI', 'js', 'app', 'identify-overlay.ts'),
     outfile: path.join(ROOT, 'dist', 'UI', 'js', 'app', 'identify-overlay.js'),
+    keepNames: false,
   },
   {
     name: 'Launch countdown overlay',
     entry: path.join(ROOT, 'src', 'UI', 'js', 'app', 'launch-countdown.ts'),
     outfile: path.join(ROOT, 'dist', 'UI', 'js', 'app', 'launch-countdown.js'),
+    keepNames: false,
   },
 ];
 
-async function buildBundle({ name, entry, outfile }) {
-  await esbuild.build({
-    entryPoints: [entry],
-    outfile,
-    bundle: true,
-    format: 'iife',
-    target: 'es2022',
-    platform: 'browser',
-    sourcemap: true,
-    minify: true,
-    legalComments: 'none',
-    logLevel: 'info',
-  });
-  console.log(`[build-renderer] Bundled ${name} -> ${path.relative(ROOT, outfile)}`);
-}
-
-async function main() {
-  for (const bundle of BUNDLES) {
-    await buildBundle(bundle);
-  }
-  console.log(`[build-renderer] Completed (${BUNDLES.length} bundles)`);
-}
-
-main().catch((err) => {
-  console.error('[build-renderer] Failed:', err);
-  process.exit(1);
-});
+Renderer.main({ root: ROOT, bundles: BUNDLES });
