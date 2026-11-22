@@ -8,8 +8,10 @@ import { BrowserWindow, screen, type Display, type WebPreferences } from 'electr
 import path from 'path';
 import os from 'os';
 
+import type { IdentifyOverlayDetails, IdentifyOverlayQuery } from '@showtrak/protocol/client';
 import type { IdentifyOverlayPayload } from '../../types/client';
 import { CreateLogger } from '../Logger';
+import { ToQueryString } from '../Utils';
 
 const Logger = CreateLogger('IdentifyOverlay');
 
@@ -74,12 +76,12 @@ export const Manager = {
     // Always start from a clean slate so display/topology changes are respected.
     Manager.Hide();
 
-    const Data = {
+    const Data: IdentifyOverlayDetails = {
       Hostname: Payload && Payload.Hostname ? String(Payload.Hostname) : '',
       Nickname: Payload && Payload.Nickname ? String(Payload.Nickname) : '',
       IPs: Payload && Array.isArray(Payload.IPs) ? Payload.IPs.map(String) : [],
     };
-    const search = encodeURIComponent(JSON.stringify(Data));
+    const DataParam = JSON.stringify(Data);
 
     let displays: Display[] = [];
     try {
@@ -146,8 +148,13 @@ export const Manager = {
           // Ignore platform-specific failures here; the overlay still works.
         }
 
+        // What the overlay page reads (src/UI/js/app/identify-overlay.ts).
         win.loadFile(OVERLAY_HTML, {
-          search: `?data=${search}&resolutionLabel=${encodeURIComponent(ResolutionLabel)}&screenNumber=${encodeURIComponent(String(ScreenIndex))}`,
+          search: ToQueryString<IdentifyOverlayQuery>({
+            data: DataParam,
+            resolutionLabel: ResolutionLabel,
+            screenNumber: String(ScreenIndex),
+          }),
         });
         win.once('ready-to-show', () => {
           if (win.isDestroyed()) return;

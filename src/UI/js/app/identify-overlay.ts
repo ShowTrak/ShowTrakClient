@@ -1,18 +1,21 @@
 // Identify overlay renderer. Parses the machine details passed via the window's
 // query string, renders them, and closes the overlay (notifying main) on any
 // click or when Escape is pressed.
+import type { IdentifyOverlayDetails, IdentifyOverlayQuery } from '@showtrak/protocol/client';
+
 /**
- * Machine details passed in the overlay window's query string. `Hostname`,
- * `Nickname` and `IPs` come from the JSON `data` param (see IdentifyOverlay.Show);
- * the other two are separate params merged in by parseData.
+ * What the page renders. `Hostname`, `Nickname` and `IPs` come from the JSON
+ * `data` param (IdentifyOverlayDetails, written by IdentifyOverlay.Show), any of
+ * which may be missing from a URL this page did not get from there; the other
+ * two are separate params merged in by parseData.
  */
-interface IdentifyOverlayData {
-  Hostname?: string;
-  Nickname?: string;
-  IPs?: string[];
+interface IdentifyOverlayData extends Partial<IdentifyOverlayDetails> {
   ResolutionLabel?: string;
   ScreenNumber?: string;
 }
+
+/** The names IdentifyOverlay.Show writes into this page's query string. */
+type QueryParam = keyof IdentifyOverlayQuery;
 
 function parseData(): IdentifyOverlayData {
   try {
@@ -22,9 +25,10 @@ function parseData(): IdentifyOverlayData {
     // `data` is JSON the main process wrote (IdentifyOverlay.Show), so it is taken
     // as written.
     const data: IdentifyOverlayData =
-      (JSON.parse(params.get('data') || '{}') as IdentifyOverlayData | null) || {};
-    const resolutionLabel = params.get('resolutionLabel');
-    const screenNumber = params.get('screenNumber');
+      (JSON.parse(params.get('data' satisfies QueryParam) || '{}') as IdentifyOverlayData | null) ||
+      {};
+    const resolutionLabel = params.get('resolutionLabel' satisfies QueryParam);
+    const screenNumber = params.get('screenNumber' satisfies QueryParam);
     if (resolutionLabel) data.ResolutionLabel = resolutionLabel;
     if (screenNumber) data.ScreenNumber = screenNumber;
     return data;

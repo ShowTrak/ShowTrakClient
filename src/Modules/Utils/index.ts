@@ -75,6 +75,20 @@ export function IsArray(Value: unknown): Value is unknown[] {
   return Array.isArray(Value);
 }
 
+/**
+ * `?name=value&...` for a window's `loadFile({ search })`, in the object's key
+ * order, each value through encodeURIComponent (names are plain identifiers and
+ * go in as they are).
+ *
+ * Typed by the page's query contract (IdentifyOverlayQuery, LaunchCountdownQuery
+ * in @showtrak/protocol/client), so the names the main process writes are the
+ * names the page reads.
+ */
+export function ToQueryString<T extends { [K in keyof T]: string }>(Query: T): string {
+  const Names = Object.keys(Query) as (keyof T & string)[];
+  return `?${Names.map((Name) => `${Name}=${encodeURIComponent(Query[Name])}`).join('&')}`;
+}
+
 /** The shape every telemetry delta takes: what appeared, what went, what moved. */
 export interface KeyedDiff<T> {
   Added: T[];

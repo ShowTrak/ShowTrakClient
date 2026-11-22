@@ -8,7 +8,9 @@
 import { BrowserWindow, screen, type WebPreferences } from 'electron';
 import path from 'path';
 
+import type { LaunchCountdownQuery } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Logger';
+import { ToQueryString } from '../Utils';
 
 const Logger = CreateLogger('LaunchCountdownOverlay');
 
@@ -137,9 +139,11 @@ export const Manager = {
         // Ignore platform-specific failures; the overlay still works.
       }
 
-      const search = `?script=${encodeURIComponent(Name)}&seconds=${encodeURIComponent(
-        String(SafeSeconds)
-      )}`;
+      // What the countdown page reads (src/UI/js/app/launch-countdown.ts).
+      const search = ToQueryString<LaunchCountdownQuery>({
+        script: Name,
+        seconds: String(SafeSeconds),
+      });
       overlayWindow.loadFile(OVERLAY_HTML, { search });
 
       overlayWindow.once('ready-to-show', () => {

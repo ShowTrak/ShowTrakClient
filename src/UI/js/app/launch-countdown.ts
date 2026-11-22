@@ -2,17 +2,23 @@
 // name and a ticking countdown, and asks main to cancel on any abort gesture
 // (Cancel button, Esc, Shift). The authoritative expiry timer lives in the main
 // process; this countdown is purely visual.
+import type { LaunchCountdownQuery } from '@showtrak/protocol/client';
+
+/** The query string (LaunchCountdownQuery), parsed: seconds as a number. */
 interface CountdownConfig {
   script: string;
   seconds: number;
 }
 
+/** The names LaunchCountdownOverlay.Show writes into this page's query string. */
+type QueryParam = keyof LaunchCountdownQuery;
+
 function parseParams(): CountdownConfig {
   try {
     const params = new URLSearchParams(window.location.search.replace(/^\?/, ''));
-    const seconds = parseInt(params.get('seconds') || '0', 10);
+    const seconds = parseInt(params.get('seconds' satisfies QueryParam) || '0', 10);
     return {
-      script: params.get('script') || 'startup script',
+      script: params.get('script' satisfies QueryParam) || 'startup script',
       seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : 10,
     };
   } catch (_err) {
