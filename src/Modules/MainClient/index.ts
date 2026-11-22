@@ -18,6 +18,7 @@ import { Manager as TemperatureMonitor } from '../TemperatureMonitor';
 import { Manager as StorageMonitor } from '../StorageMonitor';
 import { Manager as ProfileManager } from '../ProfileManager';
 import { Manager as LaunchConfigManager } from '../LaunchConfig';
+import { HandleIdentifyRequests } from '../IdentifyOverlay/requests';
 import { CreateOutputStreamer } from '../ScriptManager/output-stream';
 import { Manager as ServerCapabilities } from '../ServerCapabilities';
 import { DiffByKey, ErrorMessage, IsEmptyDiff, ReadIdentityToken, Wait } from '../Utils';
@@ -672,21 +673,7 @@ export const Manager = {
 
     // Identify mode: show a full-screen overlay so an operator can locate this
     // machine. The overlay windows live in the main process (IdentifyOverlay).
-    ActiveSocket.on('Identify', async (Payload = {}) => {
-      const Nickname =
-        Payload && typeof Payload.Nickname === 'string' && Payload.Nickname.trim()
-          ? Payload.Nickname.trim()
-          : null;
-      BroadcastManager.emit('ShowIdentifyOverlay', {
-        Hostname: OS.Hostname,
-        Nickname,
-        IPs: OS.GetLocalIPv4Addresses(),
-      });
-    });
-
-    ActiveSocket.on('StopIdentify', async () => {
-      BroadcastManager.emit('HideIdentifyOverlay');
-    });
+    HandleIdentifyRequests(ActiveSocket);
 
     // Remote level/mute control from the server. The ack is the server's only
     // answer, so it is sent on every path — including a malformed request.

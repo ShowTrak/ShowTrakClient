@@ -6,6 +6,7 @@ import { Config } from '../Config';
 import { Manager as OSManager } from '../OS';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as ProfileManager } from '../ProfileManager';
+import { HandleIdentifyRequests } from '../IdentifyOverlay/requests';
 import { ReadIdentityToken } from '../Utils';
 
 const Logger = CreateLogger('AdoptionClient');
@@ -100,20 +101,6 @@ export const Manager = {
 
     // Identify mode also works before adoption so an operator can locate a
     // freshly-discovered machine from the DISCOVER lane.
-    Socket.on('Identify', async (Payload = {}) => {
-      const Nickname =
-        Payload && typeof Payload.Nickname === 'string' && Payload.Nickname.trim()
-          ? Payload.Nickname.trim()
-          : null;
-      BroadcastManager.emit('ShowIdentifyOverlay', {
-        Hostname: OSManager.Hostname,
-        Nickname,
-        IPs: OSManager.GetLocalIPv4Addresses(),
-      });
-    });
-
-    Socket.on('StopIdentify', async () => {
-      BroadcastManager.emit('HideIdentifyOverlay');
-    });
+    HandleIdentifyRequests(Socket);
   },
 };
