@@ -82,7 +82,7 @@
     "electron-updater": "^6.8.11",
     "picocolors": "^1.1.1",
     "socket.io-client": "^4.8.4",
-    "usb": "^3.3.0",
+    "usb": "^3.3.1",
     "uuid": "^11.1.1"
   },
   "overrides": {
