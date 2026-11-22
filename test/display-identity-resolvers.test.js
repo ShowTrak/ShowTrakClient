@@ -261,6 +261,50 @@ test('macOS returns nothing rather than throwing on unusable output', async () =
   }
 });
 
+test('macOS JSON of the wrong shape yields no displays', async () => {
+  // Valid JSON in a shape system_profiler never prints. Each level (the root,
+  // a GPU, its display list) has to be checked rather than read as `any`.
+  for (const [Label, Output] of [
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a number', '5'],
+    ['a string', '"Apple M4"'],
+    ['GPUs that are not objects', JSON.stringify({ SPDisplaysDataType: [null, 5, 'gpu', []] })],
+    ['a GPU with no display list', JSON.stringify({ SPDisplaysDataType: [{ _name: 'M4' }] })],
+    [
+      'a display list that is not an array',
+      JSON.stringify({ SPDisplaysDataType: [{ spdisplays_ndrvs: { _name: 'Studio Display' } }] }),
+    ],
+  ]) {
+    const { Mod } = load({ platform: 'darwin', command: () => Output });
+    assert.deepEqual(await Mod.GetDisplayIdentities(), [], Label);
+  }
+});
+
+test('a macOS display entry that is not an object still counts as an unidentified display', async () => {
+  // Unchanged from before the parser was typed: every entry in the list is one
+  // display, so a malformed entry yields an identity with nothing in it rather
+  // than vanishing, and positional matching still lines up with Electron's list.
+  const { Mod } = loadMac([null, 7, macDisplay()]);
+
+  const Identities = await Mod.GetDisplayIdentities();
+  assert.equal(Identities.length, 3);
+  for (const Empty of Identities.slice(0, 2)) {
+    assert.deepEqual(Empty, {
+      Fingerprint: null,
+      Manufacturer: null,
+      Product: null,
+      Name: null,
+      Serial: null,
+      ConnectorKey: null,
+      Width: null,
+      Height: null,
+      Primary: false,
+    });
+  }
+  assert.equal(Identities[2].Fingerprint, 'mac:610:a050:0x1a2b3c4d');
+});
+
 // ===========================================================================
 // Linux
 // ===========================================================================
@@ -486,6 +530,42 @@ test('Windows returns nothing rather than throwing on unusable output', async ()
     const { Mod } = loadWindows(Output);
     assert.deepEqual(await Mod.GetDisplayIdentities(), [], Label);
   }
+});
+
+test('Windows JSON with nothing usable in it yields no monitors', async () => {
+  // A bare null, or rows that are all falsy, are skipped like the null rows of
+  // a real WMI answer.
+  for (const [Label, Output] of [
+    ['null', 'null'],
+    ['an empty array', '[]'],
+    ['falsy rows', JSON.stringify([null, 0, false, ''])],
+  ]) {
+    const { Mod } = loadWindows(Output);
+    assert.deepEqual(await Mod.GetDisplayIdentities(), [], Label);
+  }
+});
+
+test('a Windows row that is not an object still counts as an unidentified monitor', async () => {
+  // Unchanged from before the parser was typed: a truthy row with no fields
+  // (which WMI never sends) reads as a monitor with nothing identifying it.
+  const { Mod } = loadWindows(JSON.stringify([7, 'DEL', true, winRow({ Serial: 'A' })]));
+
+  const Identities = await Mod.GetDisplayIdentities();
+  assert.equal(Identities.length, 4);
+  for (const Empty of Identities.slice(0, 3)) {
+    assert.deepEqual(Empty, {
+      Fingerprint: null,
+      Manufacturer: null,
+      Product: null,
+      Name: null,
+      Serial: null,
+      ConnectorKey: null,
+      Width: null,
+      Height: null,
+      Primary: false,
+    });
+  }
+  assert.equal(Identities[3].Fingerprint, 'edid:DEL:A1B2:A');
 });
 
 // ===========================================================================

@@ -5,6 +5,7 @@ import type { VariableEnvironment, VariablePayload } from '@showtrak/protocol';
 import { CreateLogger } from '../Logger';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as WindowsEnvironment } from '../WindowsEnvironment';
+import { IsRecord } from '../Utils';
 
 const Logger = CreateLogger('Variables');
 
@@ -86,9 +87,10 @@ const Internal = {
     const StatePath = Internal.GetStatePath();
     try {
       if (!fs.existsSync(StatePath)) return;
-      const Parsed = JSON.parse(fs.readFileSync(StatePath, 'utf-8') || '{}');
-      Environment = Internal.Sanitize(Parsed && Parsed.Environment);
-      Exported = Internal.SanitizeExported(Parsed && Parsed.Exported, Environment);
+      const Parsed: unknown = JSON.parse(fs.readFileSync(StatePath, 'utf-8') || '{}');
+      const Stored = IsRecord(Parsed) ? Parsed : {};
+      Environment = Internal.Sanitize(Stored.Environment);
+      Exported = Internal.SanitizeExported(Stored.Exported, Environment);
       PersistedSignature = JSON.stringify([Environment, Exported]);
       Logger.log(`Loaded ${Object.keys(Environment).length} variable(s) from disk`);
     } catch (Err) {

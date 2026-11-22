@@ -291,6 +291,34 @@ test('a corrupt Profile.json self-heals back to the same hardware UUID', async (
   assert.equal(profile.Identity.Source, 'firmware');
 });
 
+test('a Profile.json that parses to the wrong shape self-heals the same way', async () => {
+  // Valid JSON that is not a usable profile never reaches the parse-error path
+  // above, so each of these has to fail the UUID check on its own and be reset
+  // to this machine's hardware identity.
+  for (const Contents of [
+    'null',
+    '0',
+    '"uuid-source"',
+    'true',
+    '[]',
+    '[{"UUID": "uuid-source"}]',
+    '{}',
+    '{"UUID": ""}',
+    '{"UUID": 42}',
+  ]) {
+    const profileRoot = tempDir('showtrak-wrong-shape-');
+    fs.writeFileSync(path.join(profileRoot, 'Profile.json'), Contents);
+
+    const { Manager } = loadProfileManager(profileRoot, SOURCE_MACHINE);
+    const profile = await Manager.GetProfile();
+
+    assert.equal(profile.UUID, 'uuid-source', Contents);
+    assert.equal(profile.Adopted, false, Contents);
+    assert.equal(profile.Identity.Source, 'firmware', Contents);
+    assert.equal(readProfile(profileRoot).UUID, 'uuid-source', `${Contents}: must persist`);
+  }
+});
+
 test('profile writes are atomic and leave no temp file behind', async () => {
   const profileRoot = tempDir('showtrak-atomic-');
   const { Manager } = loadProfileManager(profileRoot, SOURCE_MACHINE);

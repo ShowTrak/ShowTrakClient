@@ -36,8 +36,14 @@ const Logger = CreateLogger('Bonjour');
 
 type BonjourInstance = BonjourClass;
 type BonjourBrowser = InstanceType<typeof BrowserCtor>;
-/** A discovered ShowTrak server advertisement. */
-export type DiscoveredService = InstanceType<typeof ServiceCtor>;
+/**
+ * A discovered ShowTrak server advertisement.
+ *
+ * bonjour-service types the TXT record as `any`. It holds whatever the advertiser
+ * published, so it is `unknown` here, and is read through ReadIdentityToken
+ * rather than trusted to have a shape.
+ */
+export type DiscoveredService = Omit<InstanceType<typeof ServiceCtor>, 'txt'> & { txt?: unknown };
 
 type FindCallback = (service: DiscoveredService) => void;
 
@@ -241,7 +247,7 @@ export const Manager = {
     // plus the first-match latch below reproduces the previous semantics exactly.
     try {
       browser = instance.find({ type: SERVICE_TYPE });
-      browser.on('up', (svc) => {
+      browser.on('up', (svc: DiscoveredService) => {
         if (!svc) return;
         Logger.log(
           `Bonjour browse matched: ${JSON.stringify({

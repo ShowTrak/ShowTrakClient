@@ -14,7 +14,7 @@ import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as VariableStore } from '../Variables';
-import { ErrorMessage } from '../Utils';
+import { ErrorMessage, IsRecord } from '../Utils';
 import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ScriptManager');
@@ -122,11 +122,9 @@ const Internal = {
         return;
       }
       const Raw = fs.readFileSync(StatePath, 'utf-8');
-      const Parsed = JSON.parse(Raw || '{}');
-      LastAppliedDeploymentFingerprint =
-        Parsed && typeof Parsed.LastAppliedDeploymentFingerprint === 'string'
-          ? Parsed.LastAppliedDeploymentFingerprint
-          : null;
+      const Parsed: unknown = JSON.parse(Raw || '{}');
+      const Stored = IsRecord(Parsed) ? Parsed.LastAppliedDeploymentFingerprint : undefined;
+      LastAppliedDeploymentFingerprint = typeof Stored === 'string' ? Stored : null;
     } catch (Err) {
       Logger.warn(`Failed to load script deployment state: ${(Err as Error).message}`);
       LastAppliedDeploymentFingerprint = null;
@@ -665,14 +663,16 @@ const Internal = {
       // we stopped draining them it would block the moment it wrote, and
       // destroying them would hand it EPIPE — either of which can take down the
       // very show application the script started.
-      Child.stdout.on('data', (data) => {
+      //
+      // No encoding is set on these pipes, so each chunk arrives as a Buffer.
+      Child.stdout.on('data', (data: Buffer) => {
         if (Settled) return;
         const text = data.toString();
         StdOut += text;
         QueueOutput(text);
         if (OnOutput) OnOutput('stdout', text);
       });
-      Child.stderr.on('data', (data) => {
+      Child.stderr.on('data', (data: Buffer) => {
         if (Settled) return;
         const text = data.toString();
         StdErr += text;

@@ -16,6 +16,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 
 import { Hosts, RunPowerShell } from '../PowerShell';
+import { IsArray, IsRecord } from '../Utils';
 import { parseEdid, fingerprintFromEdid } from './edid';
 
 /** A physical monitor as reported by one of the per-platform resolvers. */
@@ -146,18 +147,21 @@ async function getMacIdentities(): Promise<DisplayIdentity[]> {
   const stdout = await runCommand('system_profiler', ['SPDisplaysDataType', '-json']);
   if (!stdout) return [];
 
-  let json: { SPDisplaysDataType?: unknown };
+  let json: unknown;
   try {
     json = JSON.parse(stdout);
   } catch (_error) {
     return [];
   }
 
-  const gpus = Array.isArray(json.SPDisplaysDataType) ? json.SPDisplaysDataType : [];
+  const gpus = IsRecord(json) && IsArray(json.SPDisplaysDataType) ? json.SPDisplaysDataType : [];
   const identities: DisplayIdentity[] = [];
   for (const gpu of gpus) {
-    const displays = Array.isArray(gpu?.spdisplays_ndrvs) ? gpu.spdisplays_ndrvs : [];
-    for (const display of displays as Record<string, unknown>[]) {
+    const displays = IsRecord(gpu) && IsArray(gpu.spdisplays_ndrvs) ? gpu.spdisplays_ndrvs : [];
+    for (const entry of displays) {
+      // Every entry yields an identity, as before; one that is not an object
+      // simply has none of the fields picked below.
+      const display = IsRecord(entry) ? entry : null;
       const name = pick(display, ['_name']);
       const serial = pick(display, [
         '_spdisplays_display-serial-number',
@@ -270,17 +274,19 @@ async function getWindowsIdentities(): Promise<DisplayIdentity[]> {
   const stdout = await runWindowsIdentityQuery();
   if (!stdout || !stdout.trim()) return [];
 
-  let parsed: WindowsMonitorRow | WindowsMonitorRow[];
+  let parsed: unknown;
   try {
     parsed = JSON.parse(stdout.trim().split(/\r?\n/).pop() || '');
   } catch (_error) {
     return [];
   }
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  const rows = IsArray(parsed) ? parsed : [parsed];
 
   const identities: DisplayIdentity[] = [];
-  for (const row of rows) {
-    if (!row) continue;
+  for (const entry of rows) {
+    if (!entry) continue;
+    // A row that is not an object reads as one with no fields, as it always has.
+    const row: WindowsMonitorRow = IsRecord(entry) ? entry : {};
     const manufacturer = row.Manufacturer ? String(row.Manufacturer).trim() : '';
     const product = row.Product ? String(row.Product).trim() : '';
     const serial = row.Serial ? String(row.Serial).trim() : '';

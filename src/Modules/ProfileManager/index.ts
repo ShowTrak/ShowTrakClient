@@ -13,7 +13,7 @@ import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
-import { ReadIdentityToken } from '../Utils';
+import { IsRecord, ReadIdentityToken } from '../Utils';
 
 const Logger = CreateLogger('ProfileManager');
 
@@ -59,8 +59,8 @@ function NormalizeManualServer(Host: unknown, Port: unknown): ManualServer | nul
 function ReadManualServerFromDisk(): ManualServer | null {
   if (!fs.existsSync(ManualServerPath)) return null;
   try {
-    const Stored = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
-    return Stored ? NormalizeManualServer(Stored.Host, Stored.Port) : null;
+    const Stored: unknown = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
+    return IsRecord(Stored) ? NormalizeManualServer(Stored.Host, Stored.Port) : null;
   } catch (Err) {
     Logger.error('Failed to read ManualServer.json', Err);
     return null;
@@ -217,7 +217,11 @@ export const Manager = {
 
     let Profile: ClientProfile | null;
     try {
-      Profile = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'));
+      const Parsed: unknown = JSON.parse(fs.readFileSync(ProfilePath, 'utf-8'));
+      // Profile.json is this module's own file (WriteProfileFile), so its fields
+      // are taken as written; a damaged one fails the UUID check below and is
+      // reset, as it always has been.
+      Profile = IsRecord(Parsed) ? (Parsed as ClientProfile) : null;
     } catch (Err) {
       // A truncated/corrupt profile used to throw straight out of GetProfile and
       // take the app down with it.

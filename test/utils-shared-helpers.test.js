@@ -1,16 +1,20 @@
-// src/Modules/Utils — ReadIdentityToken and ErrorMessage.
+// src/Modules/Utils — ReadIdentityToken, ErrorMessage, IsRecord and IsArray.
 //
-// Both replaced a hand-written ladder that appeared in six modules. ReadIdentityToken
-// in particular now backs the server-identity check, which is what stops a
-// recovering client re-homing onto another operator's server on a shared LAN, so
-// its treatment of "absent" vs "blank" vs "present" is load-bearing rather than
-// cosmetic.
+// The first two replaced a hand-written ladder that appeared in six modules.
+// ReadIdentityToken in particular now backs the server-identity check, which is
+// what stops a recovering client re-homing onto another operator's server on a
+// shared LAN, so its treatment of "absent" vs "blank" vs "present" is load-bearing
+// rather than cosmetic.
+//
+// IsRecord and IsArray are the guards the state-file and resolver parsers narrow
+// JSON.parse output with, in place of reading it as `any`. Where each draws its
+// line (null, arrays) decides which malformed files fall through to defaults.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
-const { ReadIdentityToken, ErrorMessage } = require(
+const { ReadIdentityToken, ErrorMessage, IsRecord, IsArray } = require(
   path.join(__dirname, '..', 'dist', 'Modules', 'Utils', 'index.js')
 );
 
@@ -96,5 +100,29 @@ test('ErrorMessage has a usable default fallback', () => {
 test('ErrorMessage never returns a non-string', () => {
   for (const input of [null, undefined, 0, '', {}, [], new Error('x'), 'y', 42, false]) {
     assert.equal(typeof ErrorMessage(input), 'string', `expected a string for ${String(input)}`);
+  }
+});
+
+test('IsRecord accepts the objects JSON parses to, whatever their keys', () => {
+  assert.equal(IsRecord({}), true);
+  assert.equal(IsRecord({ UUID: 'x' }), true);
+  assert.equal(IsRecord(JSON.parse('{"Environment":{}}')), true);
+  assert.equal(IsRecord(Object.create(null)), true);
+});
+
+test('IsRecord rejects null, arrays and every primitive', () => {
+  // null is typeof 'object' and arrays are objects: both must stay out, or a
+  // state file holding `null` or `[]` would be read as if it had fields.
+  for (const input of [null, undefined, [], [{}], 0, 1, '', 'text', true, false]) {
+    assert.equal(IsRecord(input), false, `expected false for ${JSON.stringify(input)}`);
+  }
+});
+
+test('IsArray is Array.isArray', () => {
+  for (const input of [[], [1], JSON.parse('[null]'), new Array(2)]) {
+    assert.equal(IsArray(input), true);
+  }
+  for (const input of [null, undefined, {}, { length: 1 }, 'text', 0, true]) {
+    assert.equal(IsArray(input), false, `expected false for ${JSON.stringify(input)}`);
   }
 });

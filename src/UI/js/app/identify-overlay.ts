@@ -19,7 +19,10 @@ function parseData(): IdentifyOverlayData {
     const raw = window.location.search.replace(/^\?/, '');
     if (!raw) return {};
     const params = new URLSearchParams(raw);
-    const data: IdentifyOverlayData = JSON.parse(params.get('data') || '{}') || {};
+    // `data` is JSON the main process wrote (IdentifyOverlay.Show), so it is taken
+    // as written.
+    const data: IdentifyOverlayData =
+      (JSON.parse(params.get('data') || '{}') as IdentifyOverlayData | null) || {};
     const resolutionLabel = params.get('resolutionLabel');
     const screenNumber = params.get('screenNumber');
     if (resolutionLabel) data.ResolutionLabel = resolutionLabel;
