@@ -93,17 +93,28 @@ function ApplyProfile(NewProfile: ClientProfile | null | undefined): void {
   RenderManualServer();
 }
 
+/** Show the update section with its status line alone: no notes, no install or later buttons. */
+function ShowUpdateStatus(StatusText: string | null): void {
+  removeClass(byId('UPDATE_SECTION'), 'd-none');
+  addClass(byId('UPDATE_INSTALL_BTN'), 'd-none');
+  addClass(byId('UPDATE_LATER_BTN'), 'd-none');
+  addClass(byId('UPDATE_NOTES_WRAPPER'), 'd-none');
+  setText(byId('UPDATE_CHANGELOG'), '');
+  if (StatusText != null) setText(byId('UPDATE_STATUS'), StatusText);
+}
+
 function ApplyAppUpdateStatus(payload: AppUpdateStatus | null | undefined): void {
   if (!payload || typeof payload !== 'object') return;
   try {
-    removeClass(byId('UPDATE_SECTION'), 'd-none');
-    addClass(byId('UPDATE_INSTALL_BTN'), 'd-none');
-    addClass(byId('UPDATE_LATER_BTN'), 'd-none');
-    addClass(byId('UPDATE_NOTES_WRAPPER'), 'd-none');
-    setText(byId('UPDATE_CHANGELOG'), '');
-    const StatusText = GetAppUpdateStatusText(payload);
-    if (StatusText != null) setText(byId('UPDATE_STATUS'), StatusText);
+    ShowUpdateStatus(GetAppUpdateStatusText(payload));
   } catch {}
+}
+
+/** Show `Message` under the manual server fields, or clear and hide it with null. */
+function SetManualServerError(Message: string | null): void {
+  const ErrorBox = byId('MANUAL_SERVER_ERROR');
+  toggleClass(ErrorBox, 'd-none', Message === null);
+  setText(ErrorBox, Message ?? '');
 }
 
 function RenderManualServerPortHint(): void {
@@ -212,12 +223,7 @@ async function Main(): Promise<void> {
     try {
       await window.API.CheckForAppUpdates();
     } catch {}
-    removeClass(byId('UPDATE_SECTION'), 'd-none');
-    setText(byId('UPDATE_STATUS'), 'Checking for updates…');
-    addClass(byId('UPDATE_INSTALL_BTN'), 'd-none');
-    addClass(byId('UPDATE_LATER_BTN'), 'd-none');
-    addClass(byId('UPDATE_NOTES_WRAPPER'), 'd-none');
-    setText(byId('UPDATE_CHANGELOG'), '');
+    ShowUpdateStatus('Checking for updates…');
   });
   onOnly(byId('UPDATE_INSTALL_BTN'), 'click', async () => {
     try {
@@ -232,37 +238,31 @@ async function Main(): Promise<void> {
   });
 
   onOnly(byId('BTN_MANUAL_SERVER_SAVE'), 'click', async () => {
-    const ErrorBox = byId('MANUAL_SERVER_ERROR');
-    const ShowError = (Message: string) => {
-      removeClass(ErrorBox, 'd-none');
-      setText(ErrorBox, Message);
-    };
     const host = valueOf(byId<HTMLInputElement>('MANUAL_SERVER_HOST')).trim();
     const portRaw = valueOf(byId<HTMLInputElement>('MANUAL_SERVER_PORT')).trim();
     const port = portRaw ? Number(portRaw) : DEFAULT_SERVER_PORT;
-    addClass(ErrorBox, 'd-none');
-    setText(ErrorBox, '');
+    SetManualServerError(null);
     if (!host) {
-      ShowError('Enter the server IP address or hostname.');
+      SetManualServerError('Enter the server IP address or hostname.');
       return;
     }
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      ShowError('Enter a valid port between 1 and 65535.');
+      SetManualServerError('Enter a valid port between 1 and 65535.');
       return;
     }
     try {
       const [err] = (await window.API.SetManualServer(host, port)) || [];
-      if (err) ShowError(String(err));
+      if (err) SetManualServerError(String(err));
     } catch (error) {
-      ShowError(String(error && (error as Error).message ? (error as Error).message : error));
+      SetManualServerError(
+        String(error && (error as Error).message ? (error as Error).message : error)
+      );
     }
   });
 
   onOnly(byId('BTN_MANUAL_SERVER_CLEAR'), 'click', async () => {
     try {
-      const ErrorBox = byId('MANUAL_SERVER_ERROR');
-      addClass(ErrorBox, 'd-none');
-      setText(ErrorBox, '');
+      SetManualServerError(null);
       setValue(byId<HTMLInputElement>('MANUAL_SERVER_PORT'), DEFAULT_SERVER_PORT);
       RenderManualServerPortHint();
       await window.API.ClearManualServer();
