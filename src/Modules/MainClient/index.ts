@@ -90,6 +90,18 @@ function clearIntervals(): void {
   }
 }
 
+/**
+ * Run one step of a teardown. A step that throws is logged, and never stops the
+ * steps after it.
+ */
+function Quietly(Step: () => unknown, Failure: string): void {
+  try {
+    Step();
+  } catch (_error) {
+    Logger.warn(Failure);
+  }
+}
+
 /** The failures worth a warning: the first, then every twelfth (about once a minute). */
 export function shouldWarnConnectError(ConsecutiveErrors: number): boolean {
   return ConsecutiveErrors <= 1 || ConsecutiveErrors % 12 === 0;
@@ -388,29 +400,16 @@ export const Manager = {
     } catch (_error) {
       Logger.warn('Failed to stop network monitor during termination');
     }
-    try {
-      AudioMonitor.Stop();
-    } catch (_error) {
-      Logger.warn('Failed to stop audio monitor during termination');
-    }
+    Quietly(() => AudioMonitor.Stop(), 'Failed to stop audio monitor during termination');
     // Dispose rather than Stop: a teardown also detaches their Electron
     // powerMonitor listeners, which survive an ordinary disconnect (see
     // PowerMonitor) but must not survive into the next Init and be added twice.
-    try {
-      PowerMonitor.Dispose();
-    } catch (_error) {
-      Logger.warn('Failed to stop power monitor during termination');
-    }
-    try {
-      TemperatureMonitor.Dispose();
-    } catch (_error) {
-      Logger.warn('Failed to stop temperature monitor during termination');
-    }
-    try {
-      StorageMonitor.Stop();
-    } catch (_error) {
-      Logger.warn('Failed to stop storage monitor during termination');
-    }
+    Quietly(() => PowerMonitor.Dispose(), 'Failed to stop power monitor during termination');
+    Quietly(
+      () => TemperatureMonitor.Dispose(),
+      'Failed to stop temperature monitor during termination'
+    );
+    Quietly(() => StorageMonitor.Stop(), 'Failed to stop storage monitor during termination');
     disposeDisplayIdentity();
     stopUSBWatcher();
     if (Socket) {
@@ -534,39 +533,15 @@ export const Manager = {
       });
       // Never leave the identify overlay stuck on screen if the link drops.
       BroadcastManager.emit('HideIdentifyOverlay');
-      try {
-        ProcessMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop process monitor on disconnect');
-      }
-      try {
-        NetworkMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop network monitor on disconnect');
-      }
-      try {
-        AudioMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop audio monitor on disconnect');
-      }
+      Quietly(() => ProcessMonitor.Stop(), 'Failed to stop process monitor on disconnect');
+      Quietly(() => NetworkMonitor.Stop(), 'Failed to stop network monitor on disconnect');
+      Quietly(() => AudioMonitor.Stop(), 'Failed to stop audio monitor on disconnect');
       // Stop, not Dispose: the power monitor keeps listening for sleep and wake
       // while disconnected — a suspend is usually what dropped the link — so the
       // first report after reconnecting carries the timestamps.
-      try {
-        PowerMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop power monitor on disconnect');
-      }
-      try {
-        TemperatureMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop temperature monitor on disconnect');
-      }
-      try {
-        StorageMonitor.Stop();
-      } catch (_error) {
-        Logger.warn('Failed to stop storage monitor on disconnect');
-      }
+      Quietly(() => PowerMonitor.Stop(), 'Failed to stop power monitor on disconnect');
+      Quietly(() => TemperatureMonitor.Stop(), 'Failed to stop temperature monitor on disconnect');
+      Quietly(() => StorageMonitor.Stop(), 'Failed to stop storage monitor on disconnect');
       disposeDisplayIdentity();
     });
 
