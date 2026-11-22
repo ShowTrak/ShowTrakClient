@@ -103,6 +103,23 @@ function BuildIdentityBlock(Identity: ResolvedIdentity): ProfileIdentity {
   };
 }
 
+/**
+ * Write a fresh, unadopted profile and drop any manual server. The UUID is this
+ * machine's own hardware identity rather than a new random one, so a reset is
+ * idempotent w.r.t. the UUID and never orphans the client on its server.
+ */
+async function WriteFreshProfile(): Promise<ClientProfile> {
+  const Identity = await HardwareIdentityManager.Resolve();
+  const NewProfile: ClientProfile = {
+    UUID: Identity.UUID,
+    Adopted: false,
+    Identity: BuildIdentityBlock(Identity),
+  };
+  WriteProfileFile(NewProfile);
+  DeleteManualServerFromDisk();
+  return NewProfile;
+}
+
 // Decide whether the cached UUID still belongs to THIS machine.
 //
 // A cached UUID alone cannot be trusted: a Clonezilla image carries the source
@@ -239,17 +256,8 @@ export const Manager = {
     return AttachManualServer(Profile) as ResolvedClientProfile;
   },
 
-  // Resolves back to this machine's own hardware identity, so a reset is
-  // idempotent w.r.t. the UUID. A reset must not orphan the client on the server.
   async ForceResetProfile(): Promise<void> {
-    const Identity = await HardwareIdentityManager.Resolve();
-    const NewProfile: ClientProfile = {
-      UUID: Identity.UUID,
-      Adopted: false,
-      Identity: BuildIdentityBlock(Identity),
-    };
-    WriteProfileFile(NewProfile);
-    DeleteManualServerFromDisk();
+    await WriteFreshProfile();
     Logger.log('Profile.json overwritten');
   },
 
@@ -366,18 +374,8 @@ export const Manager = {
     return ReadManualServerFromDisk();
   },
 
-  // Like ForceResetProfile, this returns the machine to its OWN hardware identity
-  // rather than minting a fresh random one -- a factory reset should not orphan
-  // the client on the server.
   async ResetProfileToFactoryDefaults(): Promise<void> {
-    const Identity = await HardwareIdentityManager.Resolve();
-    const NewProfile: ClientProfile = {
-      UUID: Identity.UUID,
-      Adopted: false,
-      Identity: BuildIdentityBlock(Identity),
-    };
-    WriteProfileFile(NewProfile);
-    DeleteManualServerFromDisk();
+    const NewProfile = await WriteFreshProfile();
     Logger.log('Profile reset to factory defaults.');
     BroadcastManager.emit('ProfileUpdated', NewProfile);
     return;
