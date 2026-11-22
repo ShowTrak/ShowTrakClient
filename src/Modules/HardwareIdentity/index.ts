@@ -42,24 +42,11 @@ async function ResolveOnce(): Promise<ResolvedIdentity> {
     );
   }
 
-  const Macs = GetPhysicalMacs();
-  if (Macs.length) {
-    const Witness = MacWitness(Macs);
-    return {
-      UUID: DeriveUUID('mac', Witness),
-      Source: 'mac',
-      Witness,
-    };
-  }
-
-  return {
-    UUID: randomUUID(),
-    Source: 'random',
-    Witness: null,
-  };
+  return FallbackIdentity();
 }
 
-// Identity derived without the firmware probe, for when it times out or throws.
+// Identity derived without the firmware probe: when it has no trustworthy
+// answer, times out or throws.
 function FallbackIdentity(): ResolvedIdentity {
   const Macs = GetPhysicalMacs();
   if (Macs.length) {
