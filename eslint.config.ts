@@ -74,6 +74,15 @@ export default defineConfig([
     extends: [js.configs.recommended, ...tseslint.configs.recommended, prettier],
     languageOptions: {
       globals: { ...globals.browser, ...globals.node },
+      // Type-aware linting, for the no-unsafe-* rules below. Every linted .ts
+      // file must belong to one of these programs: the main process and preloads
+      // (tsconfig.json), the renderer (tsconfig.renderer.json), and the two
+      // configs at the root (tsconfig.tooling.json). shared/ is not linted here
+      // at all (see the ignores above).
+      parserOptions: {
+        project: ['./tsconfig.json', './tsconfig.renderer.json', './tsconfig.tooling.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
     },
     rules: {
       // The base rule must be off for the TypeScript-aware version to report
@@ -90,6 +99,20 @@ export default defineConfig([
       // The tree is clean of explicit `any`; keep it that way. When a boundary is
       // genuinely unknown, widen to `unknown` and narrow inside rather than `any`.
       '@typescript-eslint/no-explicit-any': 'error',
+      // ...and keep implicit `any` out too. These need type information (see
+      // parserOptions above) and catch the `any` that arrives without being
+      // written: JSON.parse, Array.isArray on an unknown, untyped library
+      // fields, a stream's 'data' chunk. Narrow such a value from `unknown`
+      // rather than letting it flow on as `any`.
+      '@typescript-eslint/no-unsafe-argument': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-declaration-merging': 'error',
+      '@typescript-eslint/no-unsafe-enum-comparison': 'error',
+      '@typescript-eslint/no-unsafe-function-type': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error',
+      '@typescript-eslint/no-unsafe-unary-minus': 'error',
       // `require()` stays the idiom at a few CommonJS interop points — notably
       // the package.json version read in src/Modules/Config, which sits outside
       // rootDir and cannot be a plain import.
