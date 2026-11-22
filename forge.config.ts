@@ -1,20 +1,68 @@
-const { FusesPlugin } = require('@electron-forge/plugin-fuses');
-const { FuseV1Options, FuseVersion } = require('@electron/fuses');
-const path = require('node:path');
-const fs = require('node:fs');
+import type { ForgeConfig } from '@electron-forge/shared-types';
+import { FusesPlugin } from '@electron-forge/plugin-fuses';
+import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import path from 'node:path';
+import fs from 'node:fs';
+
+// Forge loads this file through jiti, which transpiles it on the fly and runs it
+// with CommonJS's `__dirname` and `require` available. tsconfig.tooling.json
+// typechecks it as part of `npm run typecheck`.
+
+type PackagerConfig = NonNullable<ForgeConfig['packagerConfig']>;
+
+/**
+ * Keys this config has always set that the tools Forge 8 drives no longer read,
+ * which is why Forge's types reject them. @electron/osx-sign 2 takes entitlements
+ * and hardened runtime per file, from `optionsForFile` (falling back to its own
+ * built-in entitlements, with hardened runtime on), and has no Gatekeeper
+ * assessment step; @electron/notarize 3 always uses notarytool. So a signed build
+ * does not carry build/entitlements.mac.plist today.
+ *
+ * They are declared here rather than dropped so that moving this file to
+ * TypeScript hands Forge exactly the config it had before. Making the
+ * entitlements take effect (through optionsForFile) would change what a signed
+ * build contains, so it needs checking on a signed, notarized build first.
+ */
+interface LegacyOsxSignKeys {
+  hardenedRuntime: boolean;
+  entitlements: string;
+  entitlementsInherit: string;
+  gatekeeperAssess: boolean;
+}
+type OsxSignOptions = Exclude<NonNullable<PackagerConfig['osxSign']>, true> & LegacyOsxSignKeys;
+type OsxNotarizeOptions = NonNullable<PackagerConfig['osxNotarize']> & { tool: 'notarytool' };
 
 const appleSignIdentity = process.env.APPLE_SIGN_IDENTITY;
 const appleSigningKeychain = process.env.APPLE_KEYCHAIN_PATH;
+const appleApiKeyPath = process.env.APPLE_API_KEY_PATH;
+const appleApiKeyId = process.env.APPLE_API_KEY_ID;
+const appleApiIssuerId = process.env.APPLE_API_ISSUER_ID;
 const shouldSignMac = Boolean(appleSignIdentity);
-const shouldNotarizeMac =
-  shouldSignMac &&
-  Boolean(
-    process.env.APPLE_API_KEY_PATH &&
-    process.env.APPLE_API_KEY_ID &&
-    process.env.APPLE_API_ISSUER_ID
-  );
 
-module.exports = {
+const osxSign: OsxSignOptions | undefined = shouldSignMac
+  ? {
+      identity: appleSignIdentity,
+      ...(appleSigningKeychain ? { keychain: appleSigningKeychain } : {}),
+      hardenedRuntime: true,
+      entitlements: path.resolve(__dirname, 'build/entitlements.mac.plist'),
+      entitlementsInherit: path.resolve(__dirname, 'build/entitlements.mac.plist'),
+      gatekeeperAssess: false,
+      strictVerify: true,
+    }
+  : undefined;
+
+// Notarizing needs a signed app and all three App Store Connect API key values.
+const osxNotarize: OsxNotarizeOptions | undefined =
+  shouldSignMac && appleApiKeyPath && appleApiKeyId && appleApiIssuerId
+    ? {
+        tool: 'notarytool',
+        appleApiKey: appleApiKeyPath,
+        appleApiKeyId,
+        appleApiIssuer: appleApiIssuerId,
+      }
+    : undefined;
+
+const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     // Copy the *contents* of symlinks rather than the links themselves.
@@ -93,29 +141,8 @@ module.exports = {
       NSLocalNetworkUsageDescription:
         'ShowTrak Client needs local network access to find and connect to your ShowTrak Server.',
     },
-    ...(shouldSignMac
-      ? {
-          osxSign: {
-            identity: appleSignIdentity,
-            ...(appleSigningKeychain ? { keychain: appleSigningKeychain } : {}),
-            hardenedRuntime: true,
-            entitlements: path.resolve(__dirname, 'build/entitlements.mac.plist'),
-            entitlementsInherit: path.resolve(__dirname, 'build/entitlements.mac.plist'),
-            gatekeeperAssess: false,
-            strictVerify: true,
-          },
-        }
-      : {}),
-    ...(shouldNotarizeMac
-      ? {
-          osxNotarize: {
-            tool: 'notarytool',
-            appleApiKey: process.env.APPLE_API_KEY_PATH,
-            appleApiKeyId: process.env.APPLE_API_KEY_ID,
-            appleApiIssuer: process.env.APPLE_API_ISSUER_ID,
-          },
-        }
-      : {}),
+    ...(osxSign ? { osxSign } : {}),
+    ...(osxNotarize ? { osxNotarize } : {}),
   },
   rebuildConfig: {},
   makers: [
@@ -129,13 +156,17 @@ module.exports = {
         setupIcon: './src/images/icon.ico',
       },
     },
+    // Forge's types require `config` on every maker listed by name; `{}` is the
+    // default a maker falls back to when it is left out.
     {
       name: '@electron-forge/maker-zip',
       platforms: ['darwin'],
+      config: {},
     },
     {
       name: '@electron-forge/maker-zip',
       platforms: ['linux'],
+      config: {},
     },
     {
       name: '@electron-forge/maker-deb',
@@ -178,7 +209,11 @@ module.exports = {
     // signed; the UI is English and Chromium falls back to en-US. See
     // scripts/trim-electron-locales.js.
     packageAfterExtract: async (_forgeConfig, buildPath) => {
-      const { trimElectronLocales } = require('./scripts/trim-electron-locales');
+      // scripts/ stays JavaScript, outside any TypeScript program, so the one
+      // export used here is declared rather than inferred.
+      const { trimElectronLocales } = require('./scripts/trim-electron-locales') as {
+        trimElectronLocales: (buildPath: string) => number;
+      };
       const removed = trimElectronLocales(buildPath);
       console.log(`[forge] Removed ${removed} unused Chromium locale pack(s)`);
     },
@@ -210,3 +245,5 @@ module.exports = {
     },
   },
 };
+
+export default config;
