@@ -7,12 +7,20 @@
 // warning, the lint step still passes. So this pins both, and lints a known
 // violation in each typed program to prove the rules actually report.
 
+// typescript-eslint builds each program once from the files on disk when it
+// believes it is a one-off run, which it assumes whenever CI=true. lintText()
+// below lints text that is not on disk, so in that mode the types come from
+// the real file and the deliberate violation is never seen (CI reported
+// nothing where a local run reports three). Turn the inference off for this
+// process; it has to be set before typescript-eslint parses anything.
+process.env.TSESTREE_SINGLE_RUN = 'false';
+
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { ESLint } = require('eslint');
 
-const REPO = path.join(__dirname, '..');
+const REPO = path.resolve(__dirname, '..');
 
 const UNSAFE_RULES = [
   '@typescript-eslint/no-unsafe-argument',
@@ -52,7 +60,9 @@ test('every TypeScript file is linted with type information and the no-unsafe ru
   for (const File of TYPED_FILES) {
     const Config = await linter().calculateConfigForFile(path.join(REPO, File));
     assert.deepEqual(Config.languageOptions.parserOptions.project, PROJECTS, File);
-    assert.equal(Config.languageOptions.parserOptions.tsconfigRootDir, REPO, File);
+    // Resolved: ESLint hands the config's import.meta.dirname over with forward
+    // slashes on Windows (D:/a/...), which is the same folder as D:\a\....
+    assert.equal(path.resolve(Config.languageOptions.parserOptions.tsconfigRootDir), REPO, File);
     assert.deepEqual(Config.rules['@typescript-eslint/no-explicit-any'], [2], File);
     for (const Rule of UNSAFE_RULES) {
       assert.deepEqual(Config.rules[Rule], [2], `${File}: ${Rule}`);
