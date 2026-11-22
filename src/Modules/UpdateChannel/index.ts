@@ -9,9 +9,11 @@
 import fs from 'fs';
 import path from 'path';
 
+import type { UpdateChannelState } from '@showtrak/protocol/client';
 import { NormalizeUpdateChannel, type UpdateChannel } from '@showtrak/protocol/runtime';
 import { Manager as AppDataManager } from '../AppData';
 import { CreateLogger } from '../Logger';
+import type { Unverified } from '../Utils';
 
 const Logger = CreateLogger('UpdateChannel');
 
@@ -22,7 +24,9 @@ function ChannelPath(): string {
 export const Manager = {
   Get(): UpdateChannel {
     try {
-      const Raw = JSON.parse(fs.readFileSync(ChannelPath(), 'utf8')) as { Channel?: unknown };
+      const Raw = JSON.parse(
+        fs.readFileSync(ChannelPath(), 'utf8')
+      ) as Unverified<UpdateChannelState> | null;
       return NormalizeUpdateChannel(Raw && Raw.Channel);
     } catch {
       return 'stable';
@@ -34,7 +38,8 @@ export const Manager = {
     const File = ChannelPath();
     fs.mkdirSync(path.dirname(File), { recursive: true });
     const Temp = `${File}.tmp`;
-    fs.writeFileSync(Temp, JSON.stringify({ Channel }, null, 2));
+    const State: UpdateChannelState = { Channel };
+    fs.writeFileSync(Temp, JSON.stringify(State, null, 2));
     fs.renameSync(Temp, File);
     Logger.log(`Update channel set to ${Channel}`);
     return Channel;

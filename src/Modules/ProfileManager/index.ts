@@ -8,7 +8,7 @@ import { Manager as AppDataManager } from '../AppData';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
-import { IsRecord, ReadIdentityToken } from '../Utils';
+import { IsRecord, ReadIdentityToken, type Unverified } from '../Utils';
 
 const Logger = CreateLogger('ProfileManager');
 
@@ -54,8 +54,10 @@ function NormalizeManualServer(Host: unknown, Port: unknown): ManualServer | nul
 function ReadManualServerFromDisk(): ManualServer | null {
   if (!fs.existsSync(ManualServerPath)) return null;
   try {
-    const Stored: unknown = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
-    return IsRecord(Stored) ? NormalizeManualServer(Stored.Host, Stored.Port) : null;
+    const Parsed: unknown = JSON.parse(fs.readFileSync(ManualServerPath, 'utf-8'));
+    if (!IsRecord(Parsed)) return null;
+    const Stored: Unverified<ManualServer> = Parsed;
+    return NormalizeManualServer(Stored.Host, Stored.Port);
   } catch (Err) {
     Logger.error('Failed to read ManualServer.json', Err);
     return null;

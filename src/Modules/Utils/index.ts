@@ -60,6 +60,14 @@ export function IsRecord(Value: unknown): Value is Record<string, unknown> {
 }
 
 /**
+ * A parsed file or payload that should have the shape `T` but has not been
+ * checked: `T`'s keys, every one optional and `unknown`. A record from IsRecord
+ * assigns to it, so reads are spelled with the contract's own key names (a typo
+ * fails to compile) while each value is still checked before use.
+ */
+export type Unverified<T> = { [K in keyof T]?: unknown };
+
+/**
  * Array.isArray, narrowing to unknown[] rather than any[], so the elements of an
  * array that came from parsed JSON are checked before use too.
  */

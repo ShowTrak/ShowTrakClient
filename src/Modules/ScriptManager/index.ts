@@ -8,12 +8,13 @@ import type {
   ScriptFileEntry,
   VariableEnvironment,
 } from '@showtrak/protocol';
+import type { ScriptDeploymentState } from '@showtrak/protocol/client';
 import type { ScriptLaunchState, TrayScriptEntry } from '../../types/client';
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as VariableStore } from '../Variables';
-import { ErrorMessage, IsRecord } from '../Utils';
+import { ErrorMessage, IsRecord, type Unverified } from '../Utils';
 import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ScriptManager');
@@ -130,7 +131,8 @@ const Internal = {
       }
       const Raw = fs.readFileSync(StatePath, 'utf-8');
       const Parsed: unknown = JSON.parse(Raw || '{}');
-      const Stored = IsRecord(Parsed) ? Parsed.LastAppliedDeploymentFingerprint : undefined;
+      const State: Unverified<ScriptDeploymentState> = IsRecord(Parsed) ? Parsed : {};
+      const Stored = State.LastAppliedDeploymentFingerprint;
       LastAppliedDeploymentFingerprint = typeof Stored === 'string' ? Stored : null;
     } catch (Err) {
       Logger.warn(`Failed to load script deployment state: ${(Err as Error).message}`);
@@ -140,18 +142,12 @@ const Internal = {
 
   PersistDeploymentState(): void {
     const StatePath = Internal.GetDeploymentStatePath();
+    const State: ScriptDeploymentState = {
+      LastAppliedDeploymentFingerprint,
+      UpdatedAt: Date.now(),
+    };
     try {
-      fs.writeFileSync(
-        StatePath,
-        JSON.stringify(
-          {
-            LastAppliedDeploymentFingerprint,
-            UpdatedAt: Date.now(),
-          },
-          null,
-          2
-        )
-      );
+      fs.writeFileSync(StatePath, JSON.stringify(State, null, 2));
     } catch (Err) {
       Logger.warn(`Failed to persist script deployment state: ${(Err as Error).message}`);
     }

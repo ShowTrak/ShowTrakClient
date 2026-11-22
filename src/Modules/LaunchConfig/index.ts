@@ -3,6 +3,7 @@
 // this module only normalizes an incoming payload and exposes the shared minimum
 // delay. There is intentionally no disk cache.
 import type { LaunchConfigPayload } from '@showtrak/protocol';
+import type { Unverified } from '../Utils';
 
 // Minimum delay (seconds) enforced before a run-on-launch script fires. The
 // delay doubles as the abort-window countdown, so it must stay long enough for
@@ -19,7 +20,7 @@ export const Manager = {
   // both are null. ShowCountdown is the server's global toggle for the on-screen
   // abort countdown and defaults to true when the server omits it (older servers).
   Normalize(Input: unknown): LaunchConfigPayload {
-    const Source: Partial<Record<keyof LaunchConfigPayload, unknown>> =
+    const Source: Unverified<LaunchConfigPayload> =
       Input && typeof Input === 'object' ? (Input as Record<string, unknown>) : {};
     const ScriptID =
       typeof Source.ScriptID === 'string' && Source.ScriptID.trim() ? Source.ScriptID.trim() : null;

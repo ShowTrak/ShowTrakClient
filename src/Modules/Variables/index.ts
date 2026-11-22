@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 
 import type { VariableEnvironment, VariablePayload } from '@showtrak/protocol';
+import type { VariablesState } from '@showtrak/protocol/client';
 import { CreateLogger } from '../Logger';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as WindowsEnvironment } from '../WindowsEnvironment';
-import { IsRecord } from '../Utils';
+import { IsRecord, type Unverified } from '../Utils';
 
 const Logger = CreateLogger('Variables');
 
@@ -88,7 +89,7 @@ const Internal = {
     try {
       if (!fs.existsSync(StatePath)) return;
       const Parsed: unknown = JSON.parse(fs.readFileSync(StatePath, 'utf-8') || '{}');
-      const Stored = IsRecord(Parsed) ? Parsed : {};
+      const Stored: Unverified<VariablesState> = IsRecord(Parsed) ? Parsed : {};
       Environment = Internal.Sanitize(Stored.Environment);
       Exported = Internal.SanitizeExported(Stored.Exported, Environment);
       PersistedSignature = JSON.stringify([Environment, Exported]);
@@ -107,11 +108,9 @@ const Internal = {
     // otherwise make every push a disk write).
     const Signature = JSON.stringify([Environment, Exported]);
     if (Signature === PersistedSignature && fs.existsSync(StatePath)) return;
+    const State: VariablesState = { Environment, Exported, UpdatedAt: Date.now() };
     try {
-      fs.writeFileSync(
-        StatePath,
-        JSON.stringify({ Environment, Exported, UpdatedAt: Date.now() }, null, 2)
-      );
+      fs.writeFileSync(StatePath, JSON.stringify(State, null, 2));
       PersistedSignature = Signature;
     } catch (Err) {
       Logger.warn(`Failed to persist variables: ${(Err as Error).message}`);
