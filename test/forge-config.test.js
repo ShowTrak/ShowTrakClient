@@ -209,9 +209,13 @@ test('the ignore list keeps the runtime and drops sources, tooling and tests', a
     '/dist-test/UI/js/app/main.js',
     '/coverage/lcov.info',
     '/eslint.config.ts',
+    '/forge.config.ts',
     '/tsconfig.json',
     '/tsconfig.tooling.json',
+    '/tsconfig.renderer.json',
+    '/tsconfig.renderer.test.json',
     '/README.md',
+    '/DEVELOPMENT.md',
     '/package-lock.json',
     '/dist/main.js.map',
   ]) {

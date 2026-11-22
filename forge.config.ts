@@ -111,14 +111,15 @@ const config: ForgeConfig = {
       /^\/\.github($|\/)/,
       /^\/\.husky($|\/)/,
       /^\/\.vscode($|\/)/,
-      // Config & docs.
+      // Config & docs. Forge and ESLint read their configs from the project,
+      // never from the packaged app.
       /^\/tsconfig.*\.json$/,
-      /^\/eslint\.config\.ts$/,
+      /^\/(eslint|forge)\.config\.ts$/,
       /^\/\.prettier/,
       /^\/\.gitignore$/,
       /^\/\.gitattributes$/,
       /^\/\.gitmodules$/,
-      /^\/README\.md$/,
+      /^\/(README|DEVELOPMENT)\.md$/,
       /^\/package-lock\.json$/,
       // Source maps are debug-only; strip from release builds.
       /\.map$/,
