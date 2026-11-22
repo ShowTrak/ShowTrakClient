@@ -11,41 +11,19 @@
 //     pipe that has since closed,
 //   - socket teardown races during a server disconnect.
 //
-// This installs one `uncaughtException` / `unhandledRejection` pair that:
-//   - Swallows transient network errors (interface loss is expected and
-//     self-heals) with a warning, so a NIC flap never kills the agent.
-//   - Logs anything else loudly as a fatal-but-survived error. We deliberately do
-//     NOT exit: an agent that stays up and degraded can still be reached, wake-on-
-//     LAN'd and re-adopted, whereas a dead one needs a physical visit. Genuine
-//     bugs remain visible in the logs at error level.
-//
-// Mirrors ShowTrakServer's src/main/process-guards.ts.
+// The guards themselves are shared with ShowTrak Server and Timers
+// (@showtrak/protocol/runtime InstallProcessGuards): transient network errors
+// are swallowed with a warning, anything else is logged loudly as a
+// fatal-but-survived error, and the process deliberately does NOT exit. An agent
+// that stays up and degraded can still be reached, wake-on-LAN'd and re-adopted,
+// whereas a dead one needs a physical visit. This module is the Client's wiring:
+// they log as ProcessGuard.
 import { CreateLogger } from '../Logger';
-import { IsTransientNetworkError, DescribeError } from '@showtrak/protocol/runtime';
+import { InstallProcessGuards } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ProcessGuard');
 
-let Installed = false;
-
+/** Install the process guards. Once per process: later calls do nothing. */
 export function installProcessGuards(): void {
-  if (Installed) return;
-  Installed = true;
-
-  process.on('uncaughtException', (Err: unknown) => {
-    if (IsTransientNetworkError(Err)) {
-      Logger.warn(`Ignored transient network error: ${DescribeError(Err)}`);
-      return;
-    }
-    Logger.error('Uncaught exception (app kept alive):', Err);
-  });
-
-  process.on('unhandledRejection', (Reason: unknown) => {
-    if (IsTransientNetworkError(Reason)) {
-      Logger.warn(`Ignored transient network rejection: ${DescribeError(Reason)}`);
-      return;
-    }
-    Logger.error('Unhandled promise rejection (app kept alive):', Reason);
-  });
-
-  Logger.log('Process-level fault guards installed');
+  InstallProcessGuards(Logger);
 }

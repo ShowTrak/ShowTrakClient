@@ -12,8 +12,9 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 
+import { applyWindowSecurityGuards } from '@showtrak/protocol/electron-main';
+
 import { CreateLogger } from '../Modules/Logger';
-import { applyWindowSecurityGuards } from './window-guards';
 
 const Logger = CreateLogger('AppWindow');
 

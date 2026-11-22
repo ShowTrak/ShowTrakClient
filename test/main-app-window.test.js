@@ -12,6 +12,7 @@ const MODULE_PATH = path.join(__dirname, '..', 'dist', 'main', 'app-window.js');
 
 function load() {
   const windows = [];
+  const guarded = [];
   class FakeBrowserWindow extends EventEmitter {
     constructor(options) {
       super();
@@ -54,9 +55,11 @@ function load() {
   const mod = loadWithMocks(MODULE_PATH, {
     electron: { app: { isPackaged: true }, BrowserWindow: FakeBrowserWindow },
     '../Modules/Logger': { CreateLogger: () => createSilentLogger() },
-    './window-guards': { applyWindowSecurityGuards() {} },
+    '@showtrak/protocol/electron-main': {
+      applyWindowSecurityGuards: (window) => guarded.push(window),
+    },
   });
-  return { ...mod, windows };
+  return { ...mod, windows, guarded };
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -79,6 +82,15 @@ test('every window is sandboxed, isolated and has no spellchecker', () => {
   assert.equal(BASE_WEB_PREFERENCES.nodeIntegration, false);
   // Hunspell downloads can only fail, slowly, on an air-gapped show network.
   assert.equal(BASE_WEB_PREFERENCES.spellcheck, false);
+});
+
+test('the config window gets the shared navigation and link guards', () => {
+  // The guards themselves are specified in the protocol repo
+  // (spec/electron-main/window.spec.js); what is the Client's is applying them.
+  const H = load();
+  H.openConfigureWindow();
+  assert.deepEqual(H.guarded, H.windows);
+  assert.equal(H.windows.length, 1);
 });
 
 test('in tray mode a closed config window is destroyed, and reopening makes a fresh one', async () => {

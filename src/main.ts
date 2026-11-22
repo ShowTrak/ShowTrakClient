@@ -5,8 +5,9 @@
 // app-lifecycle event handlers, and the whenReady boot order. Everything else
 // lives in src/main/*, mirroring ShowTrakServer's layout:
 //
-//   app-window.ts        the config window + BASE_WEB_PREFERENCES
-//   window-guards.ts     per-window navigation/link security
+//   app-window.ts        the config window + BASE_WEB_PREFERENCES (its
+//                        navigation/link guards come from
+//                        @showtrak/protocol/electron-main)
 //   renderer-bus.ts      the one guarded path for main -> renderer pushes
 //   rpc.ts               IPC handler plumbing
 //   ipc-handlers.ts      the channels the config window can invoke
