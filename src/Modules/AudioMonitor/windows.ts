@@ -1,6 +1,12 @@
 import type { AudioDirection, AudioEndpoint } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { Hosts, LastJsonLine, RunPowerShell, type PowerShellPrelude } from '../PowerShell';
+import {
+  Hosts,
+  LastJsonLine,
+  ParseOutput,
+  RunPowerShell,
+  type PowerShellPrelude,
+} from '../PowerShell';
 import {
   NormalizeVolume,
   PositiveInteger,
@@ -375,20 +381,11 @@ function RunAudioScript(Script: string): Promise<Result<string>> {
 }
 
 export async function CollectWindowsAudio(): Promise<Result<AudioSample>> {
-  const [Error_, Output] = await RunAudioScript(WINDOWS_QUERY_SCRIPT);
-  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
-  try {
-    return [
-      null,
-      {
-        Backend: 'wasapi',
-        Endpoints: ParseWindowsAudio(Output),
-        Capabilities: WASAPI_CAPABILITIES,
-      },
-    ];
-  } catch (error) {
-    return [error, null];
-  }
+  return ParseOutput(await RunAudioScript(WINDOWS_QUERY_SCRIPT), (Output) => ({
+    Backend: 'wasapi',
+    Endpoints: ParseWindowsAudio(Output),
+    Capabilities: WASAPI_CAPABILITIES,
+  }));
 }
 
 export async function SetWindowsAudioLevel(

@@ -16,7 +16,7 @@
 // fixture tests only.
 import type { USBDevice, USBDeviceState } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { Hosts, LastJsonLine, RunPowerShell } from '../PowerShell';
+import { Hosts, LastJsonLine, ParseOutput, RunPowerShell } from '../PowerShell';
 
 /** One USB device as Windows enumerates it. */
 export interface PnPUSBEntry {
@@ -184,15 +184,10 @@ const HOST_TIMEOUT_MS = 15000;
 
 /** Every present USB device's PnP state; an error when it could not be read. */
 export async function QueryWindowsUSBStates(): Promise<Result<PnPUSBEntry[]>> {
-  const [Error_, Output] = await RunPowerShell(Hosts.Wmi, WINDOWS_PNP_SCRIPT, {
+  const Outcome = await RunPowerShell(Hosts.Wmi, WINDOWS_PNP_SCRIPT, {
     TimeoutMs: HOST_TIMEOUT_MS,
   });
-  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
-  try {
-    return [null, ParsePnPEntries(Output)];
-  } catch (error) {
-    return [error, null];
-  }
+  return ParseOutput(Outcome, ParsePnPEntries);
 }
 
 export const _internal = { HOST_TIMEOUT_MS };

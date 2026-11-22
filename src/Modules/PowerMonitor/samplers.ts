@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import type { BatteryStatus } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { Hosts, LastJsonLine, RunPowerShell } from '../PowerShell';
+import { Hosts, LastJsonLine, ParseOutput, RunPowerShell } from '../PowerShell';
 import { RunCommand } from '../AudioMonitor/shared';
 
 // Battery and mains, per platform. Each reader answers the same three questions
@@ -149,15 +149,13 @@ export function MapWin32Battery(Rows: Win32BatteryRow[]): Omit<PowerReading, 'Ba
 const HOST_TIMEOUT_MS = 15000;
 
 export async function CollectWindowsPower(): Promise<Result<PowerReading>> {
-  const [Error_, Output] = await RunPowerShell(Hosts.Wmi, WINDOWS_BATTERY_SCRIPT, {
+  const Outcome = await RunPowerShell(Hosts.Wmi, WINDOWS_BATTERY_SCRIPT, {
     TimeoutMs: HOST_TIMEOUT_MS,
   });
-  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
-  try {
-    return [null, { Backend: 'wmi', ...MapWin32Battery(ParseWin32Battery(Output)) }];
-  } catch (error) {
-    return [error, null];
-  }
+  return ParseOutput(Outcome, (Output) => ({
+    Backend: 'wmi',
+    ...MapWin32Battery(ParseWin32Battery(Output)),
+  }));
 }
 
 // ---------------------------------------------------------------------------

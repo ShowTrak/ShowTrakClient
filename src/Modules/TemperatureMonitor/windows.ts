@@ -31,7 +31,7 @@
 
 import type { TemperatureSensor } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
-import { Hosts, JsonRows, LastJsonLine, RunPowerShell } from '../PowerShell';
+import { Hosts, JsonRows, LastJsonLine, ParseOutput, RunPowerShell } from '../PowerShell';
 import { DeciKelvinToCelsius, KindFromIdentifier, type TemperatureReading } from './sensors';
 
 export type WindowsTemperatureSource =
@@ -231,13 +231,8 @@ const SourceMemory = {
 async function RunTemperatureScript(
   Script: string
 ): Promise<Result<ReturnType<typeof ParseWindowsTemperatures>>> {
-  const [Error_, Output] = await RunPowerShell(Hosts.Wmi, Script, { TimeoutMs: HOST_TIMEOUT_MS });
-  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
-  try {
-    return [null, ParseWindowsTemperatures(Output)];
-  } catch (error) {
-    return [error, null];
-  }
+  const Outcome = await RunPowerShell(Hosts.Wmi, Script, { TimeoutMs: HOST_TIMEOUT_MS });
+  return ParseOutput(Outcome, ParseWindowsTemperatures);
 }
 
 async function Probe(Now: number): Promise<Result<ReturnType<typeof ParseWindowsTemperatures>>> {

@@ -120,6 +120,20 @@ export async function RunPowerShell(
   return RunOneShot(Fallback, Request.FallbackTimeoutMs ?? ONE_SHOT_TIMEOUT_MS);
 }
 
+/**
+ * What a script printed, through `Parse`. A run that failed or printed nothing,
+ * and output that `Parse` throws on, are errors.
+ */
+export function ParseOutput<T>(Outcome: Result<string>, Parse: (Output: string) => T): Result<T> {
+  const [Error_, Output] = Outcome;
+  if (Error_ || Output === null) return [Error_ || new Error('No output'), null];
+  try {
+    return [null, Parse(Output)];
+  } catch (error) {
+    return [error, null];
+  }
+}
+
 /** Stop both hosts now (the app is quitting). Each restarts on its next request. */
 export function DisposeAll(): void {
   Hosts.Desktop.Dispose();
