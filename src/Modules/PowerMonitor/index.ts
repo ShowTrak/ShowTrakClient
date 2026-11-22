@@ -4,6 +4,7 @@ import { CreateLogger } from '../Logger';
 import { ErrorText } from '../AudioMonitor/shared';
 import { CreateListenerSet, GetPowerMonitor } from './electron-power';
 import { CollectPower, DisposePowerSamplers, type PowerCollection } from './samplers';
+import { CreateSnapshotReporter, SignatureChange, type SampleOptions } from '../SnapshotReporter';
 
 const Logger = CreateLogger('PowerMonitor');
 
@@ -19,16 +20,6 @@ const KEEPALIVE_INTERVAL_MS = 60000;
 // into a constant stream of "changes", so the change check compares it in
 // buckets of this many minutes; the value sent is still the exact estimate.
 const TIME_REMAINING_BUCKET_MINUTES = 5;
-
-let activeSocket: ShowTrakSocket | null = null;
-let pollTimer: NodeJS.Timeout | null = null;
-let lastSignature: string | null = null;
-let lastEmitAt = 0;
-let lastSnapshot: PowerStatusSnapshot | null = null;
-let inFlight: Promise<void> | null = null;
-// Bumped on every Start/Stop, so a sample that was already running when the
-// connection changed can tell its result belongs to a session that has ended.
-let generation = 0;
 
 // When the machine last slept and woke, for the life of this process. These are
 // deliberately NOT reset when the connection drops: sleeping is usually what
@@ -49,15 +40,16 @@ const Listeners = CreateListenerSet({
   resume: () => {
     lastResumeAt = Date.now();
     Logger.log('System resumed');
-    if (activeSocket) void RunSample({ ForceEmit: true, Queue: true, ForceRead: true });
+    if (Reporter.IsActive())
+      void Reporter.Sample({ ForceEmit: true, Queue: true, ForceRead: true });
   },
   // A power-source change is also the moment a battery (a UPS) may have
   // appeared, so these read the platform even if it last said "no battery".
   'on-ac': () => {
-    if (activeSocket) void RunSample({ Queue: true, ForceRead: true });
+    if (Reporter.IsActive()) void Reporter.Sample({ Queue: true, ForceRead: true });
   },
   'on-battery': () => {
-    if (activeSocket) void RunSample({ Queue: true, ForceRead: true });
+    if (Reporter.IsActive()) void Reporter.Sample({ Queue: true, ForceRead: true });
   },
 });
 
@@ -164,22 +156,21 @@ function Timestamps(): PowerTimestamps {
   return { LastSuspendAt: lastSuspendAt, LastResumeAt: lastResumeAt };
 }
 
-function Emit(Socket: ShowTrakSocket, Snapshot: PowerStatusSnapshot): void {
-  lastSignature = SnapshotSignature(Snapshot);
-  lastEmitAt = Date.now();
-  Socket.emit('PowerStatus', Snapshot);
+interface PowerRead {
+  /** Read the platform even if it recently reported no battery. */
+  ForceRead: boolean;
 }
 
 /** Report the last reading with fresh timestamps, without sampling. */
 function EmitImmediately(): void {
-  const Socket = activeSocket;
-  if (!Socket || !Socket.connected) return;
+  if (!Reporter.IsConnected()) return;
   const OnBattery = ElectronOnBattery();
-  const Snapshot: PowerStatusSnapshot = lastSnapshot
+  const Last = Reporter.LastSnapshot();
+  const Snapshot: PowerStatusSnapshot = Last
     ? {
-        ...lastSnapshot,
+        ...Last,
         SampledAt: Date.now(),
-        OnBattery: OnBattery ?? lastSnapshot.OnBattery,
+        OnBattery: OnBattery ?? Last.OnBattery,
         ...Timestamps(),
       }
     : {
@@ -189,85 +180,43 @@ function EmitImmediately(): void {
         OnBattery,
         ...Timestamps(),
       };
-  lastSnapshot = Snapshot;
   try {
-    Emit(Socket, Snapshot);
+    Reporter.Report(Snapshot);
   } catch (error) {
     Logger.warn(`Could not report power state: ${ErrorText(error, 'unknown error')}`);
   }
 }
 
-async function SampleAndReport(
-  ForceEmit: boolean,
-  Generation: number,
-  ForceRead = false
-): Promise<void> {
-  const Collection = await CollectPower(process.platform, { Force: ForceRead });
-  if (Generation !== generation) return;
-  if (!Collection.Ok && !Collection.Unsupported) {
-    Logger.warn(`Power sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
-  }
-  const Snapshot = BuildSnapshot(Collection, ElectronOnBattery(), Timestamps());
-  lastSnapshot = Snapshot;
-
-  const Socket = activeSocket;
-  if (!Socket || !Socket.connected) return;
-  const Signature = SnapshotSignature(Snapshot);
-  const Now = Date.now();
-  if (!ForceEmit && Signature === lastSignature && Now - lastEmitAt < KEEPALIVE_INTERVAL_MS) {
-    return;
-  }
-  Emit(Socket, Snapshot);
-}
-
-interface SampleOptions {
-  /** Report even if nothing changed. */
-  ForceEmit?: boolean;
-  /** Run a fresh sample after any in-flight one rather than sharing its result. */
-  Queue?: boolean;
-  /** Read the platform even if it recently reported no battery. */
-  ForceRead?: boolean;
-}
-
-function RunSample(Options: SampleOptions = {}): Promise<void> {
-  if (inFlight) {
-    if (!Options.Queue) return inFlight;
-    return inFlight.then(() => RunSample(Options));
-  }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.ForceRead)
-    .catch((error: unknown) => {
-      Logger.warn(`Power sample threw: ${ErrorText(error, 'unknown error')}`);
-    })
-    .finally(() => {
-      if (inFlight === Current) inFlight = null;
-    });
-  inFlight = Current;
-  return Current;
-}
-
-function ClearTimers(): void {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-}
+const Reporter = CreateSnapshotReporter({
+  Noun: 'Power',
+  Logger,
+  PollIntervalMs: POLL_INTERVAL_MS,
+  KeepaliveIntervalMs: KEEPALIVE_INTERVAL_MS,
+  Read: (Options: SampleOptions<PowerRead>) =>
+    CollectPower(process.platform, { Force: !!Options.ForceRead }),
+  Build(Collection: PowerCollection) {
+    if (!Collection.Ok && !Collection.Unsupported) {
+      Logger.warn(`Power sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
+    }
+    return BuildSnapshot(Collection, ElectronOnBattery(), Timestamps());
+  },
+  Change: SignatureChange(SnapshotSignature),
+  Emit(Socket, Snapshot) {
+    Socket.emit('PowerStatus', Snapshot);
+  },
+  // EmitImmediately reports from it, and a suspend can come before a new
+  // connection's first sample has finished.
+  KeepLastSnapshot: true,
+});
 
 export const Manager = {
   /** Begin reporting on a freshly connected socket. Resolves after the first report. */
   Start(Socket: ShowTrakSocket | null): Promise<void> {
-    ClearTimers();
-    generation += 1;
-    activeSocket = Socket || null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    inFlight = null;
     // Idempotent: a reconnect or a service restart never stacks a second set.
     Listeners.Attach();
-    pollTimer = setInterval(() => {
-      void RunSample();
-    }, POLL_INTERVAL_MS);
-    if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection, so it
     // goes out even if nothing changed since the last one.
-    return RunSample({ ForceEmit: true, Queue: true });
+    return Reporter.Start(Socket);
   },
 
   /**
@@ -275,12 +224,7 @@ export const Manager = {
    * attached so a sleep or wake while disconnected is still timestamped.
    */
   Stop(): void {
-    ClearTimers();
-    generation += 1;
-    activeSocket = null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    inFlight = null;
+    Reporter.Stop();
     DisposePowerSamplers();
   },
 
@@ -291,7 +235,7 @@ export const Manager = {
   },
 
   GetLastSnapshot(): PowerStatusSnapshot | null {
-    return lastSnapshot;
+    return Reporter.LastSnapshot();
   },
 };
 
@@ -306,6 +250,6 @@ export const _internal = {
   ResetTimestamps(): void {
     lastSuspendAt = null;
     lastResumeAt = null;
-    lastSnapshot = null;
+    Reporter.ForgetLastSnapshot();
   },
 };

@@ -3,6 +3,7 @@ import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
 import { ErrorText } from '../AudioMonitor/shared';
 import { CreateListenerSet } from '../PowerMonitor/electron-power';
+import { CreateSnapshotReporter } from '../SnapshotReporter';
 import {
   CollectTemperatures,
   DisposeTemperatureSamplers,
@@ -32,22 +33,10 @@ const UNSUPPORTED_MESSAGES: Record<string, string> = {
 };
 const MAC_THERMAL_STATE_MESSAGE = 'macOS reports thermal pressure only.';
 
-let activeSocket: ShowTrakSocket | null = null;
-let pollTimer: NodeJS.Timeout | null = null;
-// The snapshot last actually reported: the change check compares sensor values
-// against what the server has, so a slow drift still crosses the threshold.
-let lastEmitted: TemperaturesSnapshot | null = null;
-let lastEmitAt = 0;
-let lastSnapshot: TemperaturesSnapshot | null = null;
-let inFlight: Promise<void> | null = null;
-// Bumped on every Start/Stop, so a sample that was already running when the
-// connection changed can tell its result belongs to a session that has ended.
-let generation = 0;
-
 const Listeners = CreateListenerSet({
   // macOS only; Electron never fires it elsewhere.
   'thermal-state-change': () => {
-    if (activeSocket) void RunSample({ Queue: true });
+    if (Reporter.IsActive()) void Reporter.Sample({ Queue: true });
   },
 });
 
@@ -120,76 +109,36 @@ export function HasMeaningfulChange(
   return false;
 }
 
-async function SampleAndReport(ForceEmit: boolean, Generation: number): Promise<void> {
-  const Collection = await CollectTemperatures();
-  if (Generation !== generation) return;
-  if (!Collection.Ok) {
-    Logger.warn(`Temperature sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
-  }
-  const Snapshot = BuildSnapshot(Collection);
-  lastSnapshot = Snapshot;
-
-  const Socket = activeSocket;
-  if (!Socket || !Socket.connected) return;
-  const Now = Date.now();
-  if (
-    !ForceEmit &&
-    !HasMeaningfulChange(lastEmitted, Snapshot) &&
-    Now - lastEmitAt < KEEPALIVE_INTERVAL_MS
-  ) {
-    return;
-  }
-  lastEmitted = Snapshot;
-  lastEmitAt = Now;
-  Socket.emit('Temperatures', Snapshot);
-}
-
-interface SampleOptions {
-  /** Report even if nothing changed. */
-  ForceEmit?: boolean;
-  /** Run a fresh sample after any in-flight one rather than sharing its result. */
-  Queue?: boolean;
-}
-
-function RunSample(Options: SampleOptions = {}): Promise<void> {
-  if (inFlight) {
-    if (!Options.Queue) return inFlight;
-    return inFlight.then(() => RunSample(Options));
-  }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation)
-    .catch((error: unknown) => {
-      Logger.warn(`Temperature sample threw: ${ErrorText(error, 'unknown error')}`);
-    })
-    .finally(() => {
-      if (inFlight === Current) inFlight = null;
-    });
-  inFlight = Current;
-  return Current;
-}
-
-function ClearTimers(): void {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-}
+const Reporter = CreateSnapshotReporter({
+  Noun: 'Temperature',
+  Logger,
+  PollIntervalMs: POLL_INTERVAL_MS,
+  KeepaliveIntervalMs: KEEPALIVE_INTERVAL_MS,
+  Read: () => CollectTemperatures(),
+  Build(Collection: TemperatureCollection) {
+    if (!Collection.Ok) {
+      Logger.warn(`Temperature sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
+    }
+    return BuildSnapshot(Collection);
+  },
+  // Sensor values are compared against the snapshot last actually reported, so a
+  // slow drift still crosses the threshold.
+  Change: {
+    Remember: (Snapshot: TemperaturesSnapshot) => Snapshot,
+    Changed: HasMeaningfulChange,
+  },
+  Emit(Socket, Snapshot) {
+    Socket.emit('Temperatures', Snapshot);
+  },
+});
 
 export const Manager = {
   /** Begin reporting on a freshly connected socket. Resolves after the first report. */
   Start(Socket: ShowTrakSocket | null): Promise<void> {
-    ClearTimers();
-    generation += 1;
-    activeSocket = Socket || null;
-    lastEmitted = null;
-    lastEmitAt = 0;
-    lastSnapshot = null;
-    inFlight = null;
     // Idempotent: a reconnect or a service restart never stacks a second set.
     if (process.platform === 'darwin') Listeners.Attach();
-    pollTimer = setInterval(() => {
-      void RunSample();
-    }, POLL_INTERVAL_MS);
-    if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection.
-    return RunSample({ ForceEmit: true, Queue: true });
+    return Reporter.Start(Socket);
   },
 
   /**
@@ -198,13 +147,7 @@ export const Manager = {
    * worth remembering, and the next connection reads the current state anyway.
    */
   Stop(): void {
-    ClearTimers();
-    generation += 1;
-    activeSocket = null;
-    lastEmitted = null;
-    lastEmitAt = 0;
-    lastSnapshot = null;
-    inFlight = null;
+    Reporter.Stop();
     Listeners.Detach();
     DisposeTemperatureSamplers();
   },
@@ -215,7 +158,7 @@ export const Manager = {
   },
 
   GetLastSnapshot(): TemperaturesSnapshot | null {
-    return lastSnapshot;
+    return Reporter.LastSnapshot();
   },
 };
 

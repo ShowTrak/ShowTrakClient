@@ -6,6 +6,7 @@ import type {
 } from '@showtrak/protocol';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
+import { CreateSnapshotReporter, SignatureChange, type SampleOptions } from '../SnapshotReporter';
 import {
   CollectAudio,
   DisposeAudioSamplers,
@@ -37,17 +38,6 @@ const KEEPALIVE_INTERVAL_MS = 20000;
 // After a USB hotplug the OS takes a moment to publish the new audio device;
 // sampling the instant the USB event fires would usually miss it.
 const HOTPLUG_SETTLE_MS = 1500;
-
-let activeSocket: ShowTrakSocket | null = null;
-let pollTimer: NodeJS.Timeout | null = null;
-let hotplugTimer: NodeJS.Timeout | null = null;
-let lastSignature: string | null = null;
-let lastEmitAt = 0;
-let lastSnapshot: AudioDevicesSnapshot | null = null;
-let inFlight: Promise<void> | null = null;
-// Bumped on every Start/Stop, so a sample that was already running when the
-// connection changed can tell its result belongs to a session that has ended.
-let generation = 0;
 
 /** "macOS" rather than "darwin" in anything an operator reads. */
 export function PlatformLabel(Platform: string): string {
@@ -100,69 +90,34 @@ export function SnapshotSignature(Snapshot: AudioDevicesSnapshot): string {
   ]);
 }
 
-async function SampleAndReport(
-  ForceEmit: boolean,
-  Generation: number,
-  Refresh = false
-): Promise<void> {
-  const Collection = await CollectAudio(process.platform, { Refresh });
-  if (Generation !== generation) return;
-  if (!Collection.Ok) {
-    Logger.warn(`Audio sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
-  }
-  const Snapshot = BuildSnapshot(Collection);
-  lastSnapshot = Snapshot;
-
-  const Socket = activeSocket;
-  if (!Socket || !Socket.connected) return;
-  const Signature = SnapshotSignature(Snapshot);
-  const Now = Date.now();
-  if (!ForceEmit && Signature === lastSignature && Now - lastEmitAt < KEEPALIVE_INTERVAL_MS) {
-    return;
-  }
-  lastSignature = Signature;
-  lastEmitAt = Now;
-  Socket.emit('AudioDevices', Snapshot);
-}
-
-interface SampleOptions {
-  /** Report even if nothing changed. */
-  ForceEmit?: boolean;
-  /**
-   * Run a fresh sample after any in-flight one rather than sharing its result.
-   * The periodic poll shares (a sample already running is as fresh as it needs);
-   * a hotplug or a level change must see the world AFTER the event.
-   */
-  Queue?: boolean;
+interface AudioRead {
   /** Re-read the device list, not just the levels (macOS caches it). */
-  Refresh?: boolean;
+  Refresh: boolean;
 }
 
-function RunSample(Options: SampleOptions = {}): Promise<void> {
-  if (inFlight) {
-    if (!Options.Queue) return inFlight;
-    return inFlight.then(() => RunSample(Options));
-  }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.Refresh)
-    .catch((error: unknown) => {
-      Logger.warn(`Audio sample threw: ${ErrorText(error, 'unknown error')}`);
-    })
-    .finally(() => {
-      if (inFlight === Current) inFlight = null;
-    });
-  inFlight = Current;
-  return Current;
-}
-
-function ClearTimers(): void {
-  if (pollTimer) clearInterval(pollTimer);
-  if (hotplugTimer) clearTimeout(hotplugTimer);
-  pollTimer = null;
-  hotplugTimer = null;
-}
+// A sample asked for because of a hotplug or a level change queues behind one
+// already running (see SnapshotReporter): it must see the world AFTER the event.
+const Reporter = CreateSnapshotReporter({
+  Noun: 'Audio',
+  Logger,
+  PollIntervalMs: POLL_INTERVAL_MS,
+  KeepaliveIntervalMs: KEEPALIVE_INTERVAL_MS,
+  Read: (Options: SampleOptions<AudioRead>) =>
+    CollectAudio(process.platform, { Refresh: !!Options.Refresh }),
+  Build(Collection: AudioCollection) {
+    if (!Collection.Ok) {
+      Logger.warn(`Audio sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
+    }
+    return BuildSnapshot(Collection);
+  },
+  Change: SignatureChange(SnapshotSignature),
+  Emit(Socket, Snapshot) {
+    Socket.emit('AudioDevices', Snapshot);
+  },
+});
 
 function ScopeRefusal(Scope: AudioControlScope, What: string, Direction: string): string {
-  const OS = PlatformLabel(lastSnapshot?.Status.Platform || process.platform);
+  const OS = PlatformLabel(Reporter.LastSnapshot()?.Status.Platform || process.platform);
   if (Scope === 'default') return `${OS} can only change the ${What} of the default ${Direction}`;
   return `Changing the ${What} of this device is not available on ${OS}`;
 }
@@ -196,30 +151,13 @@ export function ParseLevelRequest(
 export const Manager = {
   /** Begin reporting on a freshly connected socket. Resolves after the first report. */
   Start(Socket: ShowTrakSocket | null): Promise<void> {
-    ClearTimers();
-    generation += 1;
-    activeSocket = Socket || null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    lastSnapshot = null;
-    inFlight = null;
-    pollTimer = setInterval(() => {
-      void RunSample();
-    }, POLL_INTERVAL_MS);
-    if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection, so it
     // goes out even if this process sampled the same thing a moment ago.
-    return RunSample({ ForceEmit: true, Queue: true, Refresh: true });
+    return Reporter.Start(Socket, { Refresh: true });
   },
 
   Stop(): void {
-    ClearTimers();
-    generation += 1;
-    activeSocket = null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    lastSnapshot = null;
-    inFlight = null;
+    Reporter.Stop();
     DisposeAudioSamplers();
   },
 
@@ -228,13 +166,7 @@ export const Manager = {
    * happened (a USB device came or went). Bursts coalesce into one sample.
    */
   RequestSample(): void {
-    if (!activeSocket) return;
-    if (hotplugTimer) clearTimeout(hotplugTimer);
-    hotplugTimer = setTimeout(() => {
-      hotplugTimer = null;
-      void RunSample({ Queue: true, Refresh: true });
-    }, HOTPLUG_SETTLE_MS);
-    if (typeof hotplugTimer.unref === 'function') hotplugTimer.unref();
+    Reporter.SampleAfter(HOTPLUG_SETTLE_MS, { Queue: true, Refresh: true });
   },
 
   /**
@@ -249,8 +181,8 @@ export const Manager = {
     const Parsed = ParseLevelRequest(Request);
     if ('Error' in Parsed) return { Success: false, Error: Parsed.Error };
 
-    if (!lastSnapshot) await RunSample({ Queue: true });
-    const Snapshot = lastSnapshot as AudioDevicesSnapshot | null;
+    if (!Reporter.LastSnapshot()) await Reporter.Sample({ Queue: true });
+    const Snapshot = Reporter.LastSnapshot();
     if (!Snapshot || Snapshot.Status.State !== 'ok') {
       return {
         Success: false,
@@ -287,12 +219,12 @@ export const Manager = {
     }
     // Report the new state before acknowledging, so the server never shows a
     // "done" against a snapshot that still carries the old level.
-    await RunSample({ ForceEmit: true, Queue: true });
+    await Reporter.Sample({ ForceEmit: true, Queue: true });
     return { Success: true, Error: null };
   },
 
   GetLastSnapshot(): AudioDevicesSnapshot | null {
-    return lastSnapshot;
+    return Reporter.LastSnapshot();
   },
 };
 

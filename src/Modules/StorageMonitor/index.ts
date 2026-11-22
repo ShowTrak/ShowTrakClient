@@ -2,6 +2,7 @@ import type { CollectorStatus, StorageSnapshot } from '@showtrak/protocol';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
 import { ErrorText } from '../AudioMonitor/shared';
+import { CreateSnapshotReporter, SignatureChange, type SampleOptions } from '../SnapshotReporter';
 import { CollectStorage, DisposeStorageSamplers, type StorageCollection } from './samplers';
 
 const Logger = CreateLogger('StorageMonitor');
@@ -22,17 +23,6 @@ const HOTPLUG_SETTLE_MS = 3000;
 // rather than on every sample. The value sent is still exact.
 const MIN_FREE_STEP_BYTES = 64 * 1024 * 1024;
 const MAX_FREE_STEP_BYTES = 1024 * 1024 * 1024;
-
-let activeSocket: ShowTrakSocket | null = null;
-let pollTimer: NodeJS.Timeout | null = null;
-let hotplugTimer: NodeJS.Timeout | null = null;
-let lastSignature: string | null = null;
-let lastEmitAt = 0;
-let lastSnapshot: StorageSnapshot | null = null;
-let inFlight: Promise<void> | null = null;
-// Bumped on every Start/Stop, so a sample that was already running when the
-// connection changed can tell its result belongs to a session that has ended.
-let generation = 0;
 
 export function BuildSnapshot(
   Collection: StorageCollection,
@@ -90,93 +80,42 @@ export function SnapshotSignature(Snapshot: StorageSnapshot): string {
   ]);
 }
 
-function Emit(Socket: ShowTrakSocket, Snapshot: StorageSnapshot): void {
-  lastSignature = SnapshotSignature(Snapshot);
-  lastEmitAt = Date.now();
-  Socket.emit('StorageVolumes', Snapshot);
-}
-
-async function SampleAndReport(
-  ForceEmit: boolean,
-  Generation: number,
-  Relist = false
-): Promise<void> {
-  const Collection = await CollectStorage(process.platform, { Force: Relist });
-  if (Generation !== generation) return;
-  if (!Collection.Ok && !Collection.Unsupported) {
-    Logger.warn(`Storage sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
-  }
-  const Snapshot = BuildSnapshot(Collection);
-  lastSnapshot = Snapshot;
-
-  const Socket = activeSocket;
-  if (!Socket || !Socket.connected) return;
-  const Signature = SnapshotSignature(Snapshot);
-  const Now = Date.now();
-  if (!ForceEmit && Signature === lastSignature && Now - lastEmitAt < KEEPALIVE_INTERVAL_MS) {
-    return;
-  }
-  Emit(Socket, Snapshot);
-}
-
-interface SampleOptions {
-  /** Report even if nothing changed. */
-  ForceEmit?: boolean;
-  /** Run a fresh sample after any in-flight one rather than sharing its result. */
-  Queue?: boolean;
+interface StorageRead {
   /** List the volumes afresh rather than refreshing a recent listing (Windows). */
-  Relist?: boolean;
+  Relist: boolean;
 }
 
-function RunSample(Options: SampleOptions = {}): Promise<void> {
-  if (inFlight) {
-    if (!Options.Queue) return inFlight;
-    return inFlight.then(() => RunSample(Options));
-  }
-  const Current = SampleAndReport(!!Options.ForceEmit, generation, !!Options.Relist)
-    .catch((error: unknown) => {
-      Logger.warn(`Storage sample threw: ${ErrorText(error, 'unknown error')}`);
-    })
-    .finally(() => {
-      if (inFlight === Current) inFlight = null;
-    });
-  inFlight = Current;
-  return Current;
-}
-
-function ClearTimers(): void {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = null;
-  if (hotplugTimer) clearTimeout(hotplugTimer);
-  hotplugTimer = null;
-}
+const Reporter = CreateSnapshotReporter({
+  Noun: 'Storage',
+  Logger,
+  PollIntervalMs: POLL_INTERVAL_MS,
+  KeepaliveIntervalMs: KEEPALIVE_INTERVAL_MS,
+  Read: (Options: SampleOptions<StorageRead>) =>
+    CollectStorage(process.platform, { Force: !!Options.Relist }),
+  Build(Collection: StorageCollection) {
+    if (!Collection.Ok && !Collection.Unsupported) {
+      Logger.warn(`Storage sample failed: ${ErrorText(Collection.Error, 'unknown error')}`);
+    }
+    return BuildSnapshot(Collection);
+  },
+  Change: SignatureChange(SnapshotSignature),
+  Emit(Socket, Snapshot) {
+    Socket.emit('StorageVolumes', Snapshot);
+  },
+  KeepLastSnapshot: true,
+});
 
 export const Manager = {
   /** Begin reporting on a freshly connected socket. Resolves after the first report. */
   Start(Socket: ShowTrakSocket | null): Promise<void> {
-    ClearTimers();
-    generation += 1;
-    activeSocket = Socket || null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    inFlight = null;
-    pollTimer = setInterval(() => {
-      void RunSample();
-    }, POLL_INTERVAL_MS);
-    if (typeof pollTimer.unref === 'function') pollTimer.unref();
     // The server replaces its state from the first report of a connection, so it
     // goes out even if nothing changed since the last one.
-    return RunSample({ ForceEmit: true, Queue: true, Relist: true });
+    return Reporter.Start(Socket, { Relist: true });
   },
 
   /** Stop reporting (the connection dropped, or the client is shutting down). */
   Stop(): void {
-    ClearTimers();
-    generation += 1;
-    activeSocket = null;
-    lastSignature = null;
-    lastEmitAt = 0;
-    inFlight = null;
+    Reporter.Stop();
     DisposeStorageSamplers();
   },
 
@@ -185,17 +124,11 @@ export const Manager = {
    * look again once the OS has had a moment to mount it.
    */
   RequestSample(): void {
-    if (!activeSocket) return;
-    if (hotplugTimer) clearTimeout(hotplugTimer);
-    hotplugTimer = setTimeout(() => {
-      hotplugTimer = null;
-      void RunSample({ Queue: true, Relist: true });
-    }, HOTPLUG_SETTLE_MS);
-    if (typeof hotplugTimer.unref === 'function') hotplugTimer.unref();
+    Reporter.SampleAfter(HOTPLUG_SETTLE_MS, { Queue: true, Relist: true });
   },
 
   GetLastSnapshot(): StorageSnapshot | null {
-    return lastSnapshot;
+    return Reporter.LastSnapshot();
   },
 };
 
