@@ -83,7 +83,7 @@ async function setup(body = 'exit 0', extra = {}) {
     {
       ID: 'script-1',
       Name: 'Demo',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [PLATFORM_KEY]: 'run.sh' },
       Files: [{ Path: 'run.sh', Type: 'file', Checksum: 'sum' }],
       ...extra,

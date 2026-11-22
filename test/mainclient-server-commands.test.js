@@ -32,8 +32,11 @@ const loggerStub = {
   CreateLogger: () => createSilentLogger(),
 };
 
-/** A fake Socket.IO socket that records emits and replays registered handlers. */
-function createSocket() {
+/**
+ * A fake Socket.IO socket that records emits and replays registered handlers.
+ * `scriptsAck` is what it acknowledges GetScripts with.
+ */
+function createSocket({ scriptsAck = [] } = {}) {
   const Handlers = new Map();
   const Emits = [];
 
@@ -46,7 +49,7 @@ function createSocket() {
     emit(Event, ...Args) {
       Emits.push([Event, ...Args]);
       const Last = Args[Args.length - 1];
-      if (Event === 'GetScripts' && typeof Last === 'function') Last([]);
+      if (Event === 'GetScripts' && typeof Last === 'function') Last(scriptsAck);
       return true;
     },
     disconnect() {},
@@ -110,6 +113,7 @@ async function boot({
   display = {},
   usb = {},
   executionOutput = false,
+  scriptManager = {},
 } = {}) {
   const Broadcasts = [];
   const OriginalSetInterval = global.setInterval;
@@ -158,6 +162,7 @@ async function boot({
           DeleteScripts: async () => {},
           GetLastAppliedDeploymentFingerprint: async () => 'fp',
           Execute: execute || (async () => [null, true]),
+          ...scriptManager,
         },
       },
       '../ServerCapabilities': {
@@ -355,6 +360,49 @@ test('an undefined LAN update error is normalised to null', async () => {
   await OnDone(undefined);
 
   assert.equal(emitsOf(socket, 'ScriptExecutionResponse')[0][2], null);
+});
+
+// --- Script catalog ---------------------------------------------------------
+
+test('a malformed or absent script catalog reads as an empty one', async () => {
+  // The GetScripts acknowledgement is typed as a list of catalog entries, but it
+  // is still checked when it arrives: an ack with nothing in it, or anything but
+  // a list, leaves this client with no scripts rather than crashing the code
+  // that walks them.
+  for (const Ack of [undefined, null, {}, 'scripts', 7]) {
+    const Label = `ack ${JSON.stringify(Ack)}`;
+    const Calls = [];
+    const socket = createSocket({ scriptsAck: Ack });
+    await boot({
+      socket,
+      scriptManager: {
+        SetScripts: async (Scripts) => {
+          Calls.push(['SetScripts', Scripts]);
+        },
+        DownloadScripts: async (...Args) => {
+          Calls.push(['DownloadScripts', ...Args]);
+        },
+      },
+    });
+
+    await socket.trigger('connect');
+    await socket.trigger('UpdateScripts', 'req-c');
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(
+      Calls,
+      [
+        ['SetScripts', []],
+        ['DownloadScripts', IP, PORT, []],
+      ],
+      Label
+    );
+    assert.deepEqual(
+      emitsOf(socket, 'ScriptExecutionResponse').at(-1),
+      ['ScriptExecutionResponse', 'req-c', null],
+      Label
+    );
+  }
 });
 
 // --- Script execution -------------------------------------------------------

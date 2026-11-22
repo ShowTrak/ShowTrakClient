@@ -96,7 +96,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
     {
       ID: scriptId,
       Name: 'Demo',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [platform.key]: platform.fileName },
       Arguments: { [platform.key]: '--flag value' },
       Files: [{ Path: platform.fileName, Type: 'file', Checksum: 'sum' }],
@@ -104,7 +104,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
     {
       ID: 'script-disabled',
       Name: 'Other Platform Only',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [unsupportedPlatformKey]: 'unsupported-script' },
       Files: [{ Path: 'unsupported-script', Type: 'file', Checksum: 'sum' }],
     },
@@ -129,7 +129,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
     {
       ID: scriptId,
       Name: 'Demo',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [platform.key]: 'missing.sh' },
       Files: [{ Path: 'missing.sh', Type: 'file', Checksum: 'sum' }],
     },
@@ -193,7 +193,7 @@ test('ScriptManager ConsoleFilter surfaces only matching lines as the status tai
       {
         ID: scriptId,
         Name: 'Filtered',
-        Enabled: true,
+        isEnabled: true,
         Platforms: { [platform.key]: platform.fileName },
         Files: [{ Path: platform.fileName, Type: 'file', Checksum: 'sum' }],
         ConsoleFilter,
@@ -256,7 +256,7 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
       {
         ID: 'script-2',
         Name: 'Deploy Script',
-        Enabled: true,
+        isEnabled: true,
         Platforms: { macOS: 'macos.sh' },
         Arguments: { macOS: '' },
         Files: [

@@ -283,7 +283,7 @@ test('GetLaunchState reports a traversing platform path as not runnable', async 
     {
       ID: 'traverser',
       Name: 'Traverser',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [platformKey]: '../../../../tmp/evil.sh' },
     },
   ]);
@@ -307,7 +307,7 @@ test('GetLaunchState reports a traversing script ID as not runnable', async () =
     process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
 
   await Manager.SetScripts([
-    { ID: '../escaped', Name: 'Evil ID', Enabled: true, Platforms: { [platformKey]: 'run.sh' } },
+    { ID: '../escaped', Name: 'Evil ID', isEnabled: true, Platforms: { [platformKey]: 'run.sh' } },
   ]);
 
   const state = Manager.GetLaunchState('../escaped');

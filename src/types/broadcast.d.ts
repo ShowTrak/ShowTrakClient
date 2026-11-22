@@ -5,10 +5,9 @@
 // previously a bare EventEmitter, so a mistyped channel name failed silently;
 // every channel now has to appear here to compile.
 
-import type { LaunchConfigPayload } from '@showtrak/protocol';
+import type { LaunchConfigPayload, ScriptCatalogWireEntry } from '@showtrak/protocol';
 import type { ClientProfile, ProcessMonitorStatus } from '@showtrak/protocol/client';
 import type {
-  ClientScript,
   LanUpdateRequest,
   IdentifyOverlayPayload,
   MainClientConnectionStatus,
@@ -46,7 +45,7 @@ export interface ClientBroadcastEvents {
    * catalog is passed along, though the only current listener ignores it and
    * re-reads via ScriptManager.
    */
-  ScriptsUpdated: (scripts: ClientScript[]) => void;
+  ScriptsUpdated: (scripts: ScriptCatalogWireEntry[]) => void;
   /** Run-on-launch handoff: main shows the countdown and executes. */
   RunLaunchAction: (config: LaunchConfigPayload) => void;
 

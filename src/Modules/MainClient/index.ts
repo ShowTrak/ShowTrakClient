@@ -1,7 +1,6 @@
 import { io } from 'socket.io-client';
 
-import type { ClientDisplay } from '@showtrak/protocol';
-import type { ClientScript } from '../../types/client';
+import type { ClientDisplay, ScriptCatalogWireEntry } from '@showtrak/protocol';
 import type { ShowTrakSocket } from '../../types/socket';
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
@@ -24,6 +23,13 @@ import { Manager as ServerCapabilities } from '../ServerCapabilities';
 import { DiffByKey, ErrorMessage, IsEmptyDiff, ReadIdentityToken, Wait } from '../Utils';
 
 const Logger = CreateLogger('MainClient');
+
+// The GetScripts acknowledgement, kept defensive whatever its declared type: a
+// malformed or absent catalog (no argument at all, or not an array) is an empty
+// one, never a crash in the code that walks it.
+function CatalogOrEmpty(Scripts: ScriptCatalogWireEntry[]): ScriptCatalogWireEntry[] {
+  return Array.isArray(Scripts) ? Scripts : [];
+}
 
 // Cadence of the full USB / display list resyncs. See the comment at the
 // setInterval calls for why these are a reconciliation channel rather than the
@@ -320,10 +326,8 @@ async function RunLaunchSequence(
 
     // 2. A launch script is configured: ensure the catalog + files are current
     // on disk before we run it.
-    const Scripts = await new Promise<ClientScript[]>((resolve) => {
-      ActiveSocket.emit('GetScripts', (Result) =>
-        resolve(Array.isArray(Result) ? (Result as ClientScript[]) : [])
-      );
+    const Scripts = await new Promise<ScriptCatalogWireEntry[]>((resolve) => {
+      ActiveSocket.emit('GetScripts', (Result) => resolve(CatalogOrEmpty(Result)));
     });
     try {
       await ScriptManager.DownloadScripts(IP, Port, Scripts);
@@ -458,7 +462,7 @@ export const Manager = {
       // older server never answers, and everything stays on full lists.
       ServerCapabilities.Probe(ActiveSocket);
       ActiveSocket.emit('GetScripts', async (Scripts) => {
-        await ScriptManager.SetScripts(Array.isArray(Scripts) ? (Scripts as ClientScript[]) : []);
+        await ScriptManager.SetScripts(CatalogOrEmpty(Scripts));
       });
       // Show variables. A server that predates them never acks, which leaves the
       // cached set in place rather than clearing it — the absence of a reply is
@@ -622,11 +626,7 @@ export const Manager = {
       try {
         ActiveSocket.emit('GetScripts', async (Scripts) => {
           try {
-            await ScriptManager.DownloadScripts(
-              IP,
-              Port,
-              Array.isArray(Scripts) ? (Scripts as ClientScript[]) : []
-            );
+            await ScriptManager.DownloadScripts(IP, Port, CatalogOrEmpty(Scripts));
             ActiveSocket.emit('ScriptExecutionResponse', RequestID, null);
           } catch (Err) {
             const Message =

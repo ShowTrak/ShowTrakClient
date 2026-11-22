@@ -79,7 +79,7 @@ function scriptWithChecksum(Checksum) {
     {
       ID: 'integrity-script',
       Name: 'Integrity Script',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { macOS: 'macos.sh' },
       Arguments: { macOS: '' },
       Files: [{ Path: 'macos.sh', Type: 'file', Checksum }],

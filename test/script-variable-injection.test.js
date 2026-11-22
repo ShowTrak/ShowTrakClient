@@ -63,7 +63,7 @@ async function setup(cachedEnvironment) {
     {
       ID: 'script-1',
       Name: 'Demo',
-      Enabled: true,
+      isEnabled: true,
       Platforms: { [PLATFORM.key]: PLATFORM.fileName },
       Files: [{ Path: PLATFORM.fileName, Type: 'file', Checksum: 'sum' }],
     },

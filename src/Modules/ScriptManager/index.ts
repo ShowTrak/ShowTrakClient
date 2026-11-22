@@ -2,14 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 
-import type { VariableEnvironment } from '@showtrak/protocol';
 import type {
-  ClientScript,
+  ScriptCatalogWireEntry,
   ScriptConsoleFilter,
-  ScriptFile,
-  ScriptLaunchState,
-  TrayScriptEntry,
-} from '../../types/client';
+  ScriptFileEntry,
+  VariableEnvironment,
+} from '@showtrak/protocol';
+import type { ScriptLaunchState, TrayScriptEntry } from '../../types/client';
 import { CreateLogger } from '../Logger';
 import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
@@ -24,7 +23,10 @@ export type ProgressReporter = (progress: number, statusText: string) => void;
 /** Receives a running script's raw console output (for the server's console view). */
 export type OutputReporter = (Stream: 'stdout' | 'stderr', Text: string) => void;
 
-let ScriptCache: ClientScript[] = [];
+// The catalog as the server sent it (GetScripts). Typed as what ANY supported
+// server sends, back to 3.0.0: entries from 3.0.0 - 3.2.x carry a single `Path`
+// and no `Platforms`, and later fields arrived release by release.
+let ScriptCache: ScriptCatalogWireEntry[] = [];
 let LastAppliedDeploymentFingerprint: string | null = null;
 let DeploymentStateLoaded = false;
 
@@ -60,7 +62,7 @@ const Internal = {
   },
 
   NormalizeFileEntryForFingerprint(
-    File: ScriptFile | null | undefined
+    File: ScriptFileEntry | null | undefined
   ): NormalizedFileEntry | null {
     if (!File || typeof File !== 'object') return null;
     return {
@@ -70,7 +72,12 @@ const Internal = {
     };
   },
 
-  BuildDeploymentFingerprint(Scripts: ClientScript[] | null | undefined): string {
+  // The fingerprint goes to the server in every heartbeat (ScriptsFingerprint)
+  // and is compared with the server's own, so what is hashed here only changes
+  // deliberately: test/script-catalog-generations.test.js pins it. (Servers from
+  // 3.9.0 also hash each script's Icon, which this does not, so for a non-empty
+  // catalog the two have not matched since.)
+  BuildDeploymentFingerprint(Scripts: ScriptCatalogWireEntry[] | null | undefined): string {
     const Normalized = (Array.isArray(Scripts) ? Scripts : [])
       .map((Script) => {
         if (!Script || typeof Script !== 'object') return null;
@@ -90,7 +97,7 @@ const Internal = {
           Weight: typeof Script.Weight === 'number' ? Script.Weight : 0,
           Confirmation: !!Script.Confirmation,
           Timeout: typeof Script.Timeout === 'number' ? Script.Timeout : 15000,
-          Enabled: !!(Script.isEnabled || Script.Enabled),
+          Enabled: !!Script.isEnabled,
           Platforms: Script.Platforms || {},
           Arguments: Script.Arguments || {},
           ConsoleFilter:
@@ -189,7 +196,7 @@ const Internal = {
 
   // Contain a server-supplied path segment inside a directory we own.
   //
-  // Both `Script.ID` and `ScriptFile.Path` arrive from the server over the wire
+  // Both `Script.ID` and a file entry's `Path` arrive from the server over the wire
   // and are joined onto the scripts directory. Unchecked, a segment containing
   // `..` — or an absolute path, which `path.join`/`path.resolve` let win
   // outright — escapes the sandbox, and DownloadScripts will then write to it,
@@ -221,7 +228,7 @@ const Internal = {
   // Resolve the relative script file to run for the current platform. Falls back
   // to a legacy top-level "Path" for scripts authored before the cross-platform
   // schema. Returns the relative path string, or null if nothing is defined.
-  ResolvePlatformScript(Script: ClientScript | null | undefined): string | null {
+  ResolvePlatformScript(Script: ScriptCatalogWireEntry | null | undefined): string | null {
     const Platforms = Script && Script.Platforms ? Script.Platforms : {};
     for (const key of Internal.GetPlatformPreference()) {
       const value = Internal.NormalizeRelativePath(Platforms[key]);
@@ -233,7 +240,7 @@ const Internal = {
     return null;
   },
 
-  ResolvePlatformArguments(Script: ClientScript | null | undefined): string {
+  ResolvePlatformArguments(Script: ScriptCatalogWireEntry | null | undefined): string {
     const ArgumentMap = Script && Script.Arguments ? Script.Arguments : {};
     for (const key of Internal.GetPlatformPreference()) {
       const raw = ArgumentMap[key];
@@ -243,7 +250,7 @@ const Internal = {
     return '';
   },
 
-  GetScriptLaunchState(Script: ClientScript | null | undefined): ScriptLaunchState {
+  GetScriptLaunchState(Script: ScriptCatalogWireEntry | null | undefined): ScriptLaunchState {
     const ScriptID = Script && Script.ID ? String(Script.ID) : '';
     if (!Script || typeof Script !== 'object') {
       return { Enabled: false, DisabledReason: 'Invalid script configuration.' };
@@ -259,7 +266,9 @@ const Internal = {
           : 'Invalid script configuration.',
       };
     }
-    if (Script.Enabled === false || Script.isEnabled === false) {
+    // `isEnabled` is the catalog's switch in every server release (3.0.0 on);
+    // Script.json's own `Enabled` only ever appears inside `Config`.
+    if (Script.isEnabled === false) {
       return { Enabled: false, DisabledReason: 'Script is disabled.' };
     }
 
@@ -479,7 +488,7 @@ const Internal = {
   // The timeout a script runs under: its own Timeout when that is a positive
   // number (the same rule the Server applies when it arms its watchdog),
   // otherwise the default.
-  ResolveTimeoutMs(Script: ClientScript | null | undefined): number {
+  ResolveTimeoutMs(Script: ScriptCatalogWireEntry | null | undefined): number {
     const Timeout = Script ? Script.Timeout : undefined;
     return typeof Timeout === 'number' && Number.isFinite(Timeout) && Timeout > 0
       ? Timeout
@@ -722,12 +731,12 @@ const Internal = {
 };
 
 export const Manager = {
-  async SetScripts(Scripts: ClientScript[] | null | undefined): Promise<void> {
+  async SetScripts(Scripts: ScriptCatalogWireEntry[] | null | undefined): Promise<void> {
     ScriptCache = Scripts || [];
     BroadcastManager.emit('ScriptsUpdated', Manager.GetScripts());
   },
 
-  GetScripts(): ClientScript[] {
+  GetScripts(): ScriptCatalogWireEntry[] {
     return Array.isArray(ScriptCache) ? ScriptCache.slice() : [];
   },
 
@@ -751,7 +760,9 @@ export const Manager = {
       });
   },
 
-  async GetExpectedDeploymentFingerprint(Scripts: ClientScript[] | null = null): Promise<string> {
+  async GetExpectedDeploymentFingerprint(
+    Scripts: ScriptCatalogWireEntry[] | null = null
+  ): Promise<string> {
     const TargetScripts = Array.isArray(Scripts) ? Scripts : ScriptCache;
     return Internal.BuildDeploymentFingerprint(TargetScripts || []);
   },
@@ -858,7 +869,7 @@ export const Manager = {
   async DownloadScripts(
     IP: string,
     Port: number,
-    Scripts: ClientScript[] | null | undefined
+    Scripts: ScriptCatalogWireEntry[] | null | undefined
   ): Promise<void> {
     ScriptCache = Scripts || [];
 

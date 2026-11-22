@@ -1,9 +1,11 @@
 // Client-internal shapes: the module-to-module wiring inside the main process.
 //
 // Anything that crosses a process or network boundary is NOT here. The Socket.IO
-// wire to the server is in @showtrak/protocol; the preload bridges, IPC results
-// and the persisted profile are in @showtrak/protocol/client.
+// wire to the server (including the script catalog, ScriptCatalogWireEntry) is
+// in @showtrak/protocol; the preload bridges, IPC results, the persisted profile
+// and the other state files are in @showtrak/protocol/client.
 
+import type { ScriptCatalogWireEntry } from '@showtrak/protocol';
 import type { ClientProfile } from '@showtrak/protocol/client';
 
 /**
@@ -65,48 +67,6 @@ export interface ServerAdoptionRejectedInfo {
   ServerIdentity: string | null;
 }
 
-/** How a script's console output is filtered before it is surfaced as status. */
-export interface ScriptConsoleFilter {
-  Mode: 'none' | 'includes' | 'startsWith' | 'regex' | string;
-  Pattern: string;
-  /** Remove the matched text from the surfaced line, leaving the remainder. */
-  Strip?: boolean;
-}
-
-/** One file (or directory) in a deployed script's payload. */
-export interface ScriptFile {
-  Path: string;
-  Type: 'file' | 'directory' | string;
-  Checksum?: string | null;
-}
-
-/**
- * A script as deployed by the server. Field names mirror the server's catalog;
- * `Enabled`/`isEnabled` and `Platforms`/`Path` both exist because scripts
- * authored before the cross-platform schema are still supported.
- */
-export interface ClientScript {
-  ID: string;
-  Name?: string;
-  Description?: string;
-  Colour?: number;
-  Weight?: number;
-  Confirmation?: boolean;
-  Timeout?: number;
-  Enabled?: boolean;
-  isEnabled?: boolean;
-  /** Per-OS relative script path, keyed 'Windows' | 'macOS' | 'Linux'. */
-  Platforms?: Record<string, string | undefined>;
-  /** Per-OS argument string, same keys as Platforms. */
-  Arguments?: Record<string, string | undefined>;
-  ConsoleFilter?: ScriptConsoleFilter;
-  isValid?: boolean;
-  ParseError?: string;
-  Files?: ScriptFile[];
-  /** Legacy single-path scripts, predating `Platforms`. */
-  Path?: string;
-}
-
 /** Whether a script can actually be launched on this machine right now. */
 export interface ScriptLaunchState {
   Enabled: boolean;
@@ -118,7 +78,7 @@ export interface ScriptLaunchState {
 
 /** A script plus its runnability, as rendered in the tray submenu. */
 export interface TrayScriptEntry {
-  Script: ClientScript;
+  Script: ScriptCatalogWireEntry;
   Enabled: boolean;
   DisabledReason: string;
 }
