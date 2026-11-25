@@ -15,7 +15,16 @@ import { Manager as BroadcastManager } from '../Broadcast';
 import { Manager as AppDataManager } from '../AppData';
 import { Manager as VariableStore } from '../Variables';
 import { ErrorMessage, type Unverified } from '../Utils';
-import { ChecksumBuffer, ChecksumFile } from '@showtrak/protocol/runtime';
+import {
+  ChecksumBuffer,
+  ChecksumFile,
+  IsSafeRelativePath,
+  NormalizeScriptRelativePath,
+  ResolveContainedPath,
+  ResolveScriptFolder,
+  ResolveScriptLauncher,
+  type ScriptLauncher,
+} from '@showtrak/protocol/runtime';
 import { IsRecord, ParseArgumentString } from '@showtrak/protocol/common';
 
 const Logger = CreateLogger('ScriptManager');
@@ -162,33 +171,23 @@ const Internal = {
     return ['Linux'];
   },
 
+  // The path rules are shared with ShowTrak Server (@showtrak/protocol/runtime),
+  // so a script that resolves here resolves the same when the operator runs it
+  // on the server machine.
+  //
   // Normalize a relative script path so it resolves correctly on this OS,
-  // regardless of how it was authored: convert backslashes to forward slashes
-  // (path.join handles these on every platform) and strip leading "./" segments.
+  // regardless of how it was authored: backslashes become forward slashes and
+  // leading "./" segments go.
   NormalizeRelativePath(value: unknown): string {
-    if (typeof value !== 'string') return '';
-    let p = value.trim().replace(/\\/g, '/');
-    while (p.startsWith('./')) p = p.slice(2);
-    return p.trim();
+    return NormalizeScriptRelativePath(value);
   },
 
   // True when a server-supplied relative segment is safe to join onto a
-  // directory we own.
-  //
-  // Rejected: absolute paths, UNC paths, drive letters, NUL bytes, and any `..`
-  // component under EITHER separator. Both spellings matter: a Windows-style
-  // `..\evil` is an ordinary filename to POSIX `path.resolve`, but
-  // NormalizeRelativePath rewrites backslashes to forward slashes, which turns
-  // it into a real traversal on every platform.
+  // directory we own: no absolute, UNC or drive-letter path, no NUL byte, and
+  // no `..` component under EITHER separator (NormalizeRelativePath turns a
+  // Windows-style `..\evil` into a real traversal on every platform).
   IsSafeRelativeSegment(value: unknown): boolean {
-    if (typeof value !== 'string') return false;
-    const Raw = value.trim();
-    if (!Raw || Raw.includes('\0')) return false;
-    const Unified = Raw.replace(/\\/g, '/');
-    // Leading '/' covers both POSIX absolute paths and UNC ('\\host\share').
-    if (Unified.startsWith('/')) return false;
-    if (/^[a-zA-Z]:/.test(Unified)) return false;
-    return !Unified.split('/').includes('..');
+    return IsSafeRelativePath(value);
   },
 
   // Contain a server-supplied path segment inside a directory we own.
@@ -201,25 +200,16 @@ const Internal = {
   // this is not reachable by an unauthenticated peer, but the blast radius of a
   // spoofed or compromised server should stop at the scripts directory.
   //
-  // Returns the resolved absolute path, or null when the segment would escape.
+  // Returns the resolved absolute path, strictly inside Base, or null when the
+  // segment would escape.
   ResolveContained(Base: string, ...Segments: string[]): string | null {
-    if (typeof Base !== 'string' || !Base) return null;
-    for (const Segment of Segments) {
-      if (!Internal.IsSafeRelativeSegment(Segment)) return null;
-    }
-    let Resolved: string;
-    let Root: string;
-    try {
-      Root = path.resolve(Base);
-      Resolved = path.resolve(Root, ...Segments.map((Segment) => Segment.trim()));
-    } catch {
-      return null;
-    }
-    // Defence in depth: the segment checks above should already have caught
-    // anything that escapes, so this prefix test is a second, independent gate.
-    // Equality is a rejection too — a target must be strictly inside the base.
-    if (Resolved === Root) return null;
-    return Resolved.startsWith(Root + path.sep) ? Resolved : null;
+    return ResolveContainedPath(Base, ...Segments);
+  },
+
+  // A script's own folder. The ID is a folder name on the server (its catalog
+  // lists its scripts directory), so it has to be a single safe segment.
+  ResolveScriptFolder(ScriptID: unknown): string | null {
+    return ResolveScriptFolder(AppDataManager.GetScriptsDirectory(), ScriptID);
   },
 
   // Resolve the relative script file to run for the current platform. Falls back
@@ -277,7 +267,7 @@ const Internal = {
       };
     }
 
-    const ScriptPath = Internal.ResolveContained(AppDataManager.GetScriptsDirectory(), ScriptID);
+    const ScriptPath = Internal.ResolveScriptFolder(ScriptID);
     if (!ScriptPath) {
       return { Enabled: false, DisabledReason: 'Script ID is not a valid directory name.' };
     }
@@ -308,46 +298,10 @@ const Internal = {
   },
 
   // Resolve how to launch a script based on its file extension and the current
-  // platform. Returns { command, args } suitable for child_process.spawn, or null
-  // when the script type is not runnable on this platform.
-  ResolveLauncher(ScriptPath: string): { command: string; args: string[] } | null {
-    const Extension = path.extname(ScriptPath).toLowerCase();
-
-    if (process.platform === 'win32') {
-      switch (Extension) {
-        case '.bat':
-        case '.cmd':
-          return { command: 'cmd.exe', args: ['/c', ScriptPath] };
-        case '.ps1':
-          return {
-            command: 'powershell.exe',
-            args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ScriptPath],
-          };
-        case '.exe':
-          return { command: ScriptPath, args: [] };
-        default:
-          // Fall back to the shell so the OS file associations are honored.
-          return { command: 'cmd.exe', args: ['/c', ScriptPath] };
-      }
-    }
-
-    // macOS and Linux.
-    switch (Extension) {
-      case '.sh':
-      case '.command':
-      case '':
-        return { command: '/bin/sh', args: [ScriptPath] };
-      case '.bash':
-        return { command: '/bin/bash', args: [ScriptPath] };
-      case '.py':
-        return { command: 'python3', args: [ScriptPath] };
-      case '.js':
-        return { command: 'node', args: [ScriptPath] };
-      default:
-        // Assume the file is directly executable (e.g. a binary or a script with
-        // a shebang). It will be marked executable before launch.
-        return { command: ScriptPath, args: [] };
-    }
+  // platform: the table ShowTrak Server uses for local runs too. Returns
+  // { command, args } for child_process.spawn.
+  ResolveLauncher(ScriptPath: string): ScriptLauncher {
+    return ResolveScriptLauncher(ScriptPath);
   },
 
   // Compile a script's optional ConsoleFilter ({ Mode, Pattern }) into a line
@@ -483,9 +437,6 @@ const Internal = {
       const { spawn } = require('child_process') as typeof import('child_process');
 
       const Launcher = Internal.ResolveLauncher(ScriptPath);
-      if (!Launcher) {
-        return reject(new Error(`No launcher is available for script: ${ScriptPath}.`));
-      }
 
       // Ensure the script is executable on POSIX platforms before launching it.
       if (process.platform !== 'win32') {
@@ -822,7 +773,7 @@ export const Manager = {
         continue;
       }
 
-      const ScriptPath = Internal.ResolveContained(ScriptsDirectory, Script.ID);
+      const ScriptPath = ResolveScriptFolder(ScriptsDirectory, Script.ID);
       if (!ScriptPath) {
         Failures.push(`Refusing to deploy ${Script.ID}: script ID escapes the scripts directory`);
         continue;

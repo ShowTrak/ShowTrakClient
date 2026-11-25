@@ -1,5 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// The real kit: tests stub only the checksums, and ScriptManager also uses its
+// shared script launcher and path checks.
+const Runtime = require('@showtrak/protocol/runtime');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -70,6 +73,7 @@ test('ScriptManager executes scripts and handles missing scripts', async () => {
       },
     },
     '@showtrak/protocol/runtime': {
+      ...Runtime,
       ChecksumFile: async () => 'sum',
       ChecksumBuffer: () => 'sum',
     },
@@ -169,7 +173,11 @@ test('ScriptManager ConsoleFilter surfaces only matching lines as the status tai
         GetProfileDirectory: () => profileDir,
       },
     },
-    '@showtrak/protocol/runtime': { ChecksumFile: async () => 'sum', ChecksumBuffer: () => 'sum' },
+    '@showtrak/protocol/runtime': {
+      ...Runtime,
+      ChecksumFile: async () => 'sum',
+      ChecksumBuffer: () => 'sum',
+    },
   });
 
   // A child that emits a chunk whose LAST line does not match the filter, then
@@ -243,6 +251,7 @@ test('ScriptManager download, fingerprint, and delete flow', async () => {
       },
     },
     '@showtrak/protocol/runtime': {
+      ...Runtime,
       // Reports the manifest's declared checksum for the downloaded bytes, so
       // post-download verification passes and this test stays about the
       // download/fingerprint/delete flow.
@@ -308,6 +317,7 @@ test('ScriptManager handles invalid configs and launcher errors', async () => {
       },
     },
     '@showtrak/protocol/runtime': {
+      ...Runtime,
       ChecksumFile: async () => 'same-sum',
       ChecksumBuffer: () => 'expected',
     },

@@ -13,6 +13,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// The real kit: tests stub only the checksums, and ScriptManager also uses its
+// shared script launcher and path checks.
+const Runtime = require('@showtrak/protocol/runtime');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -47,6 +50,7 @@ function loadScriptManager({
       },
     },
     '@showtrak/protocol/runtime': {
+      ...Runtime,
       ChecksumFile: async () => checksum,
       ChecksumBuffer: () => bufferChecksum,
     },
@@ -314,4 +318,35 @@ test('GetLaunchState reports a traversing script ID as not runnable', async () =
   assert.equal(state.Found, true);
   assert.equal(state.Enabled, false);
   assert.match(state.DisabledReason, /Script ID is not a valid directory name/);
+});
+
+test('a script ID must be a single folder name, as it is on the server', async () => {
+  // The Server builds its catalog by listing its scripts folder, so a real ID
+  // never holds a separator. One that does could only be nested under another
+  // script's folder, and is refused like the Server refuses it locally.
+  const scriptsDir = tempDir('stc-launch-nested-s-');
+  const profileDir = tempDir('stc-launch-nested-p-');
+  fs.mkdirSync(path.join(scriptsDir, 'outer', 'inner'), { recursive: true });
+  fs.writeFileSync(path.join(scriptsDir, 'outer', 'inner', 'run.sh'), 'echo hi\n');
+  const { Manager } = loadScriptManager({ scriptsDir, profileDir });
+
+  const platformKey =
+    process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux';
+  await Manager.SetScripts([
+    { ID: 'outer/inner', Name: 'Nested', isEnabled: true, Platforms: { [platformKey]: 'run.sh' } },
+  ]);
+
+  const state = Manager.GetLaunchState('outer/inner');
+  assert.equal(state.Enabled, false);
+  assert.match(state.DisabledReason, /Script ID is not a valid directory name/);
+});
+
+test('scripts launch with the launcher ShowTrak Server uses for local runs', () => {
+  const { _internal } = loadScriptManager({
+    scriptsDir: tempDir('stc-launcher-s-'),
+    profileDir: tempDir('stc-launcher-p-'),
+  });
+  for (const File of ['/s/run.sh', '/s/run.zsh', '/s/run.bat', '/s/run.ps1', '/s/run.py']) {
+    assert.deepEqual(_internal.ResolveLauncher(File), Runtime.ResolveScriptLauncher(File), File);
+  }
 });

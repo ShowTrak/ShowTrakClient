@@ -17,6 +17,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+// The real kit: tests stub only the checksums, and ScriptManager also uses its
+// shared script launcher and path checks.
+const Runtime = require('@showtrak/protocol/runtime');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -62,7 +65,11 @@ function loadModule(scriptsDir = os.tmpdir(), profileDir = os.tmpdir()) {
       },
     },
     '../Variables': { Manager: { GetEnvironment: () => ({}) } },
-    '@showtrak/protocol/runtime': { ChecksumFile: async () => 'sum', ChecksumBuffer: () => 'sum' },
+    '@showtrak/protocol/runtime': {
+      ...Runtime,
+      ChecksumFile: async () => 'sum',
+      ChecksumBuffer: () => 'sum',
+    },
   });
 }
 
