@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 import { readFile } from 'fs/promises';
 import os from 'os';
 
@@ -21,7 +22,7 @@ const SHIM_COMPILE_ALLOWANCE_MS = 15000;
 
 export function execFileAsync(command: string, args: string[]): Promise<[unknown, string]> {
   return new Promise((resolve) => {
-    execFile(
+    const Child = execFile(
       command,
       args,
       {
@@ -34,6 +35,7 @@ export function execFileAsync(command: string, args: string[]): Promise<[unknown
         return resolve([null, String(stdout || '')]);
       }
     );
+    LowerChildPriority(Child);
   });
 }
 

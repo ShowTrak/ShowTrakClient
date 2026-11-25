@@ -1,5 +1,6 @@
 // Host telemetry: hostname, OS label, CPU/RAM/uptime vitals, network interfaces.
 import { execFile } from 'child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 import os from 'os';
 
 import type { MacAddressEntry, MacAddressMap, NetworkInterface, Vitals } from '@showtrak/protocol';
@@ -128,7 +129,7 @@ function sampleMacMemory(Now: number = Date.now()): void {
   MacMemorySampleInFlight = true;
   MacMemorySampledAt = Now;
   try {
-    execFile(
+    const Child = execFile(
       'vm_stat',
       [],
       { timeout: MAC_MEMORY_TIMEOUT_MS, maxBuffer: 256 * 1024 },
@@ -139,6 +140,7 @@ function sampleMacMemory(Now: number = Date.now()): void {
         MacUsedMemory = Err ? null : ParseVmStat(Stdout);
       }
     );
+    LowerChildPriority(Child);
   } catch (_error) {
     MacMemorySampleInFlight = false;
     MacUsedMemory = null;

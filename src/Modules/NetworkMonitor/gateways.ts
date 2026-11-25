@@ -9,6 +9,7 @@
 // platform. A failed read is an error, never an empty map — "I could not read
 // the routing table" must not be reported as "no interface has a router".
 import { execFile } from 'node:child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 import { promises as fs } from 'node:fs';
 import type { NetworkInterface } from '@showtrak/protocol';
 import type { Result } from '../../types/client';
@@ -121,7 +122,7 @@ export function ParseWindowsRoutePrint(Text: string, Interfaces: NetworkInterfac
 
 function RunCommand(Command: string, Args: string[]): Promise<Result<string>> {
   return new Promise((resolve) => {
-    execFile(
+    const Child = execFile(
       Command,
       Args,
       { timeout: COMMAND_TIMEOUT_MS, maxBuffer: 1024 * 1024, windowsHide: true },
@@ -130,6 +131,7 @@ function RunCommand(Command: string, Args: string[]): Promise<Result<string>> {
         return resolve([null, String(Stdout || '')]);
       }
     );
+    LowerChildPriority(Child);
   });
 }
 

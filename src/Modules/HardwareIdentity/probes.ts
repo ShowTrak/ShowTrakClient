@@ -8,6 +8,7 @@
 import os from 'node:os';
 import fs from 'node:fs';
 import { execFile } from 'node:child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 
 const PROBE_TIMEOUT_MS = 5000;
 
@@ -28,7 +29,7 @@ function runCommand(
 ): Promise<string | null> {
   return new Promise((resolve) => {
     try {
-      execFile(
+      const Child = execFile(
         command,
         args,
         { timeout, maxBuffer: 1024 * 1024, windowsHide: true },
@@ -37,6 +38,7 @@ function runCommand(
           resolve(typeof stdout === 'string' ? stdout : String(stdout));
         }
       );
+      LowerChildPriority(Child);
     } catch (_error) {
       resolve(null);
     }

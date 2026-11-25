@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 
 // `df -kP`: capacity and free space per mount, the one reading macOS and Linux
 // share. POSIX output, so one line per filesystem whatever the name lengths:
@@ -52,11 +53,12 @@ const DF_TIMEOUT_MS = 10000;
  */
 export function RunDf(Args: string[]): Promise<{ Error: unknown; Output: string }> {
   return new Promise((resolve) => {
-    execFile(
+    const Child = execFile(
       'df',
       Args,
       { timeout: DF_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, env: CLocaleEnv() },
       (Error_, Stdout) => resolve({ Error: Error_ || null, Output: String(Stdout || '') })
     );
+    LowerChildPriority(Child);
   });
 }

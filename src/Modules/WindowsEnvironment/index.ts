@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 
 import type { VariableEnvironment } from '@showtrak/protocol';
 import { CreateLogger } from '../Logger';
@@ -150,6 +151,7 @@ function RunPowerShell(Script: string): Promise<void> {
       Unavailable = true;
       return reject(Err as Error);
     }
+    LowerChildPriority(Child);
 
     let StdErr = '';
     if (Child.stderr) {

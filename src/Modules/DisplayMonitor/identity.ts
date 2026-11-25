@@ -14,6 +14,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
+import { LowerChildPriority } from '../Utils/process-priority';
 
 import { Hosts, RunPowerShell } from '../PowerShell';
 import { IsArray, IsRecord } from '@showtrak/protocol/common';
@@ -49,7 +50,7 @@ function runCommand(
 ): Promise<string | null> {
   return new Promise((resolve) => {
     try {
-      execFile(
+      const Child = execFile(
         command,
         args,
         { timeout, maxBuffer: 4 * 1024 * 1024, windowsHide: true },
@@ -58,6 +59,7 @@ function runCommand(
           resolve(typeof stdout === 'string' ? stdout : String(stdout));
         }
       );
+      LowerChildPriority(Child);
     } catch (_error) {
       resolve(null);
     }
