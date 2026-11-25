@@ -208,6 +208,8 @@ test('the ignore list keeps the runtime and drops sources, tooling and tests', a
     '/test/forge-config.test.js',
     '/dist-test/UI/js/app/main.js',
     '/coverage/lcov.info',
+    '/out',
+    '/out/make/zip/darwin/arm64/ShowTrak Client.zip',
     '/eslint.config.ts',
     '/forge.config.ts',
     '/tsconfig.json',
