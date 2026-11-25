@@ -10,6 +10,7 @@ import { Manager as HardwareIdentityManager } from '../HardwareIdentity';
 import { ParseMacWitness } from '../HardwareIdentity/fingerprint';
 import { ReadIdentityToken, type Unverified } from '../Utils';
 import { IsRecord } from '@showtrak/protocol/common';
+import { ReplaceFileSync } from '@showtrak/protocol/runtime';
 
 const Logger = CreateLogger('ProfileManager');
 
@@ -19,10 +20,11 @@ const ManualServerPath = path.join(AppDataManager.GetProfileDirectory(), 'Manual
 // Write Profile.json atomically. A torn write leaves a profile with no UUID,
 // which trips the self-heal path below and silently changes the client's
 // identity -- so the temp-file + rename is protecting identity, not just JSON.
+// ReplaceFileSync also flushes the temp file before the rename: without that, a
+// power cut (the usual way a show machine goes down) can land the rename before
+// the data and leave an empty Profile.json.
 function WriteProfileFile(Profile: ClientProfile): void {
-  const TempPath = `${ProfilePath}.tmp`;
-  fs.writeFileSync(TempPath, JSON.stringify(Profile, null, 2));
-  fs.renameSync(TempPath, ProfilePath);
+  ReplaceFileSync(ProfilePath, JSON.stringify(Profile, null, 2));
 }
 
 // Every mutation below rebuilds the profile object from scratch and carries
@@ -66,7 +68,7 @@ function ReadManualServerFromDisk(): ManualServer | null {
 }
 
 function WriteManualServerToDisk(ManualServer: ManualServer): void {
-  fs.writeFileSync(ManualServerPath, JSON.stringify(ManualServer, null, 2));
+  ReplaceFileSync(ManualServerPath, JSON.stringify(ManualServer, null, 2));
 }
 
 function DeleteManualServerFromDisk(): void {

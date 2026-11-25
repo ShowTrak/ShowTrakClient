@@ -329,3 +329,39 @@ test('profile writes are atomic and leave no temp file behind', async () => {
   assert.equal(fs.existsSync(path.join(profileRoot, 'Profile.json.tmp')), false);
   assert.equal(readProfile(profileRoot).UUID, 'uuid-source');
 });
+
+test('a profile write is flushed to the disk before it replaces Profile.json', async () => {
+  const profileRoot = tempDir('showtrak-fsync-');
+  const { Manager } = loadProfileManager(profileRoot, SOURCE_MACHINE);
+  await Manager.GetProfile();
+
+  // Watch the write the way a power cut would see it: the temp file has to be
+  // fsynced before it is renamed over Profile.json, or the rename can reach the
+  // disk first and leave an empty profile behind.
+  const Steps = [];
+  const Opened = new Map();
+  const { openSync, fsyncSync, renameSync } = fs;
+  fs.openSync = (File, ...Rest) => {
+    const Fd = openSync(File, ...Rest);
+    Opened.set(Fd, path.basename(String(File)));
+    return Fd;
+  };
+  fs.fsyncSync = (Fd) => {
+    Steps.push(`fsync ${Opened.get(Fd)}`);
+    return fsyncSync(Fd);
+  };
+  fs.renameSync = (From, To) => {
+    Steps.push(`rename ${path.basename(String(From))} -> ${path.basename(String(To))}`);
+    return renameSync(From, To);
+  };
+  try {
+    await Manager.Adopt('127.0.0.1', 9000, {});
+  } finally {
+    Object.assign(fs, { openSync, fsyncSync, renameSync });
+  }
+
+  const Rename = Steps.indexOf('rename Profile.json.tmp -> Profile.json');
+  assert.ok(Rename > 0, Steps.join(', '));
+  assert.equal(Steps[Rename - 1], 'fsync Profile.json.tmp');
+  assert.equal(readProfile(profileRoot).Adopted, true);
+});
